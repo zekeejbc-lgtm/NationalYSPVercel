@@ -1,19 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Program } from "@shared/schema";
 
 export default function ProgramsManager() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [programs, setPrograms] = useState<Program[]>([]);
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -22,26 +21,10 @@ export default function ProgramsManager() {
     fullDescription: "",
     image: "",
   });
-  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchPrograms();
-  }, []);
-
-  const fetchPrograms = async () => {
-    try {
-      const data = await apiRequest("GET", "/api/programs");
-      setPrograms(data);
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load programs",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: programs = [], isLoading } = useQuery<Program[]>({
+    queryKey: ["/api/programs"]
+  });
 
   const handleAdd = () => {
     setEditingProgram(null);
@@ -65,57 +48,78 @@ export default function ProgramsManager() {
     setIsDialogOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-
-    try {
-      if (editingProgram) {
-        await apiRequest("PUT", `/api/programs/${editingProgram.id}`, formData);
-        toast({
-          title: "Success",
-          description: "Program updated successfully",
-        });
-      } else {
-        await apiRequest("POST", "/api/programs", formData);
-        toast({
-          title: "Success",
-          description: "Program created successfully",
-        });
-      }
+  const createMutation = useMutation({
+    mutationFn: (data: typeof formData) => apiRequest("POST", "/api/programs", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
+      toast({
+        title: "Success",
+        description: "Program created successfully",
+      });
       setIsDialogOpen(false);
-      fetchPrograms();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
-        description: "Failed to save program",
+        description: "Failed to create program",
         variant: "destructive",
       });
-    } finally {
-      setSaving(false);
     }
-  };
+  });
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this program?")) return;
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof formData }) => 
+      apiRequest("PUT", `/api/programs/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
+      toast({
+        title: "Success",
+        description: "Program updated successfully",
+      });
+      setIsDialogOpen(false);
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update program",
+        variant: "destructive",
+      });
+    }
+  });
 
-    try {
-      await apiRequest("DELETE", `/api/programs/${id}`);
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/programs/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
       toast({
         title: "Success",
         description: "Program deleted successfully",
       });
-      fetchPrograms();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to delete program",
         variant: "destructive",
       });
     }
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editingProgram) {
+      updateMutation.mutate({ id: editingProgram.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
   };
 
-  if (loading) {
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this program?")) return;
+    deleteMutation.mutate(id);
+  };
+
+  if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
 
@@ -237,8 +241,12 @@ export default function ProgramsManager() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button type="submit" disabled={saving} data-testid="button-save-program">
-                {saving ? "Saving..." : "Save Program"}
+              <Button 
+                type="submit" 
+                disabled={createMutation.isPending || updateMutation.isPending} 
+                data-testid="button-save-program"
+              >
+                {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save Program"}
               </Button>
               <Button 
                 type="button" 

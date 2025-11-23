@@ -4,67 +4,56 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ContactInfo } from "@shared/schema";
 
 export default function ContactManager() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [contactInfo, setContactInfo] = useState<ContactInfo | null>(null);
   const [formData, setFormData] = useState({
     email: "",
     phone: "",
     facebook: "",
   });
 
+  const { data: contactInfo, isLoading } = useQuery<ContactInfo>({
+    queryKey: ["/api/contact-info"]
+  });
+
   useEffect(() => {
-    fetchContactInfo();
-  }, []);
-
-  const fetchContactInfo = async () => {
-    try {
-      const data = await apiRequest("GET", "/api/contact-info");
-      setContactInfo(data);
+    if (contactInfo) {
       setFormData({
-        email: data.email,
-        phone: data.phone,
-        facebook: data.facebook,
+        email: contactInfo.email,
+        phone: contactInfo.phone,
+        facebook: contactInfo.facebook,
       });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load contact info",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [contactInfo]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-
-    try {
-      await apiRequest("PUT", "/api/contact-info", formData);
+  const updateMutation = useMutation({
+    mutationFn: (data: typeof formData) => apiRequest("PUT", "/api/contact-info", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/contact-info"] });
       toast({
         title: "Success",
         description: "Contact information updated successfully",
       });
-      fetchContactInfo();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to update contact info",
         variant: "destructive",
       });
-    } finally {
-      setSaving(false);
     }
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    updateMutation.mutate(formData);
   };
 
-  if (loading) {
+  if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
 
@@ -111,8 +100,8 @@ export default function ContactManager() {
               data-testid="input-contact-facebook"
             />
           </div>
-          <Button type="submit" disabled={saving} data-testid="button-save-contact">
-            {saving ? "Saving..." : "Save Changes"}
+          <Button type="submit" disabled={updateMutation.isPending} data-testid="button-save-contact">
+            {updateMutation.isPending ? "Saving..." : "Save Changes"}
           </Button>
         </form>
       </CardContent>

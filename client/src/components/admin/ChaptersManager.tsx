@@ -1,18 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Chapter } from "@shared/schema";
 
 export default function ChaptersManager() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -23,26 +22,10 @@ export default function ChaptersManager() {
     representative: "",
     photo: "",
   });
-  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchChapters();
-  }, []);
-
-  const fetchChapters = async () => {
-    try {
-      const data = await apiRequest("GET", "/api/chapters");
-      setChapters(data);
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load chapters",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: chapters = [], isLoading } = useQuery<Chapter[]>({
+    queryKey: ["/api/chapters"]
+  });
 
   const handleAdd = () => {
     setEditingChapter(null);
@@ -70,64 +53,85 @@ export default function ChaptersManager() {
     setIsDialogOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-
-    try {
-      const submitData = {
-        ...formData,
-        email: formData.email || undefined,
-        representative: formData.representative || undefined,
-        photo: formData.photo || undefined,
-      };
-
-      if (editingChapter) {
-        await apiRequest("PUT", `/api/chapters/${editingChapter.id}`, submitData);
-        toast({
-          title: "Success",
-          description: "Chapter updated successfully",
-        });
-      } else {
-        await apiRequest("POST", "/api/chapters", submitData);
-        toast({
-          title: "Success",
-          description: "Chapter created successfully",
-        });
-      }
+  const createMutation = useMutation({
+    mutationFn: (data: typeof formData) => apiRequest("POST", "/api/chapters", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chapters"] });
+      toast({
+        title: "Success",
+        description: "Chapter created successfully",
+      });
       setIsDialogOpen(false);
-      fetchChapters();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
-        description: "Failed to save chapter",
+        description: "Failed to create chapter",
         variant: "destructive",
       });
-    } finally {
-      setSaving(false);
     }
-  };
+  });
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this chapter?")) return;
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof formData }) =>
+      apiRequest("PUT", `/api/chapters/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chapters"] });
+      toast({
+        title: "Success",
+        description: "Chapter updated successfully",
+      });
+      setIsDialogOpen(false);
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update chapter",
+        variant: "destructive",
+      });
+    }
+  });
 
-    try {
-      await apiRequest("DELETE", `/api/chapters/${id}`);
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/chapters/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/chapters"] });
       toast({
         title: "Success",
         description: "Chapter deleted successfully",
       });
-      fetchChapters();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to delete chapter",
         variant: "destructive",
       });
     }
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const submitData = {
+      ...formData,
+      email: formData.email || undefined,
+      representative: formData.representative || undefined,
+      photo: formData.photo || undefined,
+    };
+
+    if (editingChapter) {
+      updateMutation.mutate({ id: editingChapter.id, data: submitData });
+    } else {
+      createMutation.mutate(submitData);
+    }
   };
 
-  if (loading) {
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this chapter?")) return;
+    deleteMutation.mutate(id);
+  };
+
+  if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
 
@@ -268,8 +272,12 @@ export default function ChaptersManager() {
               />
             </div>
             <div className="flex gap-2">
-              <Button type="submit" disabled={saving} data-testid="button-save-chapter">
-                {saving ? "Saving..." : "Save Chapter"}
+              <Button 
+                type="submit" 
+                disabled={createMutation.isPending || updateMutation.isPending} 
+                data-testid="button-save-chapter"
+              >
+                {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save Chapter"}
               </Button>
               <Button 
                 type="button" 

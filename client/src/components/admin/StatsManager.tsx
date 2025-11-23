@@ -4,67 +4,56 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Stats } from "@shared/schema";
 
 export default function StatsManager() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [formData, setFormData] = useState({
     projects: 0,
     chapters: 0,
     members: 0,
   });
 
+  const { data: stats, isLoading } = useQuery<Stats>({
+    queryKey: ["/api/stats"]
+  });
+
   useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
-    try {
-      const data = await apiRequest("GET", "/api/stats");
-      setStats(data);
+    if (stats) {
       setFormData({
-        projects: data.projects,
-        chapters: data.chapters,
-        members: data.members,
+        projects: stats.projects,
+        chapters: stats.chapters,
+        members: stats.members,
       });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load stats",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [stats]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-
-    try {
-      await apiRequest("PUT", "/api/stats", formData);
+  const updateMutation = useMutation({
+    mutationFn: (data: typeof formData) => apiRequest("PUT", "/api/stats", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       toast({
         title: "Success",
         description: "Stats updated successfully",
       });
-      fetchStats();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to update stats",
         variant: "destructive",
       });
-    } finally {
-      setSaving(false);
     }
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    updateMutation.mutate(formData);
   };
 
-  if (loading) {
+  if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
 
@@ -113,8 +102,8 @@ export default function StatsManager() {
               />
             </div>
           </div>
-          <Button type="submit" disabled={saving} data-testid="button-save-stats">
-            {saving ? "Saving..." : "Save Changes"}
+          <Button type="submit" disabled={updateMutation.isPending} data-testid="button-save-stats">
+            {updateMutation.isPending ? "Saving..." : "Save Changes"}
           </Button>
         </form>
       </CardContent>

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -12,8 +13,6 @@ import type { VolunteerOpportunity } from "@shared/schema";
 
 export default function VolunteerManager() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(true);
-  const [opportunities, setOpportunities] = useState<VolunteerOpportunity[]>([]);
   const [editingOpportunity, setEditingOpportunity] = useState<VolunteerOpportunity | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -25,26 +24,10 @@ export default function VolunteerManager() {
     contactPhone: "",
     contactEmail: "",
   });
-  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchOpportunities();
-  }, []);
-
-  const fetchOpportunities = async () => {
-    try {
-      const data = await apiRequest("GET", "/api/volunteer-opportunities");
-      setOpportunities(data);
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to load volunteer opportunities",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: opportunities = [], isLoading } = useQuery<VolunteerOpportunity[]>({
+    queryKey: ["/api/volunteer-opportunities"]
+  });
 
   const handleAdd = () => {
     setEditingOpportunity(null);
@@ -74,63 +57,91 @@ export default function VolunteerManager() {
     setIsDialogOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-
-    try {
+  const createMutation = useMutation({
+    mutationFn: (data: typeof formData) => {
       const submitData = {
-        ...formData,
-        date: new Date(formData.date).toISOString(),
-        contactEmail: formData.contactEmail || undefined,
+        ...data,
+        date: new Date(data.date).toISOString(),
+        contactEmail: data.contactEmail || undefined,
       };
-
-      if (editingOpportunity) {
-        await apiRequest("PUT", `/api/volunteer-opportunities/${editingOpportunity.id}`, submitData);
-        toast({
-          title: "Success",
-          description: "Volunteer opportunity updated successfully",
-        });
-      } else {
-        await apiRequest("POST", "/api/volunteer-opportunities", submitData);
-        toast({
-          title: "Success",
-          description: "Volunteer opportunity created successfully",
-        });
-      }
+      return apiRequest("POST", "/api/volunteer-opportunities", submitData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
+      toast({
+        title: "Success",
+        description: "Volunteer opportunity created successfully",
+      });
       setIsDialogOpen(false);
-      fetchOpportunities();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
-        description: "Failed to save volunteer opportunity",
+        description: "Failed to create volunteer opportunity",
         variant: "destructive",
       });
-    } finally {
-      setSaving(false);
     }
-  };
+  });
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this volunteer opportunity?")) return;
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof formData }) => {
+      const submitData = {
+        ...data,
+        date: new Date(data.date).toISOString(),
+        contactEmail: data.contactEmail || undefined,
+      };
+      return apiRequest("PUT", `/api/volunteer-opportunities/${id}`, submitData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
+      toast({
+        title: "Success",
+        description: "Volunteer opportunity updated successfully",
+      });
+      setIsDialogOpen(false);
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update volunteer opportunity",
+        variant: "destructive",
+      });
+    }
+  });
 
-    try {
-      await apiRequest("DELETE", `/api/volunteer-opportunities/${id}`);
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/volunteer-opportunities/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
       toast({
         title: "Success",
         description: "Volunteer opportunity deleted successfully",
       });
-      fetchOpportunities();
-    } catch (error) {
+    },
+    onError: () => {
       toast({
         title: "Error",
         description: "Failed to delete volunteer opportunity",
         variant: "destructive",
       });
     }
+  });
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editingOpportunity) {
+      updateMutation.mutate({ id: editingOpportunity.id, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
   };
 
-  if (loading) {
+  const handleDelete = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this volunteer opportunity?")) return;
+    deleteMutation.mutate(id);
+  };
+
+  if (isLoading) {
     return <p className="text-muted-foreground">Loading...</p>;
   }
 
@@ -287,8 +298,12 @@ export default function VolunteerManager() {
               />
             </div>
             <div className="flex gap-2">
-              <Button type="submit" disabled={saving} data-testid="button-save-volunteer">
-                {saving ? "Saving..." : "Save Opportunity"}
+              <Button 
+                type="submit" 
+                disabled={createMutation.isPending || updateMutation.isPending} 
+                data-testid="button-save-volunteer"
+              >
+                {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save Opportunity"}
               </Button>
               <Button 
                 type="button" 
