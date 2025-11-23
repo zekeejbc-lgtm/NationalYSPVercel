@@ -1,18 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import ChapterCard from "@/components/ChapterCard";
 import { ExternalLink } from "lucide-react";
-
-//todo: remove mock data
-const mockChapters = [
-  { id: "1", name: "YSP Manila", location: "Manila, Metro Manila", contact: "09171234567", email: "manila@youthservice.ph", representative: "Juan Dela Cruz" },
-  { id: "2", name: "YSP Cebu", location: "Cebu City, Cebu", contact: "09181234567", email: "cebu@youthservice.ph", representative: "Maria Santos" },
-  { id: "3", name: "YSP Davao", location: "Davao City, Davao del Sur", contact: "09191234567", email: "davao@youthservice.ph", representative: "Pedro Reyes" },
-  { id: "4", name: "YSP Baguio", location: "Baguio City, Benguet", contact: "09201234567", email: "baguio@youthservice.ph", representative: "Ana Garcia" },
-  { id: "5", name: "YSP Iloilo", location: "Iloilo City, Iloilo", contact: "09211234567", email: "iloilo@youthservice.ph", representative: "Carlos Mendoza" },
-  { id: "6", name: "YSP Cagayan de Oro", location: "Cagayan de Oro, Misamis Oriental", contact: "09221234567", email: "cdo@youthservice.ph", representative: "Sofia Lim" },
-];
+import { useQuery } from "@tanstack/react-query";
+import type { Chapter } from "@shared/schema";
 
 export default function Membership() {
+  const { data: chapters = [] } = useQuery<Chapter[]>({ 
+    queryKey: ["/api/chapters"] 
+  });
   return (
     <div className="min-h-screen">
       <section className="py-16 md:py-20 bg-muted/30">
@@ -122,7 +117,7 @@ export default function Membership() {
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mockChapters.map((chapter) => (
+              {chapters.map((chapter) => (
                 <ChapterCard key={chapter.id} {...chapter} />
               ))}
             </div>

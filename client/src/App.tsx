@@ -10,6 +10,8 @@ import Programs from "@/pages/Programs";
 import Membership from "@/pages/Membership";
 import Volunteer from "@/pages/Volunteer";
 import Contact from "@/pages/Contact";
+import Admin from "@/pages/Admin";
+import AdminLogin from "@/pages/AdminLogin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -20,6 +22,8 @@ function Router() {
       <Route path="/membership" component={Membership} />
       <Route path="/volunteer" component={Volunteer} />
       <Route path="/contact" component={Contact} />
+      <Route path="/admin/login" component={AdminLogin} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );

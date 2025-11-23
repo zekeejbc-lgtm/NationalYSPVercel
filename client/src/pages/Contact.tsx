@@ -1,7 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Mail, Phone, Facebook } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import type { ContactInfo } from "@shared/schema";
 
 export default function Contact() {
+  const { data: contactInfo } = useQuery<ContactInfo>({ 
+    queryKey: ["/api/contact-info"] 
+  });
   return (
     <div className="min-h-screen">
       <section className="py-16 md:py-20 bg-muted/30">
@@ -24,11 +29,11 @@ export default function Contact() {
               </CardHeader>
               <CardContent>
                 <a
-                  href="mailto:phyouthservice@gmail.com"
+                  href={`mailto:${contactInfo?.email || 'phyouthservice@gmail.com'}`}
                   className="text-primary hover:underline font-medium text-lg"
                   data-testid="link-email"
                 >
-                  phyouthservice@gmail.com
+                  {contactInfo?.email || 'phyouthservice@gmail.com'}
                 </a>
                 <p className="text-sm text-muted-foreground mt-2">
                   Send us an email anytime
@@ -45,11 +50,11 @@ export default function Contact() {
               </CardHeader>
               <CardContent>
                 <a
-                  href="tel:09177798413"
+                  href={`tel:${contactInfo?.phone || '09177798413'}`}
                   className="text-primary hover:underline font-medium text-lg"
                   data-testid="link-phone"
                 >
-                  09177798413
+                  {contactInfo?.phone || '09177798413'}
                 </a>
                 <p className="text-sm text-muted-foreground mt-2">
                   Mon-Fri, 9:00 AM - 5:00 PM
@@ -66,7 +71,7 @@ export default function Contact() {
               </CardHeader>
               <CardContent>
                 <a
-                  href="https://www.facebook.com/YOUTHSERVICEPHILIPPINES"
+                  href={contactInfo?.facebook || "https://www.facebook.com/YOUTHSERVICEPHILIPPINES"}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:underline font-medium text-lg"
