@@ -8,7 +8,8 @@ import {
   insertChapterSchema,
   insertVolunteerOpportunitySchema,
   insertStatsSchema,
-  insertContactInfoSchema
+  insertContactInfoSchema,
+  insertPublicationSchema
 } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
 
@@ -271,6 +272,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const imageUrl = `/uploads/${req.file.filename}`;
     res.json({ url: imageUrl });
   });
+
+  app.get("/api/publications", async (req, res) => {
+    const publications = await storage.getPublications();
+    res.json(publications);
+  });
+
+  app.get("/api/publications/:id", async (req, res) => {
+    const publication = await storage.getPublication(req.params.id);
+    if (!publication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+    res.json(publication);
+  });
+
+  app.post("/api/publications", requireAuth, async (req, res) => {
+    try {
+      const validated = insertPublicationSchema.parse(req.body);
+      const publication = await storage.createPublication(validated);
+      res.json(publication);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/publications/:id", requireAuth, async (req, res) => {
+    try {
+      const validated = insertPublicationSchema.partial().parse(req.body);
+      const publication = await storage.updatePublication(req.params.id, validated);
+      if (!publication) {
+        return res.status(404).json({ error: "Publication not found" });
+      }
+      res.json(publication);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/publications/:id", requireAuth, async (req, res) => {
+    const deleted = await storage.deletePublication(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+    res.json({ success: true });
+  });
+
+  await storage.initializeDefaultData();
 
   const httpServer = createServer(app);
 

@@ -26,6 +26,8 @@ export const chapters = pgTable("chapters", {
   email: text("email"),
   photo: text("photo"),
   representative: text("representative"),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -55,6 +57,15 @@ export const contactInfo = pgTable("contact_info", {
   phone: text("phone").notNull(),
   facebook: text("facebook").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const publications = pgTable("publications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  imageUrl: text("image_url"),
+  facebookLink: text("facebook_link"),
+  publishedAt: timestamp("published_at").defaultNow().notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -87,6 +98,11 @@ export const insertContactInfoSchema = createInsertSchema(contactInfo).omit({
   updatedAt: true,
 });
 
+export const insertPublicationSchema = createInsertSchema(publications).omit({
+  id: true,
+  publishedAt: true,
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
@@ -104,3 +120,6 @@ export type InsertStats = z.infer<typeof insertStatsSchema>;
 
 export type ContactInfo = typeof contactInfo.$inferSelect;
 export type InsertContactInfo = z.infer<typeof insertContactInfoSchema>;
+
+export type Publication = typeof publications.$inferSelect;
+export type InsertPublication = z.infer<typeof insertPublicationSchema>;

@@ -33,6 +33,11 @@ export default function Footer() {
                 </Link>
               </li>
               <li>
+                <Link href="/publications" data-testid="footer-link-publications">
+                  <span className="text-muted-foreground hover:text-primary transition-colors">Publications</span>
+                </Link>
+              </li>
+              <li>
                 <Link href="/membership" data-testid="footer-link-membership">
                   <span className="text-muted-foreground hover:text-primary transition-colors">Membership</span>
                 </Link>

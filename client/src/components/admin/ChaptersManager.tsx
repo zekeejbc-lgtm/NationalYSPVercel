@@ -21,6 +21,8 @@ export default function ChaptersManager() {
     email: "",
     representative: "",
     photo: "",
+    latitude: "",
+    longitude: "",
   });
 
   const { data: chapters = [], isLoading } = useQuery<Chapter[]>({
@@ -36,6 +38,8 @@ export default function ChaptersManager() {
       email: "",
       representative: "",
       photo: "",
+      latitude: "",
+      longitude: "",
     });
     setIsDialogOpen(true);
   };
@@ -49,6 +53,8 @@ export default function ChaptersManager() {
       email: chapter.email || "",
       representative: chapter.representative || "",
       photo: chapter.photo || "",
+      latitude: chapter.latitude || "",
+      longitude: chapter.longitude || "",
     });
     setIsDialogOpen(true);
   };
@@ -112,17 +118,21 @@ export default function ChaptersManager() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const submitData = {
-      ...formData,
+    const submitData: Record<string, string | undefined> = {
+      name: formData.name,
+      location: formData.location,
+      contact: formData.contact,
       email: formData.email || undefined,
       representative: formData.representative || undefined,
       photo: formData.photo || undefined,
+      latitude: formData.latitude || undefined,
+      longitude: formData.longitude || undefined,
     };
 
     if (editingChapter) {
-      updateMutation.mutate({ id: editingChapter.id, data: submitData });
+      updateMutation.mutate({ id: editingChapter.id, data: submitData as any });
     } else {
-      createMutation.mutate(submitData);
+      createMutation.mutate(submitData as any);
     }
   };
 
@@ -271,6 +281,31 @@ export default function ChaptersManager() {
                 data-testid="input-chapter-photo"
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="latitude">Latitude (for Map)</Label>
+                <Input
+                  id="latitude"
+                  value={formData.latitude}
+                  onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+                  placeholder="14.5995"
+                  data-testid="input-chapter-latitude"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="longitude">Longitude (for Map)</Label>
+                <Input
+                  id="longitude"
+                  value={formData.longitude}
+                  onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+                  placeholder="120.9842"
+                  data-testid="input-chapter-longitude"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              You can find coordinates using Google Maps. Right-click on a location and copy the coordinates.
+            </p>
             <div className="flex gap-2">
               <Button 
                 type="submit" 

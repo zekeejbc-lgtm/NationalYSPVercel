@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import ChapterCard from "@/components/ChapterCard";
-import { ExternalLink } from "lucide-react";
+import ChaptersMap from "@/components/ChaptersMap";
+import { ExternalLink, Map } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Chapter } from "@shared/schema";
 
@@ -110,12 +111,20 @@ export default function Membership() {
 
           <div>
             <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold mb-4">Existing Chapters</h2>
+              <h2 className="text-3xl font-bold mb-4 flex items-center justify-center gap-3">
+                <Map className="h-8 w-8 text-primary" />
+                Existing Chapters
+              </h2>
               <p className="text-muted-foreground">
-                Connect with a YSP chapter near you
+                Connect with a YSP chapter near you. Click on map markers to learn more about each chapter.
               </p>
             </div>
             
+            <div className="mb-10">
+              <ChaptersMap chapters={chapters} />
+            </div>
+            
+            <h3 className="text-xl font-semibold mb-6 text-center">All Chapters</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {chapters.map((chapter) => (
                 <ChapterCard key={chapter.id} {...chapter} />

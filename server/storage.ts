@@ -10,9 +10,19 @@ import {
   type Stats,
   type InsertStats,
   type ContactInfo,
-  type InsertContactInfo
+  type InsertContactInfo,
+  type Publication,
+  type InsertPublication,
+  users,
+  programs,
+  chapters,
+  volunteerOpportunities,
+  stats,
+  contactInfo,
+  publications
 } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -42,194 +52,197 @@ export interface IStorage {
 
   getContactInfo(): Promise<ContactInfo>;
   updateContactInfo(info: InsertContactInfo): Promise<ContactInfo>;
+
+  getPublications(): Promise<Publication[]>;
+  getPublication(id: string): Promise<Publication | undefined>;
+  createPublication(publication: InsertPublication): Promise<Publication>;
+  updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
+  deletePublication(id: string): Promise<boolean>;
+
+  initializeDefaultData(): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private programs: Map<string, Program>;
-  private chapters: Map<string, Chapter>;
-  private volunteerOpportunities: Map<string, VolunteerOpportunity>;
-  private stats: Stats;
-  private contactInfo: ContactInfo;
-
-  constructor() {
-    this.users = new Map();
-    this.programs = new Map();
-    this.chapters = new Map();
-    this.volunteerOpportunities = new Map();
-    
-    this.stats = {
-      id: randomUUID(),
-      projects: 150,
-      chapters: 25,
-      members: 5000,
-      updatedAt: new Date(),
-    };
-
-    this.contactInfo = {
-      id: randomUUID(),
-      email: "phyouthservice@gmail.com",
-      phone: "09177798413",
-      facebook: "https://www.facebook.com/YOUTHSERVICEPHILIPPINES",
-      updatedAt: new Date(),
-    };
-
-    const defaultAdmin: User = {
-      id: randomUUID(),
-      username: "admin",
-      password: "admin123",
-    };
-    this.users.set(defaultAdmin.id, defaultAdmin);
-  }
-
+export class DbStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
   }
 
   async getPrograms(): Promise<Program[]> {
-    return Array.from(this.programs.values()).sort((a, b) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    return db.select().from(programs).orderBy(desc(programs.createdAt));
   }
 
   async getProgram(id: string): Promise<Program | undefined> {
-    return this.programs.get(id);
+    const result = await db.select().from(programs).where(eq(programs.id, id));
+    return result[0];
   }
 
   async createProgram(program: InsertProgram): Promise<Program> {
-    const id = randomUUID();
-    const newProgram: Program = { 
-      ...program, 
-      id,
-      createdAt: new Date()
-    };
-    this.programs.set(id, newProgram);
-    return newProgram;
+    const result = await db.insert(programs).values(program).returning();
+    return result[0];
   }
 
   async updateProgram(id: string, program: Partial<InsertProgram>): Promise<Program | undefined> {
-    const existing = this.programs.get(id);
-    if (!existing) return undefined;
-    
-    const updated: Program = { ...existing, ...program };
-    this.programs.set(id, updated);
-    return updated;
+    const result = await db.update(programs).set(program).where(eq(programs.id, id)).returning();
+    return result[0];
   }
 
   async deleteProgram(id: string): Promise<boolean> {
-    return this.programs.delete(id);
+    const result = await db.delete(programs).where(eq(programs.id, id)).returning();
+    return result.length > 0;
   }
 
   async getChapters(): Promise<Chapter[]> {
-    return Array.from(this.chapters.values()).sort((a, b) => 
-      a.name.localeCompare(b.name)
-    );
+    return db.select().from(chapters).orderBy(chapters.name);
   }
 
   async getChapter(id: string): Promise<Chapter | undefined> {
-    return this.chapters.get(id);
+    const result = await db.select().from(chapters).where(eq(chapters.id, id));
+    return result[0];
   }
 
   async createChapter(chapter: InsertChapter): Promise<Chapter> {
-    const id = randomUUID();
-    const newChapter: Chapter = { 
-      ...chapter,
-      email: chapter.email ?? null,
-      photo: chapter.photo ?? null,
-      representative: chapter.representative ?? null,
-      id,
-      createdAt: new Date()
-    };
-    this.chapters.set(id, newChapter);
-    return newChapter;
+    const result = await db.insert(chapters).values(chapter).returning();
+    return result[0];
   }
 
   async updateChapter(id: string, chapter: Partial<InsertChapter>): Promise<Chapter | undefined> {
-    const existing = this.chapters.get(id);
-    if (!existing) return undefined;
-    
-    const updated: Chapter = { ...existing, ...chapter };
-    this.chapters.set(id, updated);
-    return updated;
+    const result = await db.update(chapters).set(chapter).where(eq(chapters.id, id)).returning();
+    return result[0];
   }
 
   async deleteChapter(id: string): Promise<boolean> {
-    return this.chapters.delete(id);
+    const result = await db.delete(chapters).where(eq(chapters.id, id)).returning();
+    return result.length > 0;
   }
 
   async getVolunteerOpportunities(): Promise<VolunteerOpportunity[]> {
-    return Array.from(this.volunteerOpportunities.values()).sort((a, b) => 
-      new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
+    return db.select().from(volunteerOpportunities).orderBy(volunteerOpportunities.date);
   }
 
   async getVolunteerOpportunity(id: string): Promise<VolunteerOpportunity | undefined> {
-    return this.volunteerOpportunities.get(id);
+    const result = await db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.id, id));
+    return result[0];
   }
 
   async createVolunteerOpportunity(opportunity: InsertVolunteerOpportunity): Promise<VolunteerOpportunity> {
-    const id = randomUUID();
-    const newOpportunity: VolunteerOpportunity = { 
-      ...opportunity,
-      contactEmail: opportunity.contactEmail ?? null,
-      id,
-      createdAt: new Date()
-    };
-    this.volunteerOpportunities.set(id, newOpportunity);
-    return newOpportunity;
+    const result = await db.insert(volunteerOpportunities).values(opportunity).returning();
+    return result[0];
   }
 
   async updateVolunteerOpportunity(id: string, opportunity: Partial<InsertVolunteerOpportunity>): Promise<VolunteerOpportunity | undefined> {
-    const existing = this.volunteerOpportunities.get(id);
-    if (!existing) return undefined;
-    
-    const updated: VolunteerOpportunity = { ...existing, ...opportunity };
-    this.volunteerOpportunities.set(id, updated);
-    return updated;
+    const result = await db.update(volunteerOpportunities).set(opportunity).where(eq(volunteerOpportunities.id, id)).returning();
+    return result[0];
   }
 
   async deleteVolunteerOpportunity(id: string): Promise<boolean> {
-    return this.volunteerOpportunities.delete(id);
+    const result = await db.delete(volunteerOpportunities).where(eq(volunteerOpportunities.id, id)).returning();
+    return result.length > 0;
   }
 
   async getStats(): Promise<Stats> {
-    return this.stats;
+    const result = await db.select().from(stats).limit(1);
+    if (result.length === 0) {
+      const newStats = await db.insert(stats).values({
+        projects: 150,
+        chapters: 25,
+        members: 5000
+      }).returning();
+      return newStats[0];
+    }
+    return result[0];
   }
 
-  async updateStats(stats: InsertStats): Promise<Stats> {
-    this.stats = {
-      ...this.stats,
-      ...stats,
+  async updateStats(statsData: InsertStats): Promise<Stats> {
+    const existing = await db.select().from(stats).limit(1);
+    if (existing.length === 0) {
+      const result = await db.insert(stats).values({
+        ...statsData,
+        updatedAt: new Date()
+      }).returning();
+      return result[0];
+    }
+    const result = await db.update(stats).set({
+      ...statsData,
       updatedAt: new Date()
-    };
-    return this.stats;
+    }).where(eq(stats.id, existing[0].id)).returning();
+    return result[0];
   }
 
   async getContactInfo(): Promise<ContactInfo> {
-    return this.contactInfo;
+    const result = await db.select().from(contactInfo).limit(1);
+    if (result.length === 0) {
+      const newContact = await db.insert(contactInfo).values({
+        email: "phyouthservice@gmail.com",
+        phone: "09177798413",
+        facebook: "https://www.facebook.com/YOUTHSERVICEPHILIPPINES"
+      }).returning();
+      return newContact[0];
+    }
+    return result[0];
   }
 
   async updateContactInfo(info: InsertContactInfo): Promise<ContactInfo> {
-    this.contactInfo = {
-      ...this.contactInfo,
+    const existing = await db.select().from(contactInfo).limit(1);
+    if (existing.length === 0) {
+      const result = await db.insert(contactInfo).values({
+        ...info,
+        updatedAt: new Date()
+      }).returning();
+      return result[0];
+    }
+    const result = await db.update(contactInfo).set({
       ...info,
       updatedAt: new Date()
-    };
-    return this.contactInfo;
+    }).where(eq(contactInfo.id, existing[0].id)).returning();
+    return result[0];
+  }
+
+  async getPublications(): Promise<Publication[]> {
+    return db.select().from(publications).orderBy(desc(publications.publishedAt));
+  }
+
+  async getPublication(id: string): Promise<Publication | undefined> {
+    const result = await db.select().from(publications).where(eq(publications.id, id));
+    return result[0];
+  }
+
+  async createPublication(publication: InsertPublication): Promise<Publication> {
+    const result = await db.insert(publications).values(publication).returning();
+    return result[0];
+  }
+
+  async updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined> {
+    const result = await db.update(publications).set(publication).where(eq(publications.id, id)).returning();
+    return result[0];
+  }
+
+  async deletePublication(id: string): Promise<boolean> {
+    const result = await db.delete(publications).where(eq(publications.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async initializeDefaultData(): Promise<void> {
+    const existingAdmin = await this.getUserByUsername("admin");
+    if (!existingAdmin) {
+      await this.createUser({
+        username: "admin",
+        password: "admin123"
+      });
+    }
+    await this.getStats();
+    await this.getContactInfo();
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DbStorage();

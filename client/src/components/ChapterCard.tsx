@@ -7,9 +7,9 @@ interface ChapterCardProps {
   name: string;
   location: string;
   contact: string;
-  email?: string;
-  photo?: string;
-  representative?: string;
+  email?: string | null;
+  photo?: string | null;
+  representative?: string | null;
 }
 
 export default function ChapterCard({ 
@@ -29,7 +29,7 @@ export default function ChapterCard({
       <CardHeader className="pb-3">
         <div className="flex items-start gap-3">
           <Avatar className="h-12 w-12">
-            <AvatarImage src={photo} alt={name} />
+            <AvatarImage src={photo || undefined} alt={name} />
             <AvatarFallback className="bg-primary/10 text-primary font-semibold">
               {name.substring(0, 2).toUpperCase()}
             </AvatarFallback>

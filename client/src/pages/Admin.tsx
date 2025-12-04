@@ -10,6 +10,7 @@ import ChaptersManager from "@/components/admin/ChaptersManager";
 import VolunteerManager from "@/components/admin/VolunteerManager";
 import StatsManager from "@/components/admin/StatsManager";
 import ContactManager from "@/components/admin/ContactManager";
+import PublicationsManager from "@/components/admin/PublicationsManager";
 
 export default function Admin() {
   const [, setLocation] = useLocation();
@@ -95,9 +96,10 @@ export default function Admin() {
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
         <Tabs defaultValue="stats" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
             <TabsTrigger value="stats" data-testid="tab-stats">Stats</TabsTrigger>
             <TabsTrigger value="programs" data-testid="tab-programs">Programs</TabsTrigger>
+            <TabsTrigger value="publications" data-testid="tab-publications">Publications</TabsTrigger>
             <TabsTrigger value="chapters" data-testid="tab-chapters">Chapters</TabsTrigger>
             <TabsTrigger value="volunteer" data-testid="tab-volunteer">Volunteer</TabsTrigger>
             <TabsTrigger value="contact" data-testid="tab-contact">Contact</TabsTrigger>
@@ -109,6 +111,10 @@ export default function Admin() {
 
           <TabsContent value="programs">
             <ProgramsManager />
+          </TabsContent>
+
+          <TabsContent value="publications">
+            <PublicationsManager />
           </TabsContent>
 
           <TabsContent value="chapters">

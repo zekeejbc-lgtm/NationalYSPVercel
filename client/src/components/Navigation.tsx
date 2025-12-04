@@ -11,8 +11,9 @@ export default function Navigation() {
   const navLinks = [
     { href: "/", label: "Home" },
     { href: "/programs", label: "Programs" },
+    { href: "/publications", label: "Publications" },
     { href: "/membership", label: "Membership & Chapters" },
-    { href: "/volunteer", label: "Volunteer Opportunities" },
+    { href: "/volunteer", label: "Volunteer" },
     { href: "/contact", label: "Contact" },
   ];
 
