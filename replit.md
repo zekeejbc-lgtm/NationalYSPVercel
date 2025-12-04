@@ -34,10 +34,11 @@ Preferred communication style: Simple, everyday language.
 **Key Pages & Features:**
 - Home: Hero section with call-to-action, stats display, featured programs and chapters
 - Programs: Browsable program catalog with detailed modal views
-- Membership: Embedded Google Forms for member registration and chapter creation
+- Publications: Blog-style page displaying organization news/articles ordered by newest first
+- Membership: Embedded Google Forms for member registration and chapter creation, plus interactive Leaflet map showing chapter locations
 - Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment
 - Contact: Contact information display with email, phone, and social media links
-- Admin: Protected dashboard for content management (programs, chapters, volunteers, stats, contact info)
+- Admin: Protected dashboard for content management (programs, chapters, publications, volunteers, stats, contact info)
 
 ### Backend Architecture
 
@@ -63,14 +64,16 @@ Preferred communication style: Simple, everyday language.
 **Database Schema:**
 - Users table: Authentication credentials (username/password hash)
 - Programs table: Title, description, full description, image URL, timestamps
-- Chapters table: Name, location, contact info, representative details, photos
+- Chapters table: Name, location, contact info, representative details, photos, latitude/longitude for map positioning
+- Publications table: Title, content, imageUrl, facebookLink, publishedAt timestamp
 - Volunteer Opportunities table: Event details, date, chapter affiliation, SDG alignment, contact information
 - Stats table: Global metrics (projects completed, active chapters, total members)
 - Contact Info table: Organization-wide contact details (email, phone, Facebook)
 
 **Storage Strategy:**
-- In-memory storage interface (IStorage) with implementation (MemStorage) for development/testing
-- Production uses PostgreSQL through Drizzle ORM
+- Database storage interface (IStorage) with implementation (DbStorage) using PostgreSQL for permanent data persistence
+- Drizzle ORM handles type-safe queries and schema management
+- Auto-initialization of default data (admin user, stats, contact info) on startup
 - Uploaded files stored in client/public/uploads directory (served as static assets)
 
 ### Security & Authentication
