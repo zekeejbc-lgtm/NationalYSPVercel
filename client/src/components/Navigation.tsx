@@ -53,6 +53,11 @@ export default function Navigation() {
                 </span>
               </Link>
             ))}
+            <Link href="/login">
+              <Button variant="outline" size="sm" data-testid="button-sign-in">
+                Sign In
+              </Button>
+            </Link>
             <Link href="/membership">
               <Button size="sm" data-testid="button-join-now">
                 Join Now
@@ -86,6 +91,11 @@ export default function Navigation() {
                     </span>
                   </Link>
                 ))}
+                <Link href="/login" onClick={() => setIsOpen(false)}>
+                  <Button variant="outline" className="w-full" data-testid="mobile-button-sign-in">
+                    Sign In
+                  </Button>
+                </Link>
                 <Link href="/membership" onClick={() => setIsOpen(false)}>
                   <Button className="w-full" data-testid="mobile-button-join-now">
                     Join Now

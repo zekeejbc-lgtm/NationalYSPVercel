@@ -18,8 +18,10 @@ export default function ChaptersManager() {
     name: "",
     location: "",
     contact: "",
+    contactPerson: "",
     email: "",
-    representative: "",
+    facebookLink: "",
+    nextgenBatch: "",
     photo: "",
     latitude: "",
     longitude: "",
@@ -35,8 +37,10 @@ export default function ChaptersManager() {
       name: "",
       location: "",
       contact: "",
+      contactPerson: "",
       email: "",
-      representative: "",
+      facebookLink: "",
+      nextgenBatch: "",
       photo: "",
       latitude: "",
       longitude: "",
@@ -50,8 +54,10 @@ export default function ChaptersManager() {
       name: chapter.name,
       location: chapter.location,
       contact: chapter.contact,
+      contactPerson: chapter.contactPerson || "",
       email: chapter.email || "",
-      representative: chapter.representative || "",
+      facebookLink: chapter.facebookLink || "",
+      nextgenBatch: chapter.nextgenBatch || "",
       photo: chapter.photo || "",
       latitude: chapter.latitude || "",
       longitude: chapter.longitude || "",
@@ -122,8 +128,10 @@ export default function ChaptersManager() {
       name: formData.name,
       location: formData.location,
       contact: formData.contact,
+      contactPerson: formData.contactPerson || undefined,
       email: formData.email || undefined,
-      representative: formData.representative || undefined,
+      facebookLink: formData.facebookLink || undefined,
+      nextgenBatch: formData.nextgenBatch || undefined,
       photo: formData.photo || undefined,
       latitude: formData.latitude || undefined,
       longitude: formData.longitude || undefined,
@@ -194,9 +202,12 @@ export default function ChaptersManager() {
                     </div>
                     <div className="space-y-1 text-sm">
                       <p className="text-muted-foreground">📞 {chapter.contact}</p>
+                      {chapter.contactPerson && (
+                        <p className="text-muted-foreground">👤 {chapter.contactPerson}</p>
+                      )}
                       {chapter.email && <p className="text-muted-foreground">✉️ {chapter.email}</p>}
-                      {chapter.representative && (
-                        <p className="text-muted-foreground">👤 {chapter.representative}</p>
+                      {chapter.nextgenBatch && (
+                        <p className="text-muted-foreground">🎓 {chapter.nextgenBatch}</p>
                       )}
                     </div>
                   </CardContent>
@@ -250,6 +261,16 @@ export default function ChaptersManager() {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="contactPerson">Contact Person (Optional)</Label>
+              <Input
+                id="contactPerson"
+                value={formData.contactPerson}
+                onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
+                placeholder="Juan Dela Cruz"
+                data-testid="input-chapter-contact-person"
+              />
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="email">Email (Optional)</Label>
               <Input
                 id="email"
@@ -261,13 +282,24 @@ export default function ChaptersManager() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="representative">Representative Name (Optional)</Label>
+              <Label htmlFor="facebookLink">Facebook Link (Optional)</Label>
               <Input
-                id="representative"
-                value={formData.representative}
-                onChange={(e) => setFormData({ ...formData, representative: e.target.value })}
-                placeholder="Juan Dela Cruz"
-                data-testid="input-chapter-representative"
+                id="facebookLink"
+                type="url"
+                value={formData.facebookLink}
+                onChange={(e) => setFormData({ ...formData, facebookLink: e.target.value })}
+                placeholder="https://facebook.com/yspmanila"
+                data-testid="input-chapter-facebook"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="nextgenBatch">NextGen Batch (Optional)</Label>
+              <Input
+                id="nextgenBatch"
+                value={formData.nextgenBatch}
+                onChange={(e) => setFormData({ ...formData, nextgenBatch: e.target.value })}
+                placeholder="Batch 1"
+                data-testid="input-chapter-batch"
               />
             </div>
             <div className="space-y-2">

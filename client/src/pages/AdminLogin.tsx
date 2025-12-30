@@ -19,7 +19,7 @@ export default function AdminLogin() {
     setLoading(true);
 
     try {
-      await apiRequest("POST", "/api/auth/login", { username, password });
+      await apiRequest("POST", "/api/auth/login/admin", { username, password });
       toast({
         title: "Success",
         description: "Logged in successfully",
