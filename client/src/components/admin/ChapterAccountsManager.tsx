@@ -26,6 +26,11 @@ export default function ChapterAccountsManager() {
 
   const { data: chapterUsers = [], isLoading: usersLoading } = useQuery<ChapterUser[]>({
     queryKey: ["/api/chapters", selectedChapterId, "users"],
+    queryFn: async () => {
+      const res = await fetch(`/api/chapters/${selectedChapterId}/users`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch chapter users");
+      return res.json();
+    },
     enabled: !!selectedChapterId,
   });
 

@@ -27,6 +27,14 @@ export default function KpiManager() {
 
   const { data: existingKpi, isLoading: kpiLoading } = useQuery<ChapterKpi>({
     queryKey: ["/api/chapter-kpis", selectedChapterId, selectedYear],
+    queryFn: async () => {
+      const res = await fetch(`/api/chapter-kpis/${selectedChapterId}/${selectedYear}`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 404) return null;
+        throw new Error("Failed to fetch KPI data");
+      }
+      return res.json();
+    },
     enabled: !!selectedChapterId,
   });
 

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import multer from "multer";
 import path from "path";
+import bcrypt from "bcryptjs";
 import { 
   insertProgramSchema,
   insertChapterSchema,
@@ -80,7 +81,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const user = await storage.getAdminUserByUsername(username);
     
-    if (!user || user.password !== password) {
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -98,7 +104,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const user = await storage.getChapterUserByUsername(username);
     
-    if (!user || user.password !== password) {
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -178,8 +189,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
     const updated = await storage.updateChapterUser(req.session.userId!, {
-      password: newPassword,
+      password: hashedPassword,
       mustChangePassword: false
     });
 
@@ -290,7 +302,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/chapter-users", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertChapterUserSchema.parse(req.body);
-      const user = await storage.createChapterUser(validated);
+      const hashedPassword = await bcrypt.hash(validated.password, 10);
+      const user = await storage.createChapterUser({ ...validated, password: hashedPassword });
       res.json({ ...user, password: undefined });
     } catch (error: any) {
       if (error.code === '23505') {
@@ -304,7 +317,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/chapter-users/:id", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertChapterUserSchema.partial().parse(req.body);
-      const user = await storage.updateChapterUser(req.params.id, validated);
+      let updateData = validated;
+      if (validated.password) {
+        const hashedPassword = await bcrypt.hash(validated.password, 10);
+        updateData = { ...validated, password: hashedPassword };
+      }
+      const user = await storage.updateChapterUser(req.params.id, updateData);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }

@@ -32,6 +32,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 
 export interface IStorage {
   getAdminUser(id: string): Promise<AdminUser | undefined>;
@@ -373,9 +374,10 @@ export class DbStorage implements IStorage {
   async initializeDefaultData(): Promise<void> {
     const existingAdmin = await this.getAdminUserByUsername("admin");
     if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash("admin123", 10);
       await this.createAdminUser({
         username: "admin",
-        password: "admin123"
+        password: hashedPassword
       });
     }
     await this.getStats();
