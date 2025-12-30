@@ -24,8 +24,7 @@ export default function Login() {
 
     try {
       const endpoint = role === "admin" ? "/api/auth/login/admin" : "/api/auth/login/chapter";
-      const response = await apiRequest("POST", endpoint, { username, password });
-      const data = await response.json();
+      const data = await apiRequest("POST", endpoint, { username, password });
       
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       
@@ -37,7 +36,7 @@ export default function Login() {
       if (role === "admin") {
         setLocation("/admin");
       } else {
-        if (data.user?.mustChangePassword) {
+        if (data?.user?.mustChangePassword) {
           setLocation("/chapter-dashboard?changePassword=true");
         } else {
           setLocation("/chapter-dashboard");

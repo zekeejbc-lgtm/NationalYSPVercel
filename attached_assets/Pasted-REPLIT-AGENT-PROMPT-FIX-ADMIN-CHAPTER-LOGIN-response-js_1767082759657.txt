@@ -1,0 +1,64 @@
+REPLIT AGENT PROMPT — FIX ADMIN + CHAPTER LOGIN (response.json is not a function)
+
+BUG:
+- Cannot sign in as Admin or Chapter.
+- Error shown: "response.json is not a function"
+
+GOAL:
+- Fix the login bug and ensure both Admin and Chapter can sign in successfully.
+- Standardize API responses so the frontend can reliably parse JSON.
+
+TASKS:
+
+1) FIND THE ROOT CAUSE (MOST IMPORTANT)
+- Locate the frontend login request code (Admin login + Chapter login).
+- Determine whether the project uses:
+  a) fetch()  OR
+  b) axios (or another client)
+- The error happens when code calls response.json() on a non-Fetch response (ex: axios response already has data).
+
+2) FIX FRONTEND LOGIN REQUEST (DO NOT GUESS)
+- If the project uses fetch():
+  - Keep using: const data = await response.json()
+- If the project uses axios:
+  - Replace response.json() usage with axios pattern:
+    - const res = await axios.post(url, payload)
+    - const data = res.data
+- Ensure both Admin and Chapter login flows use the SAME correct parsing approach.
+
+3) STANDARDIZE BACKEND AUTH RESPONSE FORMAT
+- Ensure the backend login endpoint returns JSON using res.json(...) (or the framework equivalent) for ALL outcomes:
+  - Success: { ok: true, role: "ADMIN"|"CHAPTER", user: {...} }
+  - Failure: { ok: false, message: "Invalid credentials" }
+- Make sure the server sets proper JSON content-type.
+
+4) ROLE-BASED LOGIN SUPPORT (ADMIN + CHAPTER)
+- Implement/ensure a single login API endpoint (recommended):
+  POST /api/auth/login
+  Body:
+    - role: "ADMIN" or "CHAPTER"
+    - username (or email)
+    - password
+- Backend logic:
+  - If role === "ADMIN": authenticate against admin_users table/collection
+  - If role === "CHAPTER": authenticate against chapter_users table/collection
+- Return the standardized JSON response above.
+
+5) REDIRECT AFTER LOGIN
+- After successful login:
+  - If role is ADMIN -> redirect to /admin dashboard
+  - If role is CHAPTER -> redirect to /chapter dashboard
+- If login fails:
+  - Show the returned message from backend (no crashes).
+
+6) ADD A SAFETY CHECK (OPTIONAL BUT RECOMMENDED)
+- Add a guarded JSON parsing fallback so the app never throws this error again:
+  - Only call .json() if it exists (fetch response)
+  - Otherwise use the object directly (axios response.data)
+
+ACCEPTANCE TESTS (MUST PASS):
+- Admin login works end-to-end.
+- Chapter login works end-to-end.
+- No "response.json is not a function" error anywhere.
+- Backend always returns JSON responses for login.
+- Correct role-based redirect occurs after login.
