@@ -1,0 +1,80 @@
+REPLIT AGENT PROMPT — FIX CREATE CHAPTER ACCOUNT (response.json is not a function)
+
+BUG:
+- When creating a Chapter account, the app throws:
+  "response.json is not a function"
+
+GOAL:
+- Fix the Create Chapter Account flow so it works reliably.
+- Ensure frontend parses responses correctly (fetch vs axios).
+- Ensure backend returns proper JSON for create-chapter endpoint.
+
+TASKS:
+
+1) LOCATE THE CREATE-CHAPTER REQUEST CODE
+- Find the Admin panel feature that creates a Chapter account.
+- Identify the exact HTTP request implementation used there.
+- Confirm whether it uses:
+  a) fetch() OR
+  b) axios (or another client)
+
+2) FIX FRONTEND RESPONSE PARSING (DO NOT MIX PATTERNS)
+- If using fetch():
+  - Use:
+    const res = await fetch(...)
+    const data = await res.json()
+- If using axios:
+  - Use:
+    const res = await axios.post(...)
+    const data = res.data
+- Remove any call to response.json() if the request is NOT fetch.
+
+3) STANDARDIZE BACKEND ENDPOINT RESPONSE (JSON ONLY)
+- Ensure the create chapter endpoint returns JSON consistently:
+  - Success: { ok: true, chapter: {...}, user: {...}, message: "Chapter account created" }
+  - Failure: { ok: false, message: "Reason for failure" }
+- Ensure correct status codes:
+  - 201 for created
+  - 400 for validation errors
+  - 409 for duplicates (existing username/chapter)
+  - 500 for server error
+- Ensure response content-type is application/json.
+
+4) VALIDATE CREATE CHAPTER INPUTS (BACKEND + FRONTEND)
+Required fields:
+- chapter_name
+- contact_person
+- contact_number
+- facebook_link
+- nextgen_batch
+- login_username (or email)
+- temp_password
+
+Validation rules:
+- No empty fields
+- contact_number must be numeric-like
+- facebook_link must be a valid URL format (basic check)
+- login_username must be unique
+
+5) HANDLE ERRORS CLEANLY ON FRONTEND
+- If backend returns ok:false:
+  - Show the message in UI
+  - Do not crash the page
+- Show loading state while saving
+- After success:
+  - Show success toast/message
+  - Reset form
+  - Refresh chapter list
+
+6) OPTIONAL SAFETY CHECK (RECOMMENDED)
+- Add a defensive parser wrapper used by ALL API calls:
+  - If response has .json() function (fetch), call it
+  - Else (axios), use res.data
+- Apply the wrapper to login + create chapter + any other API calls.
+
+ACCEPTANCE TESTS (MUST PASS):
+- Admin can create a Chapter account without errors.
+- No "response.json is not a function" during chapter creation.
+- Backend returns JSON in all success/failure cases.
+- Duplicate username or chapter creation shows a readable error message.
+- Newly created chapter appears in the chapters list immediately.

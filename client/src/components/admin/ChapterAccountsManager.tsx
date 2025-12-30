@@ -36,8 +36,7 @@ export default function ChapterAccountsManager() {
 
   const createUserMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/chapter-users", data);
-      return res.json();
+      return await apiRequest("POST", "/api/chapter-users", data);
     },
     onSuccess: () => {
       toast({ title: "Success", description: "Chapter user created successfully" });
@@ -53,8 +52,7 @@ export default function ChapterAccountsManager() {
 
   const updateUserMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) => {
-      const res = await apiRequest("PUT", `/api/chapter-users/${id}`, data);
-      return res.json();
+      return await apiRequest("PUT", `/api/chapter-users/${id}`, data);
     },
     onSuccess: () => {
       toast({ title: "Success", description: "User updated successfully" });

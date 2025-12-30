@@ -94,8 +94,7 @@ export default function ChapterDashboard() {
 
   const submitReportMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/project-reports", data);
-      return res.json();
+      return await apiRequest("POST", "/api/project-reports", data);
     },
     onSuccess: () => {
       toast({ title: "Success", description: "Project report submitted successfully" });
@@ -113,8 +112,7 @@ export default function ChapterDashboard() {
 
   const changePasswordMutation = useMutation({
     mutationFn: async (newPassword: string) => {
-      const res = await apiRequest("POST", "/api/auth/change-password", { newPassword });
-      return res.json();
+      return await apiRequest("POST", "/api/auth/change-password", { newPassword });
     },
     onSuccess: () => {
       toast({ title: "Success", description: "Password changed successfully" });

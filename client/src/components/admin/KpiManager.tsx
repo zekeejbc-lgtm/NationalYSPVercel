@@ -40,8 +40,7 @@ export default function KpiManager() {
 
   const saveKpiMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await apiRequest("POST", "/api/chapter-kpis", data);
-      return res.json();
+      return await apiRequest("POST", "/api/chapter-kpis", data);
     },
     onSuccess: () => {
       toast({ title: "Success", description: "KPIs saved successfully" });
