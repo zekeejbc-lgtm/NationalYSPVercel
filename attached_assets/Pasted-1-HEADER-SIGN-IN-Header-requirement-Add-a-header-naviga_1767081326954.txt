@@ -1,0 +1,254 @@
+1) HEADER + SIGN-IN
+
+Header requirement
+
+Add a header navigation item: “Sign In”
+
+Clicking Sign In opens a login page/modal with role selection:
+
+Sign in as Chapter
+
+Sign in as Admin
+
+Auth
+
+Chapters login using credentials created by Admin.
+
+Admin login is separate (single admin account or admin table).
+
+After login, route users to their role dashboard.
+
+2) DATA MODELS (DATABASE)
+
+Create these tables/collections:
+
+chapters
+
+id
+
+chapter_name
+
+contact_person
+
+contact_number
+
+email (optional)
+
+facebook_link
+
+nextgen_batch (string; e.g., “Batch 1”, “Batch 2”)
+
+created_at, updated_at
+
+chapter_users
+
+id
+
+chapter_id (FK)
+
+username or email
+
+password_hash
+
+role = "CHAPTER"
+
+is_active
+
+created_at
+
+admin_users
+
+id
+
+username or email
+
+password_hash
+
+role = "ADMIN"
+
+project_reports
+
+id
+
+chapter_id (FK)
+
+project_name
+
+project_writeup (text)
+
+photo_url (or uploaded file reference)
+
+facebook_post_link
+
+created_at
+
+publications
+
+id
+
+chapter_id (FK)
+
+source_project_report_id (FK)
+
+title (use project_name)
+
+content (use project_writeup)
+
+photo_url
+
+facebook_post_link
+
+created_at
+
+chapter_kpis
+
+id
+
+chapter_id (FK)
+
+year (e.g., 2026)
+
+KPI fields (store as flexible JSON OR explicit fields)
+
+Example if JSON: kpis_json (e.g., {projects_completed: 0, volunteers: 0, beneficiaries: 0, funds_raised: 0})
+
+updated_at
+
+3) CHAPTER DASHBOARD (ROLE: CHAPTER)
+
+After Chapter login, show these sections:
+
+A) Project Report Submission Panel (MAIN)
+
+Create a form with required fields:
+
+Project Name (required)
+
+Project Writeup (required; multi-line)
+
+Photo upload (required OR optional depending on your preference—default required)
+
+Facebook Link (required)
+
+On Submit:
+
+Save to project_reports
+
+Automatically create a matching entry in publications:
+
+title = Project Name
+
+content = Project Writeup
+
+photo_url = Photo
+
+facebook_post_link = Facebook Link
+
+source_project_report_id = project_reports.id
+
+B) Publications Panel (Read-only for Chapter)
+
+Show a feed of publications (latest first)
+
+Filter options:
+
+All chapters
+
+My chapter only
+
+Each card shows: title, photo, writeup preview, chapter name, facebook link, date
+
+C) Interactive Chapters Board / Directory (Read-only for Chapter)
+
+Create a visual “board” or directory (cards or map-style list):
+
+Chapter name
+
+Contact person + contact number
+
+Facebook link (clickable)
+
+NextGen batch
+
+Include:
+
+Search by chapter name
+
+Sort A–Z
+
+D) Chapter KPIs (Read-only for Chapter; editable only if Admin sets)
+
+Show KPIs for the current year
+
+Display clean KPI cards (e.g., Projects, Volunteers, Beneficiaries, etc.)
+
+If using JSON KPIs, render key-value pairs neatly.
+
+E) Leaderboard (Top 5)
+
+Leaderboard is based on project reports count:
+
+Top 5 chapters with the highest number of project reports (all-time or per year—default all-time unless year filtering is implemented)
+Display:
+
+Rank, chapter name, # of reports
+
+4) ADMIN DASHBOARD (ROLE: ADMIN)
+
+Admin has full control.
+
+A) Chapter Account Management
+
+Admin can:
+
+Create Chapter profile (in chapters) including:
+
+Chapter name
+
+Contact details
+
+Facebook link
+
+NextGen batch
+
+Create Chapter login credentials (in chapter_users):
+
+Username/email + temp password
+
+Force password change on first login (optional but recommended)
+
+Disable/enable chapter accounts
+
+B) KPI Management
+
+Admin can set/edit KPIs per chapter:
+
+Select chapter
+
+Select year
+
+Input KPI values
+
+Save to chapter_kpis
+
+5) VALIDATIONS + UX RULES
+
+Required fields cannot be empty.
+
+Photo uploads must accept common image types.
+
+Facebook links should be validated as URLs (basic validation).
+
+All pages must be responsive and clean.
+
+Role-based route protection:
+
+Chapter cannot access Admin pages
+
+Admin can access everything
+
+6) LEADERBOARD COMPUTATION (DEFINITION)
+
+Leaderboard metric = count(project_reports) grouped by chapter
+
+Show top 5 descending

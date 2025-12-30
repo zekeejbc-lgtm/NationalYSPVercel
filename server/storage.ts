@@ -1,6 +1,8 @@
 import { 
-  type User, 
-  type InsertUser,
+  type AdminUser, 
+  type InsertAdminUser,
+  type ChapterUser,
+  type InsertChapterUser,
   type Program,
   type InsertProgram,
   type Chapter,
@@ -13,21 +15,35 @@ import {
   type InsertContactInfo,
   type Publication,
   type InsertPublication,
-  users,
+  type ProjectReport,
+  type InsertProjectReport,
+  type ChapterKpi,
+  type InsertChapterKpi,
+  adminUsers,
+  chapterUsers,
   programs,
   chapters,
   volunteerOpportunities,
   stats,
   contactInfo,
-  publications
+  publications,
+  projectReports,
+  chapterKpis
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getAdminUser(id: string): Promise<AdminUser | undefined>;
+  getAdminUserByUsername(username: string): Promise<AdminUser | undefined>;
+  createAdminUser(user: InsertAdminUser): Promise<AdminUser>;
+
+  getChapterUser(id: string): Promise<ChapterUser | undefined>;
+  getChapterUserByUsername(username: string): Promise<ChapterUser | undefined>;
+  getChapterUsersByChapterId(chapterId: string): Promise<ChapterUser[]>;
+  createChapterUser(user: InsertChapterUser): Promise<ChapterUser>;
+  updateChapterUser(id: string, user: Partial<InsertChapterUser>): Promise<ChapterUser | undefined>;
+  deleteChapterUser(id: string): Promise<boolean>;
 
   getPrograms(): Promise<Program[]>;
   getProgram(id: string): Promise<Program | undefined>;
@@ -54,28 +70,72 @@ export interface IStorage {
   updateContactInfo(info: InsertContactInfo): Promise<ContactInfo>;
 
   getPublications(): Promise<Publication[]>;
+  getPublicationsByChapter(chapterId: string): Promise<Publication[]>;
   getPublication(id: string): Promise<Publication | undefined>;
   createPublication(publication: InsertPublication): Promise<Publication>;
   updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
   deletePublication(id: string): Promise<boolean>;
 
+  getProjectReports(): Promise<ProjectReport[]>;
+  getProjectReportsByChapter(chapterId: string): Promise<ProjectReport[]>;
+  getProjectReport(id: string): Promise<ProjectReport | undefined>;
+  createProjectReport(report: InsertProjectReport): Promise<ProjectReport>;
+  updateProjectReport(id: string, report: Partial<InsertProjectReport>): Promise<ProjectReport | undefined>;
+  deleteProjectReport(id: string): Promise<boolean>;
+
+  getChapterKpis(chapterId: string): Promise<ChapterKpi[]>;
+  getChapterKpiByYear(chapterId: string, year: number): Promise<ChapterKpi | undefined>;
+  createChapterKpi(kpi: InsertChapterKpi): Promise<ChapterKpi>;
+  updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined>;
+
+  getLeaderboard(): Promise<{ chapterId: string; chapterName: string; reportCount: number }[]>;
+
   initializeDefaultData(): Promise<void>;
 }
 
 export class DbStorage implements IStorage {
-  async getUser(id: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.id, id));
+  async getAdminUser(id: string): Promise<AdminUser | undefined> {
+    const result = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
     return result[0];
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.username, username));
+  async getAdminUserByUsername(username: string): Promise<AdminUser | undefined> {
+    const result = await db.select().from(adminUsers).where(eq(adminUsers.username, username));
     return result[0];
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const result = await db.insert(users).values(insertUser).returning();
+  async createAdminUser(insertUser: InsertAdminUser): Promise<AdminUser> {
+    const result = await db.insert(adminUsers).values(insertUser).returning();
     return result[0];
+  }
+
+  async getChapterUser(id: string): Promise<ChapterUser | undefined> {
+    const result = await db.select().from(chapterUsers).where(eq(chapterUsers.id, id));
+    return result[0];
+  }
+
+  async getChapterUserByUsername(username: string): Promise<ChapterUser | undefined> {
+    const result = await db.select().from(chapterUsers).where(eq(chapterUsers.username, username));
+    return result[0];
+  }
+
+  async getChapterUsersByChapterId(chapterId: string): Promise<ChapterUser[]> {
+    return db.select().from(chapterUsers).where(eq(chapterUsers.chapterId, chapterId));
+  }
+
+  async createChapterUser(user: InsertChapterUser): Promise<ChapterUser> {
+    const result = await db.insert(chapterUsers).values(user).returning();
+    return result[0];
+  }
+
+  async updateChapterUser(id: string, user: Partial<InsertChapterUser>): Promise<ChapterUser | undefined> {
+    const result = await db.update(chapterUsers).set(user).where(eq(chapterUsers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteChapterUser(id: string): Promise<boolean> {
+    const result = await db.delete(chapterUsers).where(eq(chapterUsers.id, id)).returning();
+    return result.length > 0;
   }
 
   async getPrograms(): Promise<Program[]> {
@@ -117,7 +177,10 @@ export class DbStorage implements IStorage {
   }
 
   async updateChapter(id: string, chapter: Partial<InsertChapter>): Promise<Chapter | undefined> {
-    const result = await db.update(chapters).set(chapter).where(eq(chapters.id, id)).returning();
+    const result = await db.update(chapters).set({
+      ...chapter,
+      updatedAt: new Date()
+    }).where(eq(chapters.id, id)).returning();
     return result[0];
   }
 
@@ -212,6 +275,10 @@ export class DbStorage implements IStorage {
     return db.select().from(publications).orderBy(desc(publications.publishedAt));
   }
 
+  async getPublicationsByChapter(chapterId: string): Promise<Publication[]> {
+    return db.select().from(publications).where(eq(publications.chapterId, chapterId)).orderBy(desc(publications.publishedAt));
+  }
+
   async getPublication(id: string): Promise<Publication | undefined> {
     const result = await db.select().from(publications).where(eq(publications.id, id));
     return result[0];
@@ -232,10 +299,81 @@ export class DbStorage implements IStorage {
     return result.length > 0;
   }
 
+  async getProjectReports(): Promise<ProjectReport[]> {
+    return db.select().from(projectReports).orderBy(desc(projectReports.createdAt));
+  }
+
+  async getProjectReportsByChapter(chapterId: string): Promise<ProjectReport[]> {
+    return db.select().from(projectReports).where(eq(projectReports.chapterId, chapterId)).orderBy(desc(projectReports.createdAt));
+  }
+
+  async getProjectReport(id: string): Promise<ProjectReport | undefined> {
+    const result = await db.select().from(projectReports).where(eq(projectReports.id, id));
+    return result[0];
+  }
+
+  async createProjectReport(report: InsertProjectReport): Promise<ProjectReport> {
+    const result = await db.insert(projectReports).values(report).returning();
+    return result[0];
+  }
+
+  async updateProjectReport(id: string, report: Partial<InsertProjectReport>): Promise<ProjectReport | undefined> {
+    const result = await db.update(projectReports).set(report).where(eq(projectReports.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteProjectReport(id: string): Promise<boolean> {
+    const result = await db.delete(projectReports).where(eq(projectReports.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getChapterKpis(chapterId: string): Promise<ChapterKpi[]> {
+    return db.select().from(chapterKpis).where(eq(chapterKpis.chapterId, chapterId)).orderBy(desc(chapterKpis.year));
+  }
+
+  async getChapterKpiByYear(chapterId: string, year: number): Promise<ChapterKpi | undefined> {
+    const result = await db.select().from(chapterKpis).where(
+      and(eq(chapterKpis.chapterId, chapterId), eq(chapterKpis.year, year))
+    );
+    return result[0];
+  }
+
+  async createChapterKpi(kpi: InsertChapterKpi): Promise<ChapterKpi> {
+    const result = await db.insert(chapterKpis).values(kpi).returning();
+    return result[0];
+  }
+
+  async updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined> {
+    const result = await db.update(chapterKpis).set({
+      ...kpi,
+      updatedAt: new Date()
+    }).where(eq(chapterKpis.id, id)).returning();
+    return result[0];
+  }
+
+  async getLeaderboard(): Promise<{ chapterId: string; chapterName: string; reportCount: number }[]> {
+    const result = await db.execute(sql`
+      SELECT 
+        c.id as chapter_id,
+        c.name as chapter_name,
+        COUNT(pr.id)::int as report_count
+      FROM chapters c
+      LEFT JOIN project_reports pr ON c.id = pr.chapter_id
+      GROUP BY c.id, c.name
+      ORDER BY report_count DESC
+      LIMIT 5
+    `);
+    return (result.rows as any[]).map(row => ({
+      chapterId: row.chapter_id,
+      chapterName: row.chapter_name,
+      reportCount: row.report_count || 0
+    }));
+  }
+
   async initializeDefaultData(): Promise<void> {
-    const existingAdmin = await this.getUserByUsername("admin");
+    const existingAdmin = await this.getAdminUserByUsername("admin");
     if (!existingAdmin) {
-      await this.createUser({
+      await this.createAdminUser({
         username: "admin",
         password: "admin123"
       });
