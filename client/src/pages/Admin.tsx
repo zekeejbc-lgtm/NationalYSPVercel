@@ -27,14 +27,14 @@ export default function Admin() {
   }, []);
 
   const checkAuth = async () => {
-    console.log("[Admin] Dashboard mounted, checking auth...");
+    console.log("[Admin] DASHBOARD_MOUNTED, checking auth...");
     try {
       const response = await fetch("/api/auth/check", { credentials: "include" });
       const data = await response.json();
-      console.log("[Admin] Auth check result:", data);
+      console.log("[Admin] Auth check result:", { authenticated: data.authenticated, role: data.user?.role });
       
       if (data.authenticated && data.user?.role === "admin") {
-        console.log("[Admin] Authenticated as admin, loading dashboard");
+        console.log("[Admin] AUTH_STATE: authenticated=true, role=ADMIN");
         setAuthenticated(true);
       } else if (data.authenticated && data.user?.role === "chapter") {
         console.log("[Admin] User is chapter, redirecting to /chapter-dashboard");

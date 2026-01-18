@@ -53,6 +53,9 @@ export default function ChapterDashboard() {
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   
   const [projectName, setProjectName] = useState("");
   const [projectWriteup, setProjectWriteup] = useState("");
@@ -64,48 +67,59 @@ export default function ChapterDashboard() {
   const [chapterSearch, setChapterSearch] = useState("");
   const [chapterSort, setChapterSort] = useState<"asc" | "desc">("asc");
 
-  const { data: authData, isLoading: authLoading } = useQuery<{ authenticated: boolean; user?: AuthUser }>({
-    queryKey: ["/api/auth/check"],
-  });
-
   const { data: publications = [] } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
+    enabled: authenticated,
   });
 
   const { data: chapters = [] } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
+    enabled: authenticated,
   });
 
-
   useEffect(() => {
-    console.log("[Chapter] Dashboard mounted, auth state:", { authLoading, authenticated: authData?.authenticated, role: authData?.user?.role });
+    const checkAuth = async () => {
+      console.log("[Chapter] DASHBOARD_MOUNTED, checking auth...");
+      try {
+        const response = await fetch("/api/auth/check", { credentials: "include" });
+        const data = await response.json();
+        console.log("[Chapter] Auth check result:", { authenticated: data.authenticated, role: data.user?.role });
+        
+        if (!data.authenticated) {
+          console.log("[Chapter] Not authenticated, redirecting to /login");
+          setLocation("/login");
+          return;
+        }
+        
+        if (data.user?.role === "admin") {
+          console.log("[Chapter] User is admin, redirecting to /admin");
+          setLocation("/admin");
+          return;
+        }
+        
+        if (data.user?.role !== "chapter") {
+          console.log("[Chapter] Unknown role:", data.user?.role, "redirecting to /login");
+          setLocation("/login");
+          return;
+        }
+        
+        console.log("[Chapter] AUTH_STATE: authenticated=true, role=CHAPTER, chapterName:", data.user?.chapterName);
+        setAuthenticated(true);
+        setAuthUser(data.user);
+        
+        if (data.user?.mustChangePassword) {
+          setShowPasswordDialog(true);
+        }
+      } catch (error) {
+        console.log("[Chapter] Auth check error:", error);
+        setLocation("/login");
+      } finally {
+        setLoading(false);
+      }
+    };
     
-    if (!authLoading) {
-      if (!authData?.authenticated) {
-        console.log("[Chapter] Not authenticated, redirecting to /login");
-        setLocation("/login");
-        return;
-      } 
-      
-      if (authData.user?.role === "admin") {
-        console.log("[Chapter] User is admin, redirecting to /admin");
-        setLocation("/admin");
-        return;
-      } 
-      
-      if (authData.user?.role !== "chapter") {
-        console.log("[Chapter] Unknown role:", authData.user?.role, "redirecting to /login");
-        setLocation("/login");
-        return;
-      }
-      
-      console.log("[Chapter] Authenticated as chapter:", authData.user?.chapterName, "chapterId:", authData.user?.chapterId);
-      
-      if (authData?.user?.mustChangePassword) {
-        setShowPasswordDialog(true);
-      }
-    }
-  }, [authData, authLoading, setLocation]);
+    checkAuth();
+  }, [setLocation]);
 
   const submitReportMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -198,7 +212,7 @@ export default function ChapterDashboard() {
 
   const filteredPublications = publications.filter(pub => {
     if (publicationFilter === "mine") {
-      return pub.chapterId === authData?.user?.chapterId;
+      return pub.chapterId === authUser?.chapterId;
     }
     return true;
   });
@@ -219,8 +233,8 @@ export default function ChapterDashboard() {
         : b.name.localeCompare(a.name)
     );
 
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center">Loading dashboard...</div>;
   }
 
   return (
@@ -231,7 +245,7 @@ export default function ChapterDashboard() {
             <img src="/images/ysp-logo.png" alt="YSP Logo" className="h-10 w-auto" />
             <div>
               <h1 className="font-semibold">Chapter Dashboard</h1>
-              <p className="text-sm text-muted-foreground">{authData?.user?.chapterName}</p>
+              <p className="text-sm text-muted-foreground">{authUser?.chapterName}</p>
             </div>
           </div>
           <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
@@ -354,26 +368,26 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="officers">
-            {authData?.user?.chapterId && (
-              <OfficersPanel chapterId={authData.user.chapterId} />
+            {authUser?.chapterId && (
+              <OfficersPanel chapterId={authUser.chapterId} />
             )}
           </TabsContent>
 
           <TabsContent value="kpis">
-            {authData?.user?.chapterId && (
-              <ChapterKpiPanel chapterId={authData.user.chapterId} />
+            {authUser?.chapterId && (
+              <ChapterKpiPanel chapterId={authUser.chapterId} />
             )}
           </TabsContent>
 
           <TabsContent value="volunteer">
-            {authData?.user?.chapterId && (
-              <VolunteerOpportunityPanel chapterId={authData.user.chapterId} />
+            {authUser?.chapterId && (
+              <VolunteerOpportunityPanel chapterId={authUser.chapterId} />
             )}
           </TabsContent>
 
           <TabsContent value="social">
-            {authData?.user?.chapterId && (
-              <SocialMediaPanel chapterId={authData.user.chapterId} />
+            {authUser?.chapterId && (
+              <SocialMediaPanel chapterId={authUser.chapterId} />
             )}
           </TabsContent>
 
@@ -502,13 +516,13 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="leaderboard">
-            <EnhancedLeaderboard currentChapterId={authData?.user?.chapterId} />
+            <EnhancedLeaderboard currentChapterId={authUser?.chapterId} />
           </TabsContent>
         </Tabs>
       </main>
 
       <Dialog open={showPasswordDialog} onOpenChange={(open) => {
-        if (!authData?.user?.mustChangePassword) {
+        if (!authUser?.mustChangePassword) {
           setShowPasswordDialog(open);
         }
       }}>

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,74 +28,100 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [pendingRedirect, setPendingRedirect] = useState<{ role: string; mustChangePassword?: boolean } | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const hasRedirected = useRef(false);
 
-  const { data: authData, isLoading: authLoading, refetch } = useQuery<AuthResponse>({
-    queryKey: ["/api/auth/check"],
-  });
-
   useEffect(() => {
-    console.log("[Login] Auth state:", { authLoading, authenticated: authData?.authenticated, role: authData?.user?.role, pendingRedirect, hasRedirected: hasRedirected.current });
+    hasRedirected.current = false;
     
-    if (hasRedirected.current) return;
-    
-    if (!authLoading && authData?.authenticated && authData.user) {
-      const userRole = authData.user.role;
-      console.log("[Login] Already authenticated, role:", userRole);
-      hasRedirected.current = true;
-      
-      if (userRole === "admin") {
-        console.log("[Login] Redirecting to /admin");
-        setLocation("/admin");
-      } else if (userRole === "chapter") {
-        console.log("[Login] Redirecting to /chapter-dashboard");
-        if (authData.user.mustChangePassword) {
-          setLocation("/chapter-dashboard?changePassword=true");
+    const checkExistingAuth = async () => {
+      console.log("[Login] Checking existing auth...");
+      try {
+        const response = await fetch("/api/auth/check", { credentials: "include" });
+        const data: AuthResponse = await response.json();
+        console.log("[Login] Auth check result:", data);
+        
+        if (data.authenticated && data.user) {
+          const userRole = data.user.role;
+          console.log("[Login] Already authenticated, role:", userRole);
+          
+          if (userRole === "admin") {
+            console.log("[Login] Redirecting to /admin");
+            hasRedirected.current = true;
+            setLocation("/admin");
+            return;
+          } else if (userRole === "chapter") {
+            console.log("[Login] Redirecting to /chapter-dashboard");
+            hasRedirected.current = true;
+            if (data.user.mustChangePassword) {
+              setLocation("/chapter-dashboard?changePassword=true");
+            } else {
+              setLocation("/chapter-dashboard");
+            }
+            return;
+          } else {
+            console.log("[Login] Unknown role:", userRole);
+            toast({
+              title: "Error",
+              description: "Role not found. Please contact admin.",
+              variant: "destructive",
+            });
+          }
         } else {
-          setLocation("/chapter-dashboard");
+          console.log("[Login] Not authenticated, showing login form");
         }
-      } else {
-        console.log("[Login] Unknown role:", userRole);
-        hasRedirected.current = false;
-        toast({
-          title: "Error",
-          description: "Role not found. Please contact admin.",
-          variant: "destructive",
-        });
+      } catch (error) {
+        console.log("[Login] Auth check error:", error);
+      } finally {
+        setCheckingAuth(false);
       }
-    }
-  }, [authData, authLoading, setLocation, toast]);
+    };
+    
+    checkExistingAuth();
+  }, [setLocation, toast]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    console.log("[Login] Login started");
+    console.log("[Login] LOGIN_STARTED");
 
     try {
       const endpoint = role === "admin" ? "/api/auth/login/admin" : "/api/auth/login/chapter";
       console.log("[Login] Attempting login as:", role, "endpoint:", endpoint);
       
-      const data = await apiRequest("POST", endpoint, { username, password });
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || "Invalid credentials");
+      }
+      
+      const data = await response.json();
+      console.log("[Login] LOGIN_SUCCESS, payload keys:", Object.keys(data));
       console.log("[Login] Login response:", data);
       
       if (!data?.success) {
         throw new Error("Login failed");
       }
       
-      console.log("[Login] Session saved, role:", data.user?.role);
+      console.log("[Login] TOKEN_SAVED: true");
+      console.log("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
+      
+      const targetPath = role === "admin" ? "/admin" : "/chapter-dashboard";
+      console.log("[Login] REDIRECT_TO:", targetPath);
       
       toast({
         title: "Success",
         description: "Logged in successfully",
       });
       
-      console.log("[Login] Refetching auth state...");
-      await queryClient.refetchQueries({ queryKey: ["/api/auth/check"] });
-      console.log("[Login] Auth refetch complete");
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       
-      const targetPath = role === "admin" ? "/admin" : "/chapter-dashboard";
-      console.log("[Login] Redirecting to:", targetPath);
       hasRedirected.current = true;
       
       if (role === "admin") {
@@ -120,7 +145,7 @@ export default function Login() {
     }
   };
 
-  if (authLoading) {
+  if (checkingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30">
         <p className="text-muted-foreground">Loading...</p>

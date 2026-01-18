@@ -1,0 +1,108 @@
+Problem: I already tried fixing this 3 times. After a successful login (Admin or Chapter), the app STILL does not route to the correct dashboard. It stays on login / wrong page / blank screen.
+
+Goal: After login success, ALWAYS redirect correctly and dashboard should load.
+
+1) First: confirm if login is actually succeeding
+
+Do NOT assume. Add temporary logs and verify:
+
+Login request returns 200/OK
+
+Response includes: token/session + user + role (or at least user id)
+
+Token/session is actually saved (localStorage/cookie) and readable on next page
+
+Add console logs:
+
+LOGIN_SUCCESS, show returned payload keys (not sensitive)
+
+TOKEN_SAVED (true/false)
+
+ROLE_RESOLVED: ADMIN/CHAPTER/UNKNOWN
+
+REDIRECT_TO: /admin/dashboard or /chapter/dashboard
+
+On dashboard component: DASHBOARD_MOUNTED and show auth state values
+
+2) Make redirect happen ONLY after auth state is ready (common root cause)
+
+If using React/Next:
+
+The redirect must happen after setAuth(...) finishes and the app has updated state.
+
+Implement redirect in a useEffect watching isAuthenticated + role.
+
+Example logic (implement in your current style, no big refactor):
+
+After login: save token → set auth state → role resolved
+
+useEffect(() => { if (isAuthenticated && role) redirectBasedOnRole(); }, [isAuthenticated, role])
+
+This prevents redirect firing too early.
+
+3) Fix role source of truth (do not rely on inconsistent data)
+
+Make role retrieval consistent:
+
+Prefer: role returned directly from login response.
+
+If not available: immediately fetch /me (or equivalent) using the token to get role.
+
+Normalize role string (trim + uppercase).
+
+If still missing: show error “Role missing in account”.
+
+4) Fix route guards that might be forcing user back to login
+
+Check ProtectedRoute / middleware:
+
+If it reads auth from a stale state, it can instantly push back to /login.
+
+Ensure guard checks token existence AND validity correctly.
+
+Ensure guard does NOT run before token is loaded (add “auth loading” state).
+
+Required behavior:
+
+If token exists but auth state still loading → show “Loading…” (do not redirect yet)
+
+If no token → go to /login
+
+If token + role ok → allow dashboard route
+
+5) Fix navigation method (ensure correct router usage)
+
+Depending on framework:
+
+Next.js App Router: use router.replace() not push, in client component.
+
+React Router: use navigate("/admin/dashboard", { replace: true })
+
+Ensure redirect is not blocked by returning early or by form submit reload.
+
+Also ensure login submit handler prevents full reload:
+
+event.preventDefault() for forms
+
+6) If redirect works but dashboard is blank, handle loading/errors
+
+On dashboard:
+
+Add a basic loading UI while fetching data
+
+If API call fails (401), show “Session expired” and logout
+
+Acceptance tests (must pass)
+
+✅ Admin login → goes to /admin/dashboard
+✅ Chapter login → goes to /chapter/dashboard
+✅ Refresh dashboard → stays logged in and loads
+✅ Logout → returns to login and blocks dashboards
+
+Constraints
+
+Keep changes minimal (no redesign).
+
+Fix core auth + redirect + route guard logic.
+
+Remove debug logs after confirming fix.
