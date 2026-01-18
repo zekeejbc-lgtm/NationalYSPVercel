@@ -18,10 +18,56 @@ export const chapters = pgTable("chapters", {
   contactPerson: text("contact_person"),
   email: text("email"),
   facebookLink: text("facebook_link"),
+  instagramLink: text("instagram_link"),
   nextgenBatch: text("nextgen_batch"),
   photo: text("photo"),
   latitude: text("latitude"),
   longitude: text("longitude"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const members = pgTable("members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fullName: text("full_name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  chapterId: varchar("chapter_id").references(() => chapters.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const chapterOfficers = pgTable("chapter_officers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  position: text("position").notNull(),
+  fullName: text("full_name").notNull(),
+  contactNumber: text("contact_number").notNull(),
+  chapterEmail: text("chapter_email").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const kpiTemplates = pgTable("kpi_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  timeframe: text("timeframe").notNull(),
+  inputType: text("input_type").notNull().default("numeric"),
+  year: integer("year").notNull(),
+  quarter: integer("quarter"),
+  targetValue: integer("target_value"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const kpiCompletions = pgTable("kpi_completions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  kpiTemplateId: varchar("kpi_template_id").notNull().references(() => kpiTemplates.id),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  numericValue: integer("numeric_value"),
+  textValue: text("text_value"),
+  isCompleted: boolean("is_completed").default(false).notNull(),
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -76,13 +122,17 @@ export const programs = pgTable("programs", {
 
 export const volunteerOpportunities = pgTable("volunteer_opportunities", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").references(() => chapters.id),
   eventName: text("event_name").notNull(),
   date: timestamp("date").notNull(),
+  time: text("time").notNull(),
+  venue: text("venue").notNull(),
   chapter: text("chapter").notNull(),
-  sdgs: text("sdgs").notNull(),
+  sdgs: text("sdgs"),
   contactName: text("contact_name").notNull(),
   contactPhone: text("contact_phone").notNull(),
   contactEmail: text("contact_email"),
+  ageRequirement: text("age_requirement").default("18+").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -153,6 +203,28 @@ export const insertContactInfoSchema = createInsertSchema(contactInfo).omit({
   updatedAt: true,
 });
 
+export const insertMemberSchema = createInsertSchema(members).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertChapterOfficerSchema = createInsertSchema(chapterOfficers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertKpiTemplateSchema = createInsertSchema(kpiTemplates).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertKpiCompletionSchema = createInsertSchema(kpiCompletions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
 
@@ -182,6 +254,18 @@ export type InsertStats = z.infer<typeof insertStatsSchema>;
 
 export type ContactInfo = typeof contactInfo.$inferSelect;
 export type InsertContactInfo = z.infer<typeof insertContactInfoSchema>;
+
+export type Member = typeof members.$inferSelect;
+export type InsertMember = z.infer<typeof insertMemberSchema>;
+
+export type ChapterOfficer = typeof chapterOfficers.$inferSelect;
+export type InsertChapterOfficer = z.infer<typeof insertChapterOfficerSchema>;
+
+export type KpiTemplate = typeof kpiTemplates.$inferSelect;
+export type InsertKpiTemplate = z.infer<typeof insertKpiTemplateSchema>;
+
+export type KpiCompletion = typeof kpiCompletions.$inferSelect;
+export type InsertKpiCompletion = z.infer<typeof insertKpiCompletionSchema>;
 
 export type KpisData = {
   projectsCompleted?: number;

@@ -1,0 +1,96 @@
+A. ADMIN DASHBOARD UPDATES
+1. KPIs (Key Performance Indicators)
+* Modify existing KPIs to include Number of Members per Area/Chapter
+* Allow KPIs to be categorized by timeframe:
+    * Quarterly
+    * Yearly
+    * Both (Quarterly + Yearly) 
+* KPIs should support two input types:
+    * Numeric values (e.g., number of members, activities, volunteers)
+    * Text/qualitative input (short descriptive notes or summaries) 
+* Admin must be able to:
+    * Set KPI type (Quarterly / Yearly / Both)
+    * Edit and update KPIs per period
+    * View KPIs per quarter and per year
+
+2. Member List Access
+* Give Admin full access to the list of YSP members
+* Data source: members encoded/registered via the website
+* Admin view should include:
+    * Name
+    * Chapter / Area
+    * Contact details (if available)
+    * Date registered 
+3. Officer List Access
+* Give Admin access to all officers encoded by chapters
+* Admin should be able to view:
+    * Officer name
+    * Position
+    * Chapter
+    * Contact number
+    * Chapter email
+
+B. CHAPTER DASHBOARD UPDATES
+1. Officers Panel (Chapter Input)
+* Add a dedicated Officers Panel where chapters can input their officers:
+    * City/Municipality President
+    * Program Development Officer
+    * Finance and Treasury Officer
+    * Secretary and Documentation Officer
+    * Partnership and Fundraising Officer
+    * Communications and Marketing Officer 
+* Required fields per officer:
+    * Full Name
+    * Contact Number
+    * Chapter Email Address 
+2. Chapter KPIs
+* Make KPI display more engaging and visual
+* Each KPI should be:
+    * Clearly labeled as Quarterly, Yearly, or Both
+    * Checkable / markable as Completed 
+* KPI Completion Logic:
+    * When a chapter marks a KPI as Done, it should:
+        * Be saved in the system
+        * Increase the chapter’s score/rank in the leaderboard 
+* Chapters should easily track:
+    * Completed KPIs
+    * Pending KPIs
+    * KPIs per quarter and per year
+
+3. Leaderboard
+* Make leaderboard more engaging and competitive
+* Display:
+    * Chapter rankings
+    * KPI completion progress 
+* Leaderboard Views:
+    * Quarterly View
+    * Yearly View 
+* Rankings should be affected by:
+    * Number of KPIs completed
+    * Type of KPI (Quarterly / Yearly / Both) 
+4. Chapter Social Media Panel
+* Add a panel where chapters can input:
+    * Facebook Page Link
+    * Instagram Page Link 
+* These links should be:
+    * Saved per chapter
+    * Viewable by Admin
+    * Optionally displayed on the chapter public profile (if applicable) 
+5. Volunteer Opportunities Panel (Chapter Input)
+* Add a panel where chapters can create volunteer opportunities
+* Add a mandatory disclaimer message shown on all volunteer opportunities: “Volunteers are reminded that they are responsible for their own safety and situational awareness during activities. Participation is advised for individuals 18 years old and above. Volunteers below 18 years old must submit a Parent’s Consent Form prior to participation.” 
+* Required fields:
+    * Name of Activity
+    * Date
+    * Time
+    * Place / Venue
+    * Contact Person
+    * Age Requirement (default: 18+ only) 
+* Logic:
+    * Once submitted, the opportunity should automatically appear on the Main Website Volunteer Opportunities Panel
+    * Ensure data sync between Chapter Dashboard → Main Website 
+GENERAL NOTES FOR IMPLEMENTATION
+* Ensure data integrity between Admin and Chapter dashboards
+* Avoid duplicate records (especially officers and KPIs)
+* Leaderboard calculations must be accurate and real-time
+* UI should prioritize clarity, engagement, and ease of use 

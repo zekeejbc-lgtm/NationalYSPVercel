@@ -13,7 +13,11 @@ import {
   insertPublicationSchema,
   insertProjectReportSchema,
   insertChapterUserSchema,
-  insertChapterKpiSchema
+  insertChapterKpiSchema,
+  insertMemberSchema,
+  insertChapterOfficerSchema,
+  insertKpiTemplateSchema,
+  insertKpiCompletionSchema
 } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
 
@@ -570,8 +574,237 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/leaderboard", async (req, res) => {
-    const leaderboard = await storage.getLeaderboard();
+    const timeframe = req.query.timeframe as string | undefined;
+    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
+    const leaderboard = await storage.getLeaderboard(timeframe, year, quarter);
     res.json(leaderboard);
+  });
+
+  app.get("/api/members", requireAdminAuth, async (req, res) => {
+    const chapterId = req.query.chapterId as string | undefined;
+    const members = chapterId 
+      ? await storage.getMembersByChapter(chapterId)
+      : await storage.getMembers();
+    res.json(members);
+  });
+
+  app.post("/api/members", async (req, res) => {
+    try {
+      const validated = insertMemberSchema.parse(req.body);
+      const member = await storage.createMember(validated);
+      res.json(member);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/members/:id", requireAdminAuth, async (req, res) => {
+    const deleted = await storage.deleteMember(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/officers", requireAdminAuth, async (req, res) => {
+    const officers = await storage.getAllOfficers();
+    res.json(officers);
+  });
+
+  app.get("/api/chapter-officers", requireAuth, async (req, res) => {
+    const chapterId = req.query.chapterId as string;
+    if (!chapterId) {
+      return res.status(400).json({ error: "chapterId required" });
+    }
+    const officers = await storage.getChapterOfficers(chapterId);
+    res.json(officers);
+  });
+
+  app.post("/api/chapter-officers", requireChapterAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId!;
+      const validated = insertChapterOfficerSchema.parse({
+        ...req.body,
+        chapterId
+      });
+      const officer = await storage.createChapterOfficer(validated);
+      res.json(officer);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/chapter-officers/:id", requireChapterAuth, async (req, res) => {
+    try {
+      const validated = insertChapterOfficerSchema.partial().parse(req.body);
+      const officer = await storage.updateChapterOfficer(req.params.id, validated);
+      if (!officer) {
+        return res.status(404).json({ error: "Officer not found" });
+      }
+      res.json(officer);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/chapter-officers/:id", requireChapterAuth, async (req, res) => {
+    const deleted = await storage.deleteChapterOfficer(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Officer not found" });
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/kpi-templates", requireAuth, async (req, res) => {
+    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
+    const templates = await storage.getKpiTemplates(year, quarter);
+    res.json(templates);
+  });
+
+  app.get("/api/kpi-templates/:id", requireAuth, async (req, res) => {
+    const template = await storage.getKpiTemplate(req.params.id);
+    if (!template) {
+      return res.status(404).json({ error: "KPI template not found" });
+    }
+    res.json(template);
+  });
+
+  app.post("/api/kpi-templates", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertKpiTemplateSchema.parse(req.body);
+      const template = await storage.createKpiTemplate(validated);
+      res.json(template);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/kpi-templates/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertKpiTemplateSchema.partial().parse(req.body);
+      const template = await storage.updateKpiTemplate(req.params.id, validated);
+      if (!template) {
+        return res.status(404).json({ error: "KPI template not found" });
+      }
+      res.json(template);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/kpi-templates/:id", requireAdminAuth, async (req, res) => {
+    const deleted = await storage.deleteKpiTemplate(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "KPI template not found" });
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/kpi-completions", requireAuth, async (req, res) => {
+    const chapterId = req.query.chapterId as string;
+    if (!chapterId) {
+      return res.status(400).json({ error: "chapterId required" });
+    }
+    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
+    const completions = await storage.getKpiCompletions(chapterId, year, quarter);
+    res.json(completions);
+  });
+
+  app.post("/api/kpi-completions", requireChapterAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId!;
+      const validated = insertKpiCompletionSchema.parse({
+        ...req.body,
+        chapterId
+      });
+      
+      const existing = await storage.getKpiCompletionByTemplateAndChapter(validated.kpiTemplateId, chapterId);
+      if (existing) {
+        const updated = await storage.updateKpiCompletion(existing.id, validated);
+        return res.json(updated);
+      }
+      
+      const completion = await storage.createKpiCompletion(validated);
+      res.json(completion);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/kpi-completions/:id", requireChapterAuth, async (req, res) => {
+    try {
+      const validated = insertKpiCompletionSchema.partial().parse(req.body);
+      const completion = await storage.updateKpiCompletion(req.params.id, validated);
+      if (!completion) {
+        return res.status(404).json({ error: "KPI completion not found" });
+      }
+      res.json(completion);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.post("/api/kpi-completions/:id/mark-complete", requireChapterAuth, async (req, res) => {
+    const completion = await storage.markKpiCompleted(req.params.id);
+    if (!completion) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+    res.json(completion);
+  });
+
+  app.put("/api/chapters/:id/social-media", requireChapterAuth, async (req, res) => {
+    const chapterId = req.session.chapterId!;
+    if (chapterId !== req.params.id) {
+      return res.status(403).json({ error: "Cannot update another chapter's social media" });
+    }
+    
+    try {
+      const { facebookLink, instagramLink } = req.body;
+      const chapter = await storage.updateChapter(req.params.id, { facebookLink, instagramLink });
+      if (!chapter) {
+        return res.status(404).json({ error: "Chapter not found" });
+      }
+      res.json(chapter);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/volunteer-opportunities/chapter", requireChapterAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId!;
+      const chapter = await storage.getChapter(chapterId);
+      
+      const validated = insertVolunteerOpportunitySchema.parse({
+        ...req.body,
+        chapterId,
+        chapter: chapter?.name || ""
+      });
+      const opportunity = await storage.createVolunteerOpportunity(validated);
+      res.json(opportunity);
+    } catch (error: any) {
+      const validationError = fromZodError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.get("/api/volunteer-opportunities/by-chapter", requireAuth, async (req, res) => {
+    const chapterId = req.query.chapterId as string;
+    if (!chapterId) {
+      return res.status(400).json({ error: "chapterId required" });
+    }
+    const opportunities = await storage.getVolunteerOpportunitiesByChapter(chapterId);
+    res.json(opportunities);
   });
 
   await storage.initializeDefaultData();

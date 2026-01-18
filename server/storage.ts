@@ -19,6 +19,14 @@ import {
   type InsertProjectReport,
   type ChapterKpi,
   type InsertChapterKpi,
+  type Member,
+  type InsertMember,
+  type ChapterOfficer,
+  type InsertChapterOfficer,
+  type KpiTemplate,
+  type InsertKpiTemplate,
+  type KpiCompletion,
+  type InsertKpiCompletion,
   adminUsers,
   chapterUsers,
   programs,
@@ -28,10 +36,14 @@ import {
   contactInfo,
   publications,
   projectReports,
-  chapterKpis
+  chapterKpis,
+  members,
+  chapterOfficers,
+  kpiTemplates,
+  kpiCompletions
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, asc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -89,7 +101,35 @@ export interface IStorage {
   createChapterKpi(kpi: InsertChapterKpi): Promise<ChapterKpi>;
   updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined>;
 
-  getLeaderboard(): Promise<{ chapterId: string; chapterName: string; reportCount: number }[]>;
+  getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]>;
+
+  getMembers(): Promise<Member[]>;
+  getMembersByChapter(chapterId: string): Promise<Member[]>;
+  getMember(id: string): Promise<Member | undefined>;
+  createMember(member: InsertMember): Promise<Member>;
+  deleteMember(id: string): Promise<boolean>;
+
+  getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]>;
+  getAllOfficers(): Promise<ChapterOfficer[]>;
+  getChapterOfficer(id: string): Promise<ChapterOfficer | undefined>;
+  createChapterOfficer(officer: InsertChapterOfficer): Promise<ChapterOfficer>;
+  updateChapterOfficer(id: string, officer: Partial<InsertChapterOfficer>): Promise<ChapterOfficer | undefined>;
+  deleteChapterOfficer(id: string): Promise<boolean>;
+
+  getKpiTemplates(year?: number, quarter?: number): Promise<KpiTemplate[]>;
+  getKpiTemplate(id: string): Promise<KpiTemplate | undefined>;
+  createKpiTemplate(template: InsertKpiTemplate): Promise<KpiTemplate>;
+  updateKpiTemplate(id: string, template: Partial<InsertKpiTemplate>): Promise<KpiTemplate | undefined>;
+  deleteKpiTemplate(id: string): Promise<boolean>;
+
+  getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]>;
+  getKpiCompletion(id: string): Promise<KpiCompletion | undefined>;
+  getKpiCompletionByTemplateAndChapter(templateId: string, chapterId: string): Promise<KpiCompletion | undefined>;
+  createKpiCompletion(completion: InsertKpiCompletion): Promise<KpiCompletion>;
+  updateKpiCompletion(id: string, completion: Partial<InsertKpiCompletion>): Promise<KpiCompletion | undefined>;
+  markKpiCompleted(id: string): Promise<KpiCompletion | undefined>;
+
+  getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]>;
 
   initializeDefaultData(): Promise<void>;
 }
@@ -352,23 +392,166 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  async getLeaderboard(): Promise<{ chapterId: string; chapterName: string; reportCount: number }[]> {
-    const result = await db.execute(sql`
+  async getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]> {
+    let query = sql`
       SELECT 
         c.id as chapter_id,
         c.name as chapter_name,
-        COUNT(pr.id)::int as report_count
+        COUNT(CASE WHEN kc.is_completed = true THEN 1 END)::int as completed_kpis,
+        COUNT(CASE WHEN kc.is_completed = true THEN 1 END)::int as score
       FROM chapters c
-      LEFT JOIN project_reports pr ON c.id = pr.chapter_id
-      GROUP BY c.id, c.name
-      ORDER BY report_count DESC
-      LIMIT 5
-    `);
+      LEFT JOIN kpi_completions kc ON c.id = kc.chapter_id
+      LEFT JOIN kpi_templates kt ON kc.kpi_template_id = kt.id
+      WHERE 1=1
+    `;
+    
+    if (year) {
+      query = sql`${query} AND kt.year = ${year}`;
+    }
+    if (timeframe && timeframe !== 'all') {
+      query = sql`${query} AND kt.timeframe = ${timeframe}`;
+    }
+    if (quarter && timeframe === 'quarterly') {
+      query = sql`${query} AND kt.quarter = ${quarter}`;
+    }
+    
+    query = sql`${query} GROUP BY c.id, c.name ORDER BY score DESC, c.name ASC`;
+    
+    const result = await db.execute(query);
     return (result.rows as any[]).map(row => ({
       chapterId: row.chapter_id,
       chapterName: row.chapter_name,
-      reportCount: row.report_count || 0
+      score: row.score || 0,
+      completedKpis: row.completed_kpis || 0
     }));
+  }
+
+  async getMembers(): Promise<Member[]> {
+    return db.select().from(members).orderBy(desc(members.createdAt));
+  }
+
+  async getMembersByChapter(chapterId: string): Promise<Member[]> {
+    return db.select().from(members).where(eq(members.chapterId, chapterId)).orderBy(members.fullName);
+  }
+
+  async getMember(id: string): Promise<Member | undefined> {
+    const result = await db.select().from(members).where(eq(members.id, id));
+    return result[0];
+  }
+
+  async createMember(member: InsertMember): Promise<Member> {
+    const result = await db.insert(members).values(member).returning();
+    return result[0];
+  }
+
+  async deleteMember(id: string): Promise<boolean> {
+    const result = await db.delete(members).where(eq(members.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]> {
+    return db.select().from(chapterOfficers).where(eq(chapterOfficers.chapterId, chapterId)).orderBy(chapterOfficers.position);
+  }
+
+  async getAllOfficers(): Promise<ChapterOfficer[]> {
+    return db.select().from(chapterOfficers).orderBy(chapterOfficers.chapterId, chapterOfficers.position);
+  }
+
+  async getChapterOfficer(id: string): Promise<ChapterOfficer | undefined> {
+    const result = await db.select().from(chapterOfficers).where(eq(chapterOfficers.id, id));
+    return result[0];
+  }
+
+  async createChapterOfficer(officer: InsertChapterOfficer): Promise<ChapterOfficer> {
+    const result = await db.insert(chapterOfficers).values(officer).returning();
+    return result[0];
+  }
+
+  async updateChapterOfficer(id: string, officer: Partial<InsertChapterOfficer>): Promise<ChapterOfficer | undefined> {
+    const result = await db.update(chapterOfficers).set({
+      ...officer,
+      updatedAt: new Date()
+    }).where(eq(chapterOfficers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteChapterOfficer(id: string): Promise<boolean> {
+    const result = await db.delete(chapterOfficers).where(eq(chapterOfficers.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getKpiTemplates(year?: number, quarter?: number): Promise<KpiTemplate[]> {
+    if (year && quarter) {
+      return db.select().from(kpiTemplates).where(
+        and(eq(kpiTemplates.year, year), eq(kpiTemplates.quarter, quarter))
+      ).orderBy(kpiTemplates.name);
+    } else if (year) {
+      return db.select().from(kpiTemplates).where(eq(kpiTemplates.year, year)).orderBy(kpiTemplates.name);
+    }
+    return db.select().from(kpiTemplates).orderBy(desc(kpiTemplates.year), kpiTemplates.name);
+  }
+
+  async getKpiTemplate(id: string): Promise<KpiTemplate | undefined> {
+    const result = await db.select().from(kpiTemplates).where(eq(kpiTemplates.id, id));
+    return result[0];
+  }
+
+  async createKpiTemplate(template: InsertKpiTemplate): Promise<KpiTemplate> {
+    const result = await db.insert(kpiTemplates).values(template).returning();
+    return result[0];
+  }
+
+  async updateKpiTemplate(id: string, template: Partial<InsertKpiTemplate>): Promise<KpiTemplate | undefined> {
+    const result = await db.update(kpiTemplates).set(template).where(eq(kpiTemplates.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteKpiTemplate(id: string): Promise<boolean> {
+    await db.delete(kpiCompletions).where(eq(kpiCompletions.kpiTemplateId, id));
+    const result = await db.delete(kpiTemplates).where(eq(kpiTemplates.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]> {
+    return db.select().from(kpiCompletions).where(eq(kpiCompletions.chapterId, chapterId)).orderBy(desc(kpiCompletions.createdAt));
+  }
+
+  async getKpiCompletion(id: string): Promise<KpiCompletion | undefined> {
+    const result = await db.select().from(kpiCompletions).where(eq(kpiCompletions.id, id));
+    return result[0];
+  }
+
+  async getKpiCompletionByTemplateAndChapter(templateId: string, chapterId: string): Promise<KpiCompletion | undefined> {
+    const result = await db.select().from(kpiCompletions).where(
+      and(eq(kpiCompletions.kpiTemplateId, templateId), eq(kpiCompletions.chapterId, chapterId))
+    );
+    return result[0];
+  }
+
+  async createKpiCompletion(completion: InsertKpiCompletion): Promise<KpiCompletion> {
+    const result = await db.insert(kpiCompletions).values(completion).returning();
+    return result[0];
+  }
+
+  async updateKpiCompletion(id: string, completion: Partial<InsertKpiCompletion>): Promise<KpiCompletion | undefined> {
+    const result = await db.update(kpiCompletions).set({
+      ...completion,
+      updatedAt: new Date()
+    }).where(eq(kpiCompletions.id, id)).returning();
+    return result[0];
+  }
+
+  async markKpiCompleted(id: string): Promise<KpiCompletion | undefined> {
+    const result = await db.update(kpiCompletions).set({
+      isCompleted: true,
+      completedAt: new Date(),
+      updatedAt: new Date()
+    }).where(eq(kpiCompletions.id, id)).returning();
+    return result[0];
+  }
+
+  async getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]> {
+    return db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.chapterId, chapterId)).orderBy(volunteerOpportunities.date);
   }
 
   async initializeDefaultData(): Promise<void> {
