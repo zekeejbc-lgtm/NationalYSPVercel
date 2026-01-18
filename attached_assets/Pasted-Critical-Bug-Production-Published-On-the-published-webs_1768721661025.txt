@@ -1,0 +1,121 @@
+Critical Bug (Production/Published): On the published website, after signing in as Admin or Chapter, it still does NOT redirect to the correct dashboard.
+
+Goal: Fix production auth + routing so that successful login ALWAYS routes correctly:
+
+Admin → /admin/dashboard
+
+Chapter → /chapter/dashboard
+
+Keep the fix minimal (no redesign, no new features).
+
+1) Reproduce in PUBLISHED environment (not just preview)
+
+Test login on the published URL.
+
+Open DevTools Console + Network and confirm:
+
+Login request returns 200
+
+Token/session is returned
+
+Token/session persists after navigation/refresh
+
+2) Fix production session persistence (MOST LIKELY CAUSE)
+
+In published builds, redirect often fails because session isn’t persisting due to cookie settings or missing env vars.
+
+If using COOKIES:
+
+Ensure cookies are set with correct flags for production:
+
+SameSite=None + Secure=true (if cross-site/https)
+
+Correct cookie domain / path=/
+
+Ensure API uses credentials: "include" when needed.
+
+Confirm cookie exists in Application → Cookies after login.
+
+If using LOCALSTORAGE/JWT:
+
+Ensure token is saved and read from the same domain in production.
+
+Confirm token is present after login and after redirect attempt.
+
+Ensure logout doesn’t accidentally run on app load.
+
+✅ After login, verify: token exists BEFORE redirect.
+
+3) Fix base URL / API URL mismatch in production
+
+Check environment variables used only when published:
+
+API_URL, NEXT_PUBLIC_API_URL, VITE_API_URL, etc.
+If login calls are hitting a wrong URL (or preview URL), role fetch may fail and redirect never happens.
+
+✅ Ensure the published website calls the correct API domain.
+
+4) Make redirect run only AFTER auth is confirmed (production-safe)
+
+Implement redirect in a single reliable place:
+
+After login success:
+
+Save token/session
+
+Fetch user profile/role (or read role from login response)
+
+Update auth state
+
+Redirect based on role using replace (avoid back button issues)
+
+Do not redirect until role is resolved.
+If role is not resolved within the flow, show an error message instead of staying on login silently.
+
+5) Fix route guards causing redirect loops back to /login
+
+In production, guards often run before auth loads and push user back to login.
+
+Required guard behavior:
+
+While auth is loading (token exists but role not yet loaded): show Loading... (do NOT redirect)
+
+If no token: redirect to /login
+
+If token + role:
+
+allow route if correct role
+
+if wrong role: redirect to correct dashboard
+
+6) Add a temporary “Auth Debug Mode” banner (production only while testing)
+
+Add a small text (top right) only when ?debugAuth=1 is in the URL showing:
+
+hasToken: true/false
+
+role: ADMIN/CHAPTER/none
+
+currentPath
+
+This avoids guesswork in production without heavy tools. Remove after fix.
+
+Acceptance Tests (must pass on PUBLISHED site)
+
+Admin login on published URL → redirects to /admin/dashboard
+
+Chapter login on published URL → redirects to /chapter/dashboard
+
+Refresh dashboard → stays logged in
+
+Visiting /login while logged in → auto-redirects to correct dashboard
+
+No redirect loops
+
+Constraints
+
+Minimal code change
+
+No redesign
+
+Remove debug logs/banner after fix is verified

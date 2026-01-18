@@ -96,7 +96,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     req.session.userId = user.id;
     req.session.role = "admin";
-    res.json({ success: true, user: { id: user.id, username: user.username, role: "admin" } });
+    
+    req.session.save((err) => {
+      if (err) {
+        console.error("[Auth] Session save error:", err);
+        return res.status(500).json({ error: "Failed to save session" });
+      }
+      res.json({ success: true, user: { id: user.id, username: user.username, role: "admin" } });
+    });
   });
 
   app.post("/api/auth/login/chapter", async (req, res) => {
@@ -126,16 +133,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     req.session.userId = user.id;
     req.session.role = "chapter";
     req.session.chapterId = user.chapterId;
-    res.json({ 
-      success: true, 
-      user: { 
-        id: user.id, 
-        username: user.username, 
-        role: "chapter",
-        chapterId: user.chapterId,
-        chapterName: chapter?.name || "",
-        mustChangePassword: user.mustChangePassword
-      } 
+    
+    req.session.save((err) => {
+      if (err) {
+        console.error("[Auth] Session save error:", err);
+        return res.status(500).json({ error: "Failed to save session" });
+      }
+      res.json({ 
+        success: true, 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          role: "chapter",
+          chapterId: user.chapterId,
+          chapterName: chapter?.name || "",
+          mustChangePassword: user.mustChangePassword
+        } 
+      });
     });
   });
 

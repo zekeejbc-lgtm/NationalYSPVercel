@@ -22,14 +22,17 @@ interface AuthResponse {
 }
 
 export default function Login() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const [role, setRole] = useState<LoginRole>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [debugInfo, setDebugInfo] = useState<{ hasSession: boolean; role: string; path: string } | null>(null);
   const hasRedirected = useRef(false);
+  
+  const showDebug = typeof window !== "undefined" && window.location.search.includes("debugAuth=1");
 
   useEffect(() => {
     hasRedirected.current = false;
@@ -40,6 +43,14 @@ export default function Login() {
         const response = await fetch("/api/auth/check", { credentials: "include" });
         const data: AuthResponse = await response.json();
         console.log("[Login] Auth check result:", data);
+        
+        if (showDebug) {
+          setDebugInfo({
+            hasSession: data.authenticated,
+            role: data.user?.role || "none",
+            path: window.location.pathname,
+          });
+        }
         
         if (data.authenticated && data.user) {
           const userRole = data.user.role;
@@ -78,7 +89,7 @@ export default function Login() {
     };
     
     checkExistingAuth();
-  }, [setLocation, toast]);
+  }, [setLocation, toast, showDebug]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,9 +156,21 @@ export default function Login() {
     }
   };
 
+  const DebugBanner = () => {
+    if (!showDebug || !debugInfo) return null;
+    return (
+      <div className="fixed top-0 right-0 bg-yellow-100 text-yellow-800 text-xs p-2 rounded-bl z-50 font-mono">
+        <div>hasSession: {String(debugInfo.hasSession)}</div>
+        <div>role: {debugInfo.role}</div>
+        <div>path: {debugInfo.path}</div>
+      </div>
+    );
+  };
+
   if (checkingAuth) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30">
+        <DebugBanner />
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
@@ -156,6 +179,7 @@ export default function Login() {
   if (!role) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
+        <DebugBanner />
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <img 
@@ -197,6 +221,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
+      <DebugBanner />
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <img 
