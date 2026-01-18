@@ -38,7 +38,20 @@ Preferred communication style: Simple, everyday language.
 - Membership: Embedded Google Forms for member registration and chapter creation, plus interactive Leaflet map showing chapter locations
 - Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment
 - Contact: Contact information display with email, phone, and social media links
-- Admin: Protected dashboard for content management (programs, chapters, publications, volunteers, stats, contact info)
+- Admin Dashboard: Protected dashboard for content management with tabs for:
+  - Programs, Chapters, Publications, Volunteer Opportunities, Stats, Contact Info
+  - KPI Templates: Template-based KPI system with quarterly/yearly/both timeframes and numeric/text inputs
+  - Members: View all registered YSP members across chapters
+  - Officers: View all chapter officers organized by chapter
+- Chapter Dashboard: Role-based dashboard for chapter accounts with panels for:
+  - Project Reports: Submit project reports (auto-published to Publications)
+  - Officers: Manage 6 required officer positions (President, Program Dev, Finance, Secretary, Partnership, Communications)
+  - KPIs: View assigned KPI templates with progress tracking and completion marking
+  - Volunteer Opportunities: Create volunteer events with safety disclaimers for age requirements
+  - Social Media: Manage Facebook and Instagram links
+  - Publications: View organization-wide publications
+  - Chapter Directory: View all YSP chapters
+  - Leaderboard: Quarterly/Yearly rankings based on KPI completion scores
 
 ### Backend Architecture
 
