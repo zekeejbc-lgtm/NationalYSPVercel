@@ -22,9 +22,14 @@ export default function Volunteer() {
             {opportunities.map((opportunity) => (
               <VolunteerCard 
                 key={opportunity.id} 
-                {...opportunity}
+                id={opportunity.id}
+                eventName={opportunity.eventName}
                 date={new Date(opportunity.date)}
-                sdgs={opportunity.sdgs.split(',').map(s => parseInt(s.trim()))}
+                chapter={opportunity.chapter}
+                sdgs={opportunity.sdgs ? opportunity.sdgs.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)) : []}
+                contactName={opportunity.contactName}
+                contactPhone={opportunity.contactPhone}
+                contactEmail={opportunity.contactEmail || undefined}
               />
             ))}
           </div>

@@ -191,6 +191,11 @@ export const insertProgramSchema = createInsertSchema(programs).omit({
 export const insertVolunteerOpportunitySchema = createInsertSchema(volunteerOpportunities).omit({
   id: true,
   createdAt: true,
+}).extend({
+  date: z.preprocess(
+    (val) => (typeof val === "string" ? new Date(val) : val),
+    z.date()
+  ),
 });
 
 export const insertStatsSchema = createInsertSchema(stats).omit({

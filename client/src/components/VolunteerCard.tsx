@@ -63,20 +63,22 @@ export default function VolunteerCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div>
-          <p className="text-sm font-medium mb-2">SDGs Impacted:</p>
-          <div className="flex flex-wrap gap-1.5">
-            {sdgs.map((sdg) => (
-              <Badge
-                key={sdg}
-                className={`${SDG_COLORS[sdg]} text-white border-0 hover:${SDG_COLORS[sdg]}`}
-                data-testid={`badge-sdg-${sdg}`}
-              >
-                SDG {sdg}
-              </Badge>
-            ))}
+        {sdgs.length > 0 && (
+          <div>
+            <p className="text-sm font-medium mb-2">SDGs Impacted:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {sdgs.map((sdg) => (
+                <Badge
+                  key={sdg}
+                  className={`${SDG_COLORS[sdg]} text-white border-0 hover:${SDG_COLORS[sdg]}`}
+                  data-testid={`badge-sdg-${sdg}`}
+                >
+                  SDG {sdg}
+                </Badge>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div className="pt-2 border-t">
           <p className="text-sm font-medium mb-2">Contact: {contactName}</p>
           <div className="space-y-1">

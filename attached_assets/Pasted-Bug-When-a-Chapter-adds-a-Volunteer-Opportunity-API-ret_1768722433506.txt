@@ -1,0 +1,119 @@
+Bug: When a Chapter adds a Volunteer Opportunity, API returns:
+
+400: {"error":"Validation error: Expected date, received string at \"datel\""}
+(looks like the backend expects a Date type but frontend sends a string, and the field name might be wrong: datel vs date)
+
+Goal: Chapter can submit Volunteer Opportunities without error, and once saved, it must automatically show on the Main Website Volunteer Opportunities panel.
+
+1) Fix field name mismatch (highest priority)
+
+Check the request payload from the Chapter form.
+
+The error mentions "datel" (letter “l” at the end).
+✅ Ensure the correct field name is used everywhere:
+
+Frontend form field: date
+
+API payload: date
+
+Backend schema: date
+
+If the backend actually expects datel, rename it properly to date (preferred) OR align the frontend to the backend, but keep it consistent across DB, API, and UI.
+
+2) Fix date type: backend expects Date, frontend sends string
+
+Backend validation says: Expected date, received string.
+
+✅ Use ONE of these solutions (choose simplest with current stack):
+
+Option A (Recommended): Send ISO Date String and coerce on backend
+
+Frontend sends YYYY-MM-DD (from <input type="date">)
+
+Backend converts to Date:
+
+new Date(payload.date) (or equivalent)
+
+Validation should accept after coercion (zod preprocess / prisma date parsing).
+
+Option B: Frontend sends ISO datetime string
+
+Convert before sending:
+
+new Date(dateString).toISOString()
+
+Backend stores as Date.
+
+Important: keep timezone safe:
+
+If using date-only, store as date at midnight local or UTC consistently.
+
+3) Update backend schema validation (Zod) to accept strings from forms
+
+If using Zod, fix like this conceptually (implement in codebase style):
+
+z.preprocess((v) => new Date(String(v)), z.date())
+
+Apply it to the date field in the create-volunteer schema.
+
+4) Ensure DB column type is correct
+
+Confirm the VolunteerOpportunity table uses:
+
+date as DateTime (or Date) depending on DB/ORM
+
+If it’s a string column currently, either:
+
+change it to DateTime OR
+
+keep string but update schema to expect string (not recommended since you want date behavior)
+
+5) Guarantee it publishes to the Main Website
+
+After successful create:
+
+Save the record in a shared table used by both:
+
+Chapter Dashboard list
+
+Main Website Volunteer Opportunities section
+
+Main website should fetch from the same API:
+
+GET /volunteer-opportunities returns all upcoming opportunities (optionally order by date ascending)
+
+✅ After creation:
+
+Chapter page should show “Saved successfully”
+
+Main site should show the new post without manual copying (after refresh; if caching exists, invalidate/revalidate)
+
+6) Add simple validation in Chapter form (prevent bad submissions)
+
+Require:
+
+Activity name
+
+Date (must not be empty)
+
+Time
+
+Place
+
+Contact person
+
+Age requirement default “18+”
+
+Ensure date input uses <input type="date"> so you always get YYYY-MM-DD.
+
+Acceptance Tests
+
+Add volunteer opportunity with date selected → no 400 error
+
+Record saves in DB with correct date type
+
+Main website Volunteer Opportunities list shows the new opportunity
+
+Sorting by date works (soonest first)
+
+Constraints: minimal changes, keep UI simple, make it production-safe.

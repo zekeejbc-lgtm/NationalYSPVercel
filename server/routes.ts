@@ -19,7 +19,7 @@ import {
   insertKpiTemplateSchema,
   insertKpiCompletionSchema
 } from "@shared/schema";
-import { fromZodError } from "zod-validation-error";
+import { fromError } from "zod-validation-error";
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -239,7 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const program = await storage.createProgram(validated);
       res.json(program);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -253,7 +253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(program);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -285,7 +285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chapter = await storage.createChapter(validated);
       res.json(chapter);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -299,7 +299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(chapter);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -327,7 +327,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error.code === '23505') {
         return res.status(400).json({ error: "Username already exists" });
       }
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -346,7 +346,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ ...user, password: undefined });
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -378,7 +378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -392,7 +392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(opportunity);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -416,7 +416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stats = await storage.updateStats(validated);
       res.json(stats);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -432,7 +432,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const info = await storage.updateContactInfo(validated);
       res.json(info);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -468,7 +468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const publication = await storage.createPublication(validated);
       res.json(publication);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -482,7 +482,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(publication);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -533,7 +533,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json(report);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -568,7 +568,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const kpi = await storage.createChapterKpi(validated);
       res.json(kpi);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -582,7 +582,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(kpi);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -609,7 +609,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const member = await storage.createMember(validated);
       res.json(member);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -646,7 +646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const officer = await storage.createChapterOfficer(validated);
       res.json(officer);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -660,7 +660,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(officer);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -694,7 +694,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const template = await storage.createKpiTemplate(validated);
       res.json(template);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -708,7 +708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(template);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -749,7 +749,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const completion = await storage.createKpiCompletion(validated);
       res.json(completion);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -763,7 +763,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(completion);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
@@ -802,12 +802,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validated = insertVolunteerOpportunitySchema.parse({
         ...req.body,
         chapterId,
-        chapter: chapter?.name || ""
+        chapter: chapter?.name || "",
+        sdgs: req.body.sdgs || ""
       });
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);
     } catch (error: any) {
-      const validationError = fromZodError(error);
+      const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });

@@ -50,6 +50,7 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
     onSuccess: () => {
       toast({ title: "Success", description: "Volunteer opportunity created and published to the main website" });
       queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities/by-chapter", { chapterId }] });
       resetForm();
     },
     onError: (error: any) => {
@@ -80,7 +81,7 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
 
     createMutation.mutate({
       eventName: formData.eventName,
-      date: new Date(formData.date),
+      date: formData.date,
       time: formData.time,
       venue: formData.venue,
       contactName: formData.contactName,
