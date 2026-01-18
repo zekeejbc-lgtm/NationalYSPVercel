@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { LogOut } from "lucide-react";
 import ProgramsManager from "@/components/admin/ProgramsManager";
 import ChaptersManager from "@/components/admin/ChaptersManager";
@@ -30,13 +30,21 @@ export default function Admin() {
     try {
       const response = await fetch("/api/auth/check", { credentials: "include" });
       const data = await response.json();
+      console.log("[Admin] Auth check result:", data);
+      
       if (data.authenticated && data.user?.role === "admin") {
+        console.log("[Admin] Authenticated as admin");
         setAuthenticated(true);
+      } else if (data.authenticated && data.user?.role === "chapter") {
+        console.log("[Admin] User is chapter, redirecting to /chapter-dashboard");
+        setLocation("/chapter-dashboard");
       } else {
-        setLocation("/admin/login");
+        console.log("[Admin] Not authenticated, redirecting to /login");
+        setLocation("/login");
       }
     } catch (error) {
-      setLocation("/admin/login");
+      console.log("[Admin] Auth check error:", error);
+      setLocation("/login");
     } finally {
       setLoading(false);
     }
@@ -45,12 +53,15 @@ export default function Admin() {
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/auth/logout");
+      console.log("[Admin] Logged out successfully");
       toast({
         title: "Logged out",
         description: "You have been logged out successfully",
       });
-      setLocation("/admin/login");
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
+      setLocation("/login");
     } catch (error) {
+      console.log("[Admin] Logout error:", error);
       toast({
         title: "Error",
         description: "Failed to logout",

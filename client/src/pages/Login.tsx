@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,17 @@ import { Building2, Shield } from "lucide-react";
 
 type LoginRole = "chapter" | "admin" | null;
 
+interface AuthResponse {
+  authenticated: boolean;
+  user?: {
+    id: string;
+    username: string;
+    role: "admin" | "chapter";
+    chapterId?: string;
+    mustChangePassword?: boolean;
+  };
+}
+
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -18,20 +30,47 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const { data: authData, isLoading: authLoading } = useQuery<AuthResponse>({
+    queryKey: ["/api/auth/check"],
+  });
+
+  useEffect(() => {
+    if (!authLoading && authData?.authenticated && authData.user) {
+      const userRole = authData.user.role;
+      console.log("[Auth] Already authenticated, role:", userRole);
+      
+      if (userRole === "admin") {
+        console.log("[Auth] Redirecting to /admin");
+        setLocation("/admin");
+      } else if (userRole === "chapter") {
+        console.log("[Auth] Redirecting to /chapter-dashboard");
+        setLocation("/chapter-dashboard");
+      } else {
+        console.log("[Auth] Unknown role, staying on login");
+      }
+    }
+  }, [authData, authLoading, setLocation]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       const endpoint = role === "admin" ? "/api/auth/login/admin" : "/api/auth/login/chapter";
-      const data = await apiRequest("POST", endpoint, { username, password });
+      console.log("[Auth] Attempting login as:", role, "endpoint:", endpoint);
       
-      queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
+      const data = await apiRequest("POST", endpoint, { username, password });
+      console.log("[Auth] Login success, response:", data);
+      
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       
       toast({
         title: "Success",
         description: "Logged in successfully",
       });
+      
+      const targetPath = role === "admin" ? "/admin" : "/chapter-dashboard";
+      console.log("[Auth] Redirecting to:", targetPath);
       
       if (role === "admin") {
         setLocation("/admin");
@@ -43,6 +82,7 @@ export default function Login() {
         }
       }
     } catch (error: any) {
+      console.log("[Auth] Login failed:", error.message);
       toast({
         title: "Error",
         description: error.message || "Invalid credentials",
@@ -52,6 +92,14 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-muted/30">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
   if (!role) {
     return (

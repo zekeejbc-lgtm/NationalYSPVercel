@@ -39,10 +39,10 @@ import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
 interface AuthUser {
   id: string;
   username: string;
-  role: "chapter";
-  chapterId: string;
-  chapterName: string;
-  mustChangePassword: boolean;
+  role: "chapter" | "admin";
+  chapterId?: string;
+  chapterName?: string;
+  mustChangePassword?: boolean;
 }
 
 
@@ -78,11 +78,25 @@ export default function ChapterDashboard() {
 
 
   useEffect(() => {
-    if (!authLoading && (!authData?.authenticated || authData.user?.role !== "chapter")) {
-      setLocation("/login");
-    }
-    if (authData?.user?.mustChangePassword) {
-      setShowPasswordDialog(true);
+    if (!authLoading) {
+      console.log("[Chapter] Auth check result:", authData);
+      
+      if (!authData?.authenticated) {
+        console.log("[Chapter] Not authenticated, redirecting to /login");
+        setLocation("/login");
+      } else if (authData.user?.role === "admin") {
+        console.log("[Chapter] User is admin, redirecting to /admin");
+        setLocation("/admin");
+      } else if (authData.user?.role !== "chapter") {
+        console.log("[Chapter] Unknown role, redirecting to /login");
+        setLocation("/login");
+      } else {
+        console.log("[Chapter] Authenticated as chapter:", authData.user.chapterName);
+      }
+      
+      if (authData?.user?.mustChangePassword) {
+        setShowPasswordDialog(true);
+      }
     }
   }, [authData, authLoading, setLocation]);
 
