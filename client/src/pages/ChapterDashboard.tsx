@@ -78,21 +78,28 @@ export default function ChapterDashboard() {
 
 
   useEffect(() => {
+    console.log("[Chapter] Dashboard mounted, auth state:", { authLoading, authenticated: authData?.authenticated, role: authData?.user?.role });
+    
     if (!authLoading) {
-      console.log("[Chapter] Auth check result:", authData);
-      
       if (!authData?.authenticated) {
         console.log("[Chapter] Not authenticated, redirecting to /login");
         setLocation("/login");
-      } else if (authData.user?.role === "admin") {
+        return;
+      } 
+      
+      if (authData.user?.role === "admin") {
         console.log("[Chapter] User is admin, redirecting to /admin");
         setLocation("/admin");
-      } else if (authData.user?.role !== "chapter") {
-        console.log("[Chapter] Unknown role, redirecting to /login");
+        return;
+      } 
+      
+      if (authData.user?.role !== "chapter") {
+        console.log("[Chapter] Unknown role:", authData.user?.role, "redirecting to /login");
         setLocation("/login");
-      } else {
-        console.log("[Chapter] Authenticated as chapter:", authData.user.chapterName);
+        return;
       }
+      
+      console.log("[Chapter] Authenticated as chapter:", authData.user?.chapterName, "chapterId:", authData.user?.chapterId);
       
       if (authData?.user?.mustChangePassword) {
         setShowPasswordDialog(true);

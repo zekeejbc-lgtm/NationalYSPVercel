@@ -1,0 +1,104 @@
+Issue: After logging in as Admin or Chapter, the dashboard page still does not appear (stays on login page / blank page / wrong route).
+
+Goal
+
+Make sure successful login always routes the user to the correct dashboard and the dashboard loads data correctly.
+
+1) Diagnose the exact failure (do this first)
+
+Add temporary console logs (remove after fix if you want):
+
+On login submit: “login started”
+
+After login response: log status + returned user object
+
+After saving session/token: “session saved”
+
+After role fetch/resolve: log role value
+
+Before redirect: log target path
+
+On dashboard page load: log “dashboard mounted” + current auth state
+
+✅ Keep logs minimal (console only).
+
+2) Fix auth/session persistence
+
+After successful login:
+
+Ensure token/session is saved correctly (localStorage/cookies/session store).
+
+Ensure auth state is updated before redirect.
+
+If using React state, don’t redirect until the auth state is confirmed updated.
+
+Common fix: after setting auth state, use a callback/await pattern (or a useEffect watcher) to redirect only when isAuthenticated === true.
+
+3) Fix role resolution (must be reliable)
+
+Make role detection consistent:
+
+If user role is stored in DB, ensure it’s returned in login response OR fetched immediately after login.
+
+Normalize roles to one format (example): ADMIN, CHAPTER (uppercase).
+
+If role is missing, show a clear error:
+“Role not found. Please contact admin.”
+
+4) Enforce correct redirect paths
+
+After successful login:
+
+If role === ADMIN → navigate to /admin/dashboard
+
+If role === CHAPTER → navigate to /chapter/dashboard
+
+Also add:
+
+If user visits /login while already authenticated → redirect them to their dashboard automatically.
+
+5) Fix route guards (prevent blocking dashboards incorrectly)
+
+Check protected routes middleware / auth guard:
+
+It should allow dashboard pages if token exists + valid role.
+
+If guard is using stale state, update it to read from the source of truth (session/token store).
+
+Avoid redirect loops:
+
+Don’t redirect to /login if token exists and role is valid.
+
+Don’t redirect to dashboard if token is missing.
+
+6) Dashboard rendering issue check
+
+If redirect happens but dashboard still “doesn’t show”:
+
+Confirm dashboard component is mounted (log it).
+
+Ensure API calls are using the stored token.
+
+Handle loading state:
+
+Show a simple “Loading dashboard…” while fetching.
+
+If fetch fails, show error message instead of blank screen.
+
+Acceptance Tests (must pass)
+
+Admin logs in → lands on Admin Dashboard immediately.
+
+Chapter logs in → lands on Chapter Dashboard immediately.
+
+Refresh dashboard → stays logged in and dashboard loads.
+
+Logout → clears session and blocks dashboard access.
+
+Important Constraints
+
+Keep changes minimal.
+
+Reuse existing auth + routing.
+
+No redesign, no heavy animations, no extra features—just fix login → dashboard flow.

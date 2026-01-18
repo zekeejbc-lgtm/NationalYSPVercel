@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,48 +29,75 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingRedirect, setPendingRedirect] = useState<{ role: string; mustChangePassword?: boolean } | null>(null);
+  const hasRedirected = useRef(false);
 
-  const { data: authData, isLoading: authLoading } = useQuery<AuthResponse>({
+  const { data: authData, isLoading: authLoading, refetch } = useQuery<AuthResponse>({
     queryKey: ["/api/auth/check"],
   });
 
   useEffect(() => {
+    console.log("[Login] Auth state:", { authLoading, authenticated: authData?.authenticated, role: authData?.user?.role, pendingRedirect, hasRedirected: hasRedirected.current });
+    
+    if (hasRedirected.current) return;
+    
     if (!authLoading && authData?.authenticated && authData.user) {
       const userRole = authData.user.role;
-      console.log("[Auth] Already authenticated, role:", userRole);
+      console.log("[Login] Already authenticated, role:", userRole);
+      hasRedirected.current = true;
       
       if (userRole === "admin") {
-        console.log("[Auth] Redirecting to /admin");
+        console.log("[Login] Redirecting to /admin");
         setLocation("/admin");
       } else if (userRole === "chapter") {
-        console.log("[Auth] Redirecting to /chapter-dashboard");
-        setLocation("/chapter-dashboard");
+        console.log("[Login] Redirecting to /chapter-dashboard");
+        if (authData.user.mustChangePassword) {
+          setLocation("/chapter-dashboard?changePassword=true");
+        } else {
+          setLocation("/chapter-dashboard");
+        }
       } else {
-        console.log("[Auth] Unknown role, staying on login");
+        console.log("[Login] Unknown role:", userRole);
+        hasRedirected.current = false;
+        toast({
+          title: "Error",
+          description: "Role not found. Please contact admin.",
+          variant: "destructive",
+        });
       }
     }
-  }, [authData, authLoading, setLocation]);
+  }, [authData, authLoading, setLocation, toast]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    console.log("[Login] Login started");
 
     try {
       const endpoint = role === "admin" ? "/api/auth/login/admin" : "/api/auth/login/chapter";
-      console.log("[Auth] Attempting login as:", role, "endpoint:", endpoint);
+      console.log("[Login] Attempting login as:", role, "endpoint:", endpoint);
       
       const data = await apiRequest("POST", endpoint, { username, password });
-      console.log("[Auth] Login success, response:", data);
+      console.log("[Login] Login response:", data);
       
-      await queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
+      if (!data?.success) {
+        throw new Error("Login failed");
+      }
+      
+      console.log("[Login] Session saved, role:", data.user?.role);
       
       toast({
         title: "Success",
         description: "Logged in successfully",
       });
       
+      console.log("[Login] Refetching auth state...");
+      await queryClient.refetchQueries({ queryKey: ["/api/auth/check"] });
+      console.log("[Login] Auth refetch complete");
+      
       const targetPath = role === "admin" ? "/admin" : "/chapter-dashboard";
-      console.log("[Auth] Redirecting to:", targetPath);
+      console.log("[Login] Redirecting to:", targetPath);
+      hasRedirected.current = true;
       
       if (role === "admin") {
         setLocation("/admin");
@@ -82,7 +109,7 @@ export default function Login() {
         }
       }
     } catch (error: any) {
-      console.log("[Auth] Login failed:", error.message);
+      console.log("[Login] Login failed:", error.message);
       toast({
         title: "Error",
         description: error.message || "Invalid credentials",
