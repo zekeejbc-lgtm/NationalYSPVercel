@@ -24,9 +24,17 @@ import {
   Phone,
   ArrowUpDown,
   Upload,
-  MapPin
+  MapPin,
+  UserCheck,
+  Share2,
+  HandHeart
 } from "lucide-react";
-import type { Chapter, Publication, ChapterKpi, KpisData } from "@shared/schema";
+import type { Chapter, Publication } from "@shared/schema";
+import OfficersPanel from "@/components/chapter/OfficersPanel";
+import SocialMediaPanel from "@/components/chapter/SocialMediaPanel";
+import VolunteerOpportunityPanel from "@/components/chapter/VolunteerOpportunityPanel";
+import ChapterKpiPanel from "@/components/chapter/ChapterKpiPanel";
+import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
 
 interface AuthUser {
   id: string;
@@ -37,11 +45,6 @@ interface AuthUser {
   mustChangePassword: boolean;
 }
 
-interface LeaderboardEntry {
-  chapterId: string;
-  chapterName: string;
-  reportCount: number;
-}
 
 export default function ChapterDashboard() {
   const [, setLocation] = useLocation();
@@ -73,15 +76,6 @@ export default function ChapterDashboard() {
     queryKey: ["/api/chapters"],
   });
 
-  const { data: leaderboard = [] } = useQuery<LeaderboardEntry[]>({
-    queryKey: ["/api/leaderboard"],
-  });
-
-  const currentYear = new Date().getFullYear();
-  const { data: kpis } = useQuery<ChapterKpi[]>({
-    queryKey: ["/api/chapter-kpis", { chapterId: authData?.user?.chapterId }],
-    enabled: !!authData?.user?.chapterId,
-  });
 
   useEffect(() => {
     if (!authLoading && (!authData?.authenticated || authData.user?.role !== "chapter")) {
@@ -203,9 +197,6 @@ export default function ChapterDashboard() {
         : b.name.localeCompare(a.name)
     );
 
-  const currentKpi = kpis?.find(k => k.year === currentYear);
-  const kpiData = (currentKpi?.kpisJson || {}) as KpisData;
-
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
@@ -235,6 +226,22 @@ export default function ChapterDashboard() {
               <FileText className="h-4 w-4" />
               Submit Report
             </TabsTrigger>
+            <TabsTrigger value="officers" className="gap-2" data-testid="tab-officers">
+              <UserCheck className="h-4 w-4" />
+              Officers
+            </TabsTrigger>
+            <TabsTrigger value="kpis" className="gap-2" data-testid="tab-kpis">
+              <BarChart3 className="h-4 w-4" />
+              KPIs
+            </TabsTrigger>
+            <TabsTrigger value="volunteer" className="gap-2" data-testid="tab-volunteer">
+              <HandHeart className="h-4 w-4" />
+              Volunteer
+            </TabsTrigger>
+            <TabsTrigger value="social" className="gap-2" data-testid="tab-social">
+              <Share2 className="h-4 w-4" />
+              Social Media
+            </TabsTrigger>
             <TabsTrigger value="publications" className="gap-2" data-testid="tab-publications">
               <Newspaper className="h-4 w-4" />
               Publications
@@ -242,10 +249,6 @@ export default function ChapterDashboard() {
             <TabsTrigger value="chapters" className="gap-2" data-testid="tab-chapters">
               <Building2 className="h-4 w-4" />
               Chapters
-            </TabsTrigger>
-            <TabsTrigger value="kpis" className="gap-2" data-testid="tab-kpis">
-              <BarChart3 className="h-4 w-4" />
-              KPIs
             </TabsTrigger>
             <TabsTrigger value="leaderboard" className="gap-2" data-testid="tab-leaderboard">
               <Trophy className="h-4 w-4" />
@@ -326,6 +329,30 @@ export default function ChapterDashboard() {
                 </form>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="officers">
+            {authData?.user?.chapterId && (
+              <OfficersPanel chapterId={authData.user.chapterId} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="kpis">
+            {authData?.user?.chapterId && (
+              <ChapterKpiPanel chapterId={authData.user.chapterId} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="volunteer">
+            {authData?.user?.chapterId && (
+              <VolunteerOpportunityPanel chapterId={authData.user.chapterId} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="social">
+            {authData?.user?.chapterId && (
+              <SocialMediaPanel chapterId={authData.user.chapterId} />
+            )}
           </TabsContent>
 
           <TabsContent value="publications">
@@ -452,99 +479,8 @@ export default function ChapterDashboard() {
             </div>
           </TabsContent>
 
-          <TabsContent value="kpis">
-            <Card>
-              <CardHeader>
-                <CardTitle>Chapter KPIs - {currentYear}</CardTitle>
-                <CardDescription>
-                  Your chapter's key performance indicators
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {currentKpi ? (
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardDescription>Projects Completed</CardDescription>
-                        <CardTitle className="text-3xl">{kpiData.projectsCompleted || 0}</CardTitle>
-                      </CardHeader>
-                    </Card>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardDescription>Volunteers</CardDescription>
-                        <CardTitle className="text-3xl">{kpiData.volunteers || 0}</CardTitle>
-                      </CardHeader>
-                    </Card>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardDescription>Beneficiaries</CardDescription>
-                        <CardTitle className="text-3xl">{kpiData.beneficiaries || 0}</CardTitle>
-                      </CardHeader>
-                    </Card>
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardDescription>Funds Raised</CardDescription>
-                        <CardTitle className="text-3xl">₱{(kpiData.fundsRaised || 0).toLocaleString()}</CardTitle>
-                      </CardHeader>
-                    </Card>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground text-center py-8">
-                    No KPIs set for {currentYear}. Contact admin to set your chapter's KPIs.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
           <TabsContent value="leaderboard">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-primary" />
-                  Top 5 Chapters
-                </CardTitle>
-                <CardDescription>
-                  Ranked by number of project reports submitted
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {leaderboard.map((entry, index) => (
-                    <div 
-                      key={entry.chapterId} 
-                      className={`flex items-center justify-between p-3 rounded-lg ${
-                        entry.chapterId === authData?.user?.chapterId 
-                          ? "bg-primary/10 border border-primary/20" 
-                          : "bg-muted/50"
-                      }`}
-                      data-testid={`leaderboard-entry-${index + 1}`}
-                    >
-                      <div className="flex items-center gap-4">
-                        <span className={`text-2xl font-bold ${
-                          index === 0 ? "text-yellow-500" : 
-                          index === 1 ? "text-gray-400" : 
-                          index === 2 ? "text-amber-600" : 
-                          "text-muted-foreground"
-                        }`}>
-                          #{index + 1}
-                        </span>
-                        <span className="font-medium">{entry.chapterName}</span>
-                        {entry.chapterId === authData?.user?.chapterId && (
-                          <Badge variant="secondary">Your Chapter</Badge>
-                        )}
-                      </div>
-                      <span className="text-lg font-semibold">{entry.reportCount} reports</span>
-                    </div>
-                  ))}
-                  {leaderboard.length === 0 && (
-                    <p className="text-center text-muted-foreground py-8">
-                      No reports submitted yet. Be the first!
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <EnhancedLeaderboard currentChapterId={authData?.user?.chapterId} />
           </TabsContent>
         </Tabs>
       </main>

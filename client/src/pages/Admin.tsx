@@ -13,6 +13,8 @@ import ContactManager from "@/components/admin/ContactManager";
 import PublicationsManager from "@/components/admin/PublicationsManager";
 import ChapterAccountsManager from "@/components/admin/ChapterAccountsManager";
 import KpiManager from "@/components/admin/KpiManager";
+import MemberListManager from "@/components/admin/MemberListManager";
+import OfficerListManager from "@/components/admin/OfficerListManager";
 
 export default function Admin() {
   const [, setLocation] = useLocation();
@@ -105,6 +107,8 @@ export default function Admin() {
             <TabsTrigger value="publications" data-testid="tab-publications">Publications</TabsTrigger>
             <TabsTrigger value="chapters" data-testid="tab-chapters">Chapters</TabsTrigger>
             <TabsTrigger value="accounts" data-testid="tab-accounts">Chapter Accounts</TabsTrigger>
+            <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
+            <TabsTrigger value="officers" data-testid="tab-officers">Officers</TabsTrigger>
             <TabsTrigger value="kpis" data-testid="tab-kpis">KPIs</TabsTrigger>
             <TabsTrigger value="volunteer" data-testid="tab-volunteer">Volunteer</TabsTrigger>
             <TabsTrigger value="contact" data-testid="tab-contact">Contact</TabsTrigger>
@@ -128,6 +132,14 @@ export default function Admin() {
 
           <TabsContent value="accounts">
             <ChapterAccountsManager />
+          </TabsContent>
+
+          <TabsContent value="members">
+            <MemberListManager />
+          </TabsContent>
+
+          <TabsContent value="officers">
+            <OfficerListManager />
           </TabsContent>
 
           <TabsContent value="kpis">
