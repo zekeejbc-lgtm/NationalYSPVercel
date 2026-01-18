@@ -134,8 +134,9 @@ export default function ChapterDashboard() {
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout", {});
+    console.log("[Chapter] Logged out successfully");
     queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
-    setLocation("/");
+    setLocation("/login");
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
