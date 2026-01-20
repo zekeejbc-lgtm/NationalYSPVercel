@@ -27,7 +27,8 @@ import {
   MapPin,
   UserCheck,
   Share2,
-  HandHeart
+  HandHeart,
+  Users
 } from "lucide-react";
 import type { Chapter, Publication } from "@shared/schema";
 import OfficersPanel from "@/components/chapter/OfficersPanel";
@@ -35,6 +36,7 @@ import SocialMediaPanel from "@/components/chapter/SocialMediaPanel";
 import VolunteerOpportunityPanel from "@/components/chapter/VolunteerOpportunityPanel";
 import ChapterKpiPanel from "@/components/chapter/ChapterKpiPanel";
 import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
+import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
 
 interface AuthUser {
   id: string;
@@ -262,6 +264,10 @@ export default function ChapterDashboard() {
               <FileText className="h-4 w-4" />
               Submit Report
             </TabsTrigger>
+            <TabsTrigger value="members" className="gap-2" data-testid="tab-members">
+              <Users className="h-4 w-4" />
+              Members
+            </TabsTrigger>
             <TabsTrigger value="officers" className="gap-2" data-testid="tab-officers">
               <UserCheck className="h-4 w-4" />
               Officers
@@ -365,6 +371,12 @@ export default function ChapterDashboard() {
                 </form>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="members">
+            {authUser?.chapterId && authUser?.chapterName && (
+              <MemberDashboardPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
+            )}
           </TabsContent>
 
           <TabsContent value="officers">

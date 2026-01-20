@@ -35,13 +35,13 @@ Preferred communication style: Simple, everyday language.
 - Home: Hero section with call-to-action, stats display, featured programs and chapters
 - Programs: Browsable program catalog with detailed modal views
 - Publications: Blog-style page displaying organization news/articles ordered by newest first
-- Membership: Embedded Google Forms for member registration and chapter creation, plus interactive Leaflet map showing chapter locations
+- Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin.
 - Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment
 - Contact: Contact information display with email, phone, and social media links
 - Admin Dashboard: Protected dashboard for content management with tabs for:
   - Programs, Chapters, Publications, Volunteer Opportunities, Stats, Contact Info
   - KPI Templates: Template-based KPI system with quarterly/yearly/both timeframes and numeric/text inputs
-  - Members: View all registered YSP members across chapters
+  - Members: View all registered YSP members across chapters with Add Member modal, toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, and CSV export
   - Officers: View all chapter officers organized by chapter
 - Chapter Dashboard: Role-based dashboard for chapter accounts with panels for:
   - Project Reports: Submit project reports (auto-published to Publications)
@@ -52,6 +52,7 @@ Preferred communication style: Simple, everyday language.
   - Publications: View organization-wide publications
   - Chapter Directory: View all YSP chapters
   - Leaderboard: Quarterly/Yearly rankings based on KPI completion scores
+  - Members: View and manage chapter-scoped members with Add Member modal and toggle buttons for isActive/registeredVoter
 
 ### Backend Architecture
 

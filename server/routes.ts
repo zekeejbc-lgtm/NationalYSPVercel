@@ -595,19 +595,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(leaderboard);
   });
 
-  app.get("/api/members", requireAdminAuth, async (req, res) => {
+  app.get("/api/members", requireAuth, async (req, res) => {
     const chapterId = req.query.chapterId as string | undefined;
-    const members = chapterId 
-      ? await storage.getMembersByChapter(chapterId)
-      : await storage.getMembers();
-    res.json(members);
+    
+    if (req.session.role === "admin") {
+      const members = chapterId && chapterId !== "all"
+        ? await storage.getMembersByChapter(chapterId)
+        : await storage.getMembers();
+      res.json(members);
+    } else if (req.session.role === "chapter") {
+      const members = await storage.getMembersByChapter(req.session.chapterId!);
+      res.json(members);
+    } else {
+      res.status(403).json({ error: "Access denied" });
+    }
   });
 
   app.post("/api/members", async (req, res) => {
     try {
-      const validated = insertMemberSchema.parse(req.body);
+      const memberData = {
+        ...req.body,
+        isActive: req.body.isActive ?? false
+      };
+      const validated = insertMemberSchema.parse(memberData);
       const member = await storage.createMember(validated);
       res.json(member);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/members/:id", requireAuth, async (req, res) => {
+    try {
+      const member = await storage.getMember(req.params.id);
+      if (!member) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+      
+      if (req.session.role === "chapter" && member.chapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const allowedFields = ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "chapterId"];
+      const updateData: Record<string, any> = {};
+      
+      for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+          updateData[field] = req.body[field];
+        }
+      }
+      
+      const updated = await storage.updateMember(req.params.id, updateData);
+      res.json(updated);
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });

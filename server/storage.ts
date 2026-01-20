@@ -107,6 +107,7 @@ export interface IStorage {
   getMembersByChapter(chapterId: string): Promise<Member[]>;
   getMember(id: string): Promise<Member | undefined>;
   createMember(member: InsertMember): Promise<Member>;
+  updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined>;
   deleteMember(id: string): Promise<boolean>;
 
   getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]>;
@@ -441,6 +442,11 @@ export class DbStorage implements IStorage {
 
   async createMember(member: InsertMember): Promise<Member> {
     const result = await db.insert(members).values(member).returning();
+    return result[0];
+  }
+
+  async updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined> {
+    const result = await db.update(members).set(member).where(eq(members.id, id)).returning();
     return result[0];
   }
 

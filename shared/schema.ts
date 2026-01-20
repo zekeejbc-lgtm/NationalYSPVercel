@@ -30,9 +30,12 @@ export const chapters = pgTable("chapters", {
 export const members = pgTable("members", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   fullName: text("full_name").notNull(),
-  email: text("email"),
-  phone: text("phone"),
+  age: integer("age").notNull(),
   chapterId: varchar("chapter_id").references(() => chapters.id),
+  contactNumber: text("contact_number").notNull(),
+  registeredVoter: boolean("registered_voter").default(false).notNull(),
+  facebookLink: text("facebook_link"),
+  isActive: boolean("is_active").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

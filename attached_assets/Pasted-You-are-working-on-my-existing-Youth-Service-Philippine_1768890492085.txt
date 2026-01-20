@@ -1,0 +1,218 @@
+You are working on my existing Youth Service Philippines (YSP) website.
+
+GLOBAL RULES (IMPORTANT – COST CONTROL)
+
+Do NOT redesign UI. Keep current layout and components.
+
+Do NOT refactor existing code. Make only additive, minimal changes.
+
+Do NOT add new libraries or services. Reuse current stack.
+
+Use ONE shared members table/model for Admin, Chapter, and Public form.
+
+Ensure all features work after publishing, not only in preview.
+
+A. ADMIN DASHBOARD – MEMBERS PANEL
+A1. Members Data Fields
+
+Ensure members have these fields:
+
+name
+
+age
+
+chapterId / chapterName
+
+contactNumber
+
+registeredVoter (boolean)
+
+facebookLink (optional)
+
+isActive (boolean)
+
+createdAt (timestamp – date added)
+
+A2. Members Table Display
+
+Add columns:
+
+Age
+
+Registered Voter (Yes/No)
+
+Active (Yes/No)
+
+Date Added (formatted date)
+
+A3. Admin Actions
+
+Add “Add Member” button (simple modal or inline form).
+
+Allow Admin to:
+
+Toggle Registered Voter (Yes/No)
+
+Toggle Active (Yes/No)
+
+Required fields when adding:
+
+name, age, chapter, contactNumber
+
+A4. Export Members
+
+Add Download Excel button.
+
+Implement as CSV download (no excel library).
+
+Filename format: ysp_members_YYYY-MM-DD.csv
+
+Include all member fields.
+
+B. CHAPTER DASHBOARD – MEMBER MANAGEMENT
+B1. Add “Member Dashboard” Tab
+
+Inside Chapter Dashboard only.
+
+B2. Chapter Member Form
+
+Fields:
+
+Name (required)
+
+Age (required)
+
+Chapter (auto-filled to logged-in chapter, NOT editable)
+
+Contact Number (required)
+
+Registered Voter (Yes/No)
+
+Facebook Link (optional)
+
+Active (Yes/No)
+
+Add helper text beside Active:
+
+“Active members can participate in up to 2 programs.”
+
+B3. Chapter Member List
+
+Show only members of the logged-in chapter.
+
+Chapter users can:
+
+Add members
+
+Toggle Active and Registered Voter
+
+No access to other chapters’ members.
+
+C. MAIN WEBSITE – PUBLIC MEMBERSHIP FORM
+C1. Replace Google Form
+
+Replace the Google Form link with a built-in Membership Form.
+
+C2. Public Form Fields
+
+Name (required)
+
+Age (required)
+
+Chapter (dropdown, required)
+
+Contact Number (required)
+
+Facebook Link (optional)
+
+Registered Voter (Yes/No)
+
+C3. Chapter Dropdown (Dynamic)
+
+Populate chapter options from Chapter Accounts in database.
+
+Automatically updates when a new chapter account is added.
+
+C4. Privacy Advisory & Data Consent (REQUIRED)
+
+Add a required checkbox:
+
+Label: “I agree to the Privacy Advisory and Data Consent.”
+
+Submission must be blocked if unchecked.
+
+Display this exact text (modal or expandable):
+
+Privacy Advisory and Data Consent
+By submitting this YSP Membership Form, you voluntarily provide personal information and consent to its collection, use, processing, and storage by Youth Service Philippines (YSP). Your information will be used solely for legitimate organizational purposes, including but not limited to:
+• Membership registration and verification
+• Coordination of youth programs, projects, and activities
+• Engagement, communication, and updates related to YSP initiatives
+• Monitoring, evaluation, and reporting of youth engagement and impact
+YSP may also use aggregated or anonymized data for research, program improvement, advocacy, partnerships, and reporting, provided that such use does not identify you personally.
+Your data will not be sold or shared with unauthorized third parties and will be handled in accordance with applicable data privacy laws. Reasonable safeguards are in place to protect your information from unauthorized access, misuse, or disclosure.
+By proceeding, you affirm that the information provided is accurate and that you agree to this Privacy Advisory and Data Consent.
+
+C5. Submission Behavior
+
+On submit:
+
+Create member record
+
+Assign to selected chapter
+
+Automatically appear in:
+
+Admin Members Panel
+
+Selected Chapter’s Member Dashboard
+
+Defaults:
+
+isActive = false
+
+createdAt = current timestamp
+
+D. DATA MODEL (MINIMAL)
+
+Use one table/collection: members
+
+id
+
+name
+
+age
+
+chapterId
+
+contactNumber
+
+registeredVoter
+
+facebookLink
+
+isActive
+
+createdAt
+
+E. ACCESS CONTROL
+
+Admin: full access to all members + export
+
+Chapter: access only their chapter members
+
+Public: can only create a member via form
+
+F. REQUIRED TESTS
+
+Public form submits successfully with consent
+
+Chapter dropdown auto-updates
+
+Admin sees new members immediately
+
+Chapter sees only their own members
+
+CSV export downloads correctly
+
+All features work after Publish

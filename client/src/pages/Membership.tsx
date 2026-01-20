@@ -1,14 +1,100 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import ChapterCard from "@/components/ChapterCard";
 import ChaptersMap from "@/components/ChaptersMap";
-import { ExternalLink, Map } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { ExternalLink, Map, CheckCircle2 } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useForm } from "react-hook-form";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { Chapter } from "@shared/schema";
 
+interface MembershipFormData {
+  fullName: string;
+  age: number;
+  chapterId: string;
+  contactNumber: string;
+  facebookLink?: string;
+  registeredVoter: boolean;
+  privacyConsent: boolean;
+}
+
+const PRIVACY_TEXT = `Privacy Advisory and Data Consent
+
+By submitting this YSP Membership Form, you voluntarily provide personal information and consent to its collection, use, processing, and storage by Youth Service Philippines (YSP). Your information will be used solely for legitimate organizational purposes, including but not limited to:
+
+• Membership registration and verification
+• Coordination of youth programs, projects, and activities
+• Engagement, communication, and updates related to YSP initiatives
+• Monitoring, evaluation, and reporting of youth engagement and impact
+
+YSP may also use aggregated or anonymized data for research, program improvement, advocacy, partnerships, and reporting, provided that such use does not identify you personally.
+
+Your data will not be sold or shared with unauthorized third parties and will be handled in accordance with applicable data privacy laws. Reasonable safeguards are in place to protect your information from unauthorized access, misuse, or disclosure.
+
+By proceeding, you affirm that the information provided is accurate and that you agree to this Privacy Advisory and Data Consent.`;
+
 export default function Membership() {
+  const { toast } = useToast();
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+
   const { data: chapters = [] } = useQuery<Chapter[]>({ 
     queryKey: ["/api/chapters"] 
   });
+
+  const form = useForm<MembershipFormData>({
+    defaultValues: {
+      fullName: "",
+      age: 18,
+      chapterId: "",
+      contactNumber: "",
+      facebookLink: "",
+      registeredVoter: false,
+      privacyConsent: false,
+    }
+  });
+
+  const submitMutation = useMutation({
+    mutationFn: async (data: MembershipFormData) => {
+      const { privacyConsent, ...memberData } = data;
+      return await apiRequest("POST", "/api/members", {
+        ...memberData,
+        isActive: false,
+      });
+    },
+    onSuccess: () => {
+      setShowSuccess(true);
+      form.reset();
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Registration Failed", 
+        description: error.message || "There was a problem submitting your membership form. Please try again.", 
+        variant: "destructive" 
+      });
+    }
+  });
+
+  const onSubmit = (data: MembershipFormData) => {
+    if (!data.privacyConsent) {
+      toast({
+        title: "Consent Required",
+        description: "Please agree to the Privacy Advisory and Data Consent before submitting.",
+        variant: "destructive"
+      });
+      return;
+    }
+    submitMutation.mutate(data);
+  };
+
   return (
     <div className="min-h-screen">
       <section className="py-16 md:py-20 bg-muted/30">
@@ -32,21 +118,193 @@ export default function Membership() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="bg-muted/50 rounded-lg p-4 mb-4">
-                  <iframe
-                    src="https://docs.google.com/forms/d/e/1FAIpQLSdwMKgIjQNrlLH-j-Qdx0MrKxefxaLRC6gMI_oOgMTosDi_sQ/viewform?embedded=true"
-                    width="100%"
-                    height="800"
-                    frameBorder="0"
-                    marginHeight={0}
-                    marginWidth={0}
-                    className="rounded-lg"
-                    title="Become a Member Form"
-                    data-testid="iframe-membership-form"
-                  >
-                    Loading…
-                  </iframe>
-                </div>
+                {showSuccess ? (
+                  <div className="text-center py-8 space-y-4">
+                    <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto" />
+                    <h3 className="text-xl font-semibold">Registration Successful!</h3>
+                    <p className="text-muted-foreground">
+                      Thank you for joining Youth Service Philippines! Your membership application has been submitted.
+                      Your chapter will contact you soon about upcoming activities.
+                    </p>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setShowSuccess(false)}
+                      data-testid="button-register-another"
+                    >
+                      Register Another Member
+                    </Button>
+                  </div>
+                ) : (
+                  <Form {...form}>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="fullName"
+                        rules={{ required: "Name is required" }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Full Name *</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Enter your full name" data-testid="input-public-name" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="age"
+                        rules={{ 
+                          required: "Age is required",
+                          min: { value: 1, message: "Please enter a valid age" }
+                        }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Age *</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                {...field} 
+                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                                placeholder="Enter your age"
+                                data-testid="input-public-age" 
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="chapterId"
+                        rules={{ required: "Please select a chapter" }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Chapter *</FormLabel>
+                            <Select onValueChange={field.onChange} value={field.value}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-public-chapter">
+                                  <SelectValue placeholder="Select your chapter" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {chapters.map((chapter) => (
+                                  <SelectItem key={chapter.id} value={chapter.id}>
+                                    {chapter.name} - {chapter.location}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="contactNumber"
+                        rules={{ required: "Contact number is required" }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Contact Number *</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="Enter your phone number" data-testid="input-public-contact" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="facebookLink"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Facebook Link (optional)</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="https://facebook.com/yourprofile" data-testid="input-public-facebook" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="registeredVoter"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center gap-3 py-2">
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                data-testid="switch-public-voter"
+                              />
+                            </FormControl>
+                            <FormLabel className="!mt-0">Are you a registered voter?</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+
+                      <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
+                        <FormField
+                          control={form.control}
+                          name="privacyConsent"
+                          rules={{ required: "You must agree to the Privacy Advisory and Data Consent" }}
+                          render={({ field }) => (
+                            <FormItem className="flex items-start gap-3">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                  data-testid="checkbox-privacy-consent"
+                                />
+                              </FormControl>
+                              <div className="space-y-1">
+                                <FormLabel className="!mt-0 font-normal">
+                                  I agree to the{" "}
+                                  <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
+                                    <DialogTrigger asChild>
+                                      <button 
+                                        type="button" 
+                                        className="text-primary hover:underline font-medium"
+                                        data-testid="button-view-privacy"
+                                      >
+                                        Privacy Advisory and Data Consent
+                                      </button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                                      <DialogHeader>
+                                        <DialogTitle>Privacy Advisory and Data Consent</DialogTitle>
+                                      </DialogHeader>
+                                      <div className="prose prose-sm dark:prose-invert">
+                                        <p className="whitespace-pre-line text-sm text-muted-foreground">
+                                          {PRIVACY_TEXT}
+                                        </p>
+                                      </div>
+                                    </DialogContent>
+                                  </Dialog>
+                                </FormLabel>
+                                <FormMessage />
+                              </div>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+
+                      <Button 
+                        type="submit" 
+                        className="w-full" 
+                        disabled={submitMutation.isPending}
+                        data-testid="button-submit-membership"
+                      >
+                        {submitMutation.isPending ? "Submitting..." : "Submit Membership Application"}
+                      </Button>
+                    </form>
+                  </Form>
+                )}
               </CardContent>
             </Card>
 
