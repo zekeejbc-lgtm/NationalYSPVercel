@@ -27,6 +27,14 @@ import {
   type InsertKpiTemplate,
   type KpiCompletion,
   type InsertKpiCompletion,
+  type ImportantDocument,
+  type InsertImportantDocument,
+  type ChapterDocumentAck,
+  type InsertChapterDocumentAck,
+  type MouSubmission,
+  type InsertMouSubmission,
+  type ChapterRequest,
+  type InsertChapterRequest,
   adminUsers,
   chapterUsers,
   programs,
@@ -40,7 +48,11 @@ import {
   members,
   chapterOfficers,
   kpiTemplates,
-  kpiCompletions
+  kpiCompletions,
+  importantDocuments,
+  chapterDocumentAck,
+  mouSubmissions,
+  chapterRequests
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, asc } from "drizzle-orm";
@@ -131,6 +143,28 @@ export interface IStorage {
   markKpiCompleted(id: string): Promise<KpiCompletion | undefined>;
 
   getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]>;
+
+  getImportantDocuments(): Promise<ImportantDocument[]>;
+  getImportantDocument(id: string): Promise<ImportantDocument | undefined>;
+  createImportantDocument(doc: InsertImportantDocument): Promise<ImportantDocument>;
+  updateImportantDocument(id: string, doc: Partial<InsertImportantDocument>): Promise<ImportantDocument | undefined>;
+  deleteImportantDocument(id: string): Promise<boolean>;
+
+  getChapterDocumentAcks(chapterId: string): Promise<ChapterDocumentAck[]>;
+  getChapterDocumentAck(chapterId: string, documentId: string): Promise<ChapterDocumentAck | undefined>;
+  createChapterDocumentAck(ack: InsertChapterDocumentAck): Promise<ChapterDocumentAck>;
+  acknowledgeDocument(chapterId: string, documentId: string): Promise<ChapterDocumentAck>;
+
+  getMouSubmissions(): Promise<MouSubmission[]>;
+  getMouSubmissionByChapter(chapterId: string): Promise<MouSubmission | undefined>;
+  createMouSubmission(submission: InsertMouSubmission): Promise<MouSubmission>;
+  updateMouSubmission(id: string, submission: Partial<InsertMouSubmission>): Promise<MouSubmission | undefined>;
+
+  getChapterRequests(): Promise<ChapterRequest[]>;
+  getChapterRequestsByChapter(chapterId: string): Promise<ChapterRequest[]>;
+  getChapterRequest(id: string): Promise<ChapterRequest | undefined>;
+  createChapterRequest(request: InsertChapterRequest): Promise<ChapterRequest>;
+  updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined>;
 
   initializeDefaultData(): Promise<void>;
 }
@@ -560,6 +594,109 @@ export class DbStorage implements IStorage {
     return db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.chapterId, chapterId)).orderBy(volunteerOpportunities.date);
   }
 
+  async getImportantDocuments(): Promise<ImportantDocument[]> {
+    return db.select().from(importantDocuments).orderBy(desc(importantDocuments.createdAt));
+  }
+
+  async getImportantDocument(id: string): Promise<ImportantDocument | undefined> {
+    const result = await db.select().from(importantDocuments).where(eq(importantDocuments.id, id));
+    return result[0];
+  }
+
+  async createImportantDocument(doc: InsertImportantDocument): Promise<ImportantDocument> {
+    const result = await db.insert(importantDocuments).values(doc).returning();
+    return result[0];
+  }
+
+  async updateImportantDocument(id: string, doc: Partial<InsertImportantDocument>): Promise<ImportantDocument | undefined> {
+    const result = await db.update(importantDocuments).set({
+      ...doc,
+      updatedAt: new Date()
+    }).where(eq(importantDocuments.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteImportantDocument(id: string): Promise<boolean> {
+    await db.delete(chapterDocumentAck).where(eq(chapterDocumentAck.documentId, id));
+    const result = await db.delete(importantDocuments).where(eq(importantDocuments.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getChapterDocumentAcks(chapterId: string): Promise<ChapterDocumentAck[]> {
+    return db.select().from(chapterDocumentAck).where(eq(chapterDocumentAck.chapterId, chapterId));
+  }
+
+  async getChapterDocumentAck(chapterId: string, documentId: string): Promise<ChapterDocumentAck | undefined> {
+    const result = await db.select().from(chapterDocumentAck).where(
+      and(eq(chapterDocumentAck.chapterId, chapterId), eq(chapterDocumentAck.documentId, documentId))
+    );
+    return result[0];
+  }
+
+  async createChapterDocumentAck(ack: InsertChapterDocumentAck): Promise<ChapterDocumentAck> {
+    const result = await db.insert(chapterDocumentAck).values(ack).returning();
+    return result[0];
+  }
+
+  async acknowledgeDocument(chapterId: string, documentId: string): Promise<ChapterDocumentAck> {
+    const existing = await this.getChapterDocumentAck(chapterId, documentId);
+    if (existing) {
+      const result = await db.update(chapterDocumentAck).set({
+        acknowledged: true,
+        readAt: new Date()
+      }).where(eq(chapterDocumentAck.id, existing.id)).returning();
+      return result[0];
+    }
+    return this.createChapterDocumentAck({
+      chapterId,
+      documentId,
+      acknowledged: true,
+      readAt: new Date()
+    });
+  }
+
+  async getMouSubmissions(): Promise<MouSubmission[]> {
+    return db.select().from(mouSubmissions).orderBy(desc(mouSubmissions.submittedAt));
+  }
+
+  async getMouSubmissionByChapter(chapterId: string): Promise<MouSubmission | undefined> {
+    const result = await db.select().from(mouSubmissions).where(eq(mouSubmissions.chapterId, chapterId)).orderBy(desc(mouSubmissions.submittedAt));
+    return result[0];
+  }
+
+  async createMouSubmission(submission: InsertMouSubmission): Promise<MouSubmission> {
+    const result = await db.insert(mouSubmissions).values(submission).returning();
+    return result[0];
+  }
+
+  async updateMouSubmission(id: string, submission: Partial<InsertMouSubmission>): Promise<MouSubmission | undefined> {
+    const result = await db.update(mouSubmissions).set(submission).where(eq(mouSubmissions.id, id)).returning();
+    return result[0];
+  }
+
+  async getChapterRequests(): Promise<ChapterRequest[]> {
+    return db.select().from(chapterRequests).orderBy(desc(chapterRequests.createdAt));
+  }
+
+  async getChapterRequestsByChapter(chapterId: string): Promise<ChapterRequest[]> {
+    return db.select().from(chapterRequests).where(eq(chapterRequests.chapterId, chapterId)).orderBy(desc(chapterRequests.createdAt));
+  }
+
+  async getChapterRequest(id: string): Promise<ChapterRequest | undefined> {
+    const result = await db.select().from(chapterRequests).where(eq(chapterRequests.id, id));
+    return result[0];
+  }
+
+  async createChapterRequest(request: InsertChapterRequest): Promise<ChapterRequest> {
+    const result = await db.insert(chapterRequests).values(request).returning();
+    return result[0];
+  }
+
+  async updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined> {
+    const result = await db.update(chapterRequests).set(request).where(eq(chapterRequests.id, id)).returning();
+    return result[0];
+  }
+
   async initializeDefaultData(): Promise<void> {
     const existingAdmin = await this.getAdminUserByUsername("admin");
     if (!existingAdmin) {
@@ -571,6 +708,35 @@ export class DbStorage implements IStorage {
     }
     await this.getStats();
     await this.getContactInfo();
+    
+    const existingDocs = await this.getImportantDocuments();
+    if (existingDocs.length === 0) {
+      const defaultDocs = [
+        {
+          title: "MOU between Chapter President and YSP National",
+          url: "https://docs.google.com/document/d/1IG4tFjOcb9nVn7ly60Ddj33bvS0bqv1THJP2xkTpvVI/edit?usp=sharing",
+          notes: "Memorandum of Understanding that must be signed by all Chapter Presidents"
+        },
+        {
+          title: "CODE OF CONDUCT ON THE USE OF THE YSP NAME",
+          url: "https://docs.google.com/document/d/1ZvGoIb-les1sRUffLDDTj9pDb4-lfNqykggBvQu2rpg/edit?usp=sharing",
+          notes: "Guidelines on proper use of YSP branding and name"
+        },
+        {
+          title: "CODE OF CONDUCT ON FUNDRAISING FOR YSP CHAPTERS",
+          url: "https://docs.google.com/document/d/1v8Ig2R6i0alLkbl93k7LWMDJjXYk5lv5UMRkRAhuA_s/edit?usp=sharing",
+          notes: "Rules and procedures for chapter fundraising activities"
+        },
+        {
+          title: "CODE OF CONDUCT IN HANDLING OFFICERS AND MEMBERS",
+          url: "https://docs.google.com/document/d/1xoIYiW4ViC6nvU2YMvMZT-xDv_2vFkIg2ylY5g5W63c/edit?usp=sharing",
+          notes: "Guidelines for managing officers and members within chapters"
+        }
+      ];
+      for (const doc of defaultDocs) {
+        await this.createImportantDocument(doc);
+      }
+    }
   }
 }
 

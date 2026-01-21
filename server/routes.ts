@@ -17,7 +17,10 @@ import {
   insertMemberSchema,
   insertChapterOfficerSchema,
   insertKpiTemplateSchema,
-  insertKpiCompletionSchema
+  insertKpiCompletionSchema,
+  insertImportantDocumentSchema,
+  insertMouSubmissionSchema,
+  insertChapterRequestSchema
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 
@@ -860,6 +863,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     const opportunities = await storage.getVolunteerOpportunitiesByChapter(chapterId);
     res.json(opportunities);
+  });
+
+  app.get("/api/important-documents", requireAuth, async (req, res) => {
+    const documents = await storage.getImportantDocuments();
+    res.json(documents);
+  });
+
+  app.post("/api/important-documents", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertImportantDocumentSchema.parse(req.body);
+      const document = await storage.createImportantDocument(validated);
+      res.json(document);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/important-documents/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const document = await storage.updateImportantDocument(req.params.id, req.body);
+      if (!document) {
+        return res.status(404).json({ error: "Document not found" });
+      }
+      res.json(document);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/important-documents/:id", requireAdminAuth, async (req, res) => {
+    const deleted = await storage.deleteImportantDocument(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    res.json({ success: true });
+  });
+
+  app.get("/api/chapter-document-acks", requireChapterAuth, async (req, res) => {
+    const chapterId = req.session.chapterId!;
+    const acks = await storage.getChapterDocumentAcks(chapterId);
+    res.json(acks);
+  });
+
+  app.post("/api/chapter-document-acks/:documentId/acknowledge", requireChapterAuth, async (req, res) => {
+    const chapterId = req.session.chapterId!;
+    const documentId = req.params.documentId;
+    const ack = await storage.acknowledgeDocument(chapterId, documentId);
+    res.json(ack);
+  });
+
+  app.get("/api/mou-submissions", requireAdminAuth, async (req, res) => {
+    const submissions = await storage.getMouSubmissions();
+    res.json(submissions);
+  });
+
+  app.get("/api/mou-submissions/my-submission", requireChapterAuth, async (req, res) => {
+    const chapterId = req.session.chapterId!;
+    const submission = await storage.getMouSubmissionByChapter(chapterId);
+    res.json(submission || null);
+  });
+
+  app.post("/api/mou-submissions", requireChapterAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId!;
+      const validated = insertMouSubmissionSchema.parse({
+        ...req.body,
+        chapterId,
+        driveFolderUrl: "https://drive.google.com/drive/folders/1eAi3sB1KBGZ9nKffbwJbGnaD6N7NIYkY?usp=sharing"
+      });
+      const submission = await storage.createMouSubmission(validated);
+      res.json(submission);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/mou-submissions/:id", requireChapterAuth, async (req, res) => {
+    try {
+      const submission = await storage.updateMouSubmission(req.params.id, req.body);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+      res.json(submission);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/chapter-requests", requireAdminAuth, async (req, res) => {
+    const requests = await storage.getChapterRequests();
+    res.json(requests);
+  });
+
+  app.get("/api/chapter-requests/my-requests", requireChapterAuth, async (req, res) => {
+    const chapterId = req.session.chapterId!;
+    const requests = await storage.getChapterRequestsByChapter(chapterId);
+    res.json(requests);
+  });
+
+  app.post("/api/chapter-requests", requireChapterAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId!;
+      const validated = insertChapterRequestSchema.parse({
+        ...req.body,
+        chapterId,
+        status: "new"
+      });
+      const request = await storage.createChapterRequest(validated);
+      res.json(request);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/chapter-requests/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const request = await storage.updateChapterRequest(req.params.id, req.body);
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+      res.json(request);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
   });
 
   await storage.initializeDefaultData();
