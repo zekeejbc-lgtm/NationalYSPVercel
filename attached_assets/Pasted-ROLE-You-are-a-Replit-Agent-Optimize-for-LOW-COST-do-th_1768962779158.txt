@@ -1,0 +1,134 @@
+ROLE: You are a Replit Agent. Optimize for LOW COST: do the smallest change that meets requirements. Prefer reusing existing components/pages. Avoid new libraries unless absolutely necessary.
+
+GOAL:
+Add an “Important Documents” feature for BOTH Admin and Chapter dashboards + improve Chapter request/message panel to include project funding request fields.
+
+KEY RULES (to reduce cost):
+- Implement in 1 pass, no refactors unless required.
+- Reuse existing layout + existing auth/role routing.
+- Use current database/storage solution already in the app (do not introduce a new DB).
+- Keep UI simple: table/list + modal/form.
+- Do NOT implement complex permissions beyond “admin vs chapter”.
+- If Google Drive API/OAuth is NOT already configured in the project, DO NOT add it. Instead, implement a “Paste Drive Link” workflow that still satisfies “automatically put it here” by saving the link under the designated folder reference.
+
+------------------------------------------------------------
+A) ADMIN SIDE REQUIREMENTS
+
+1) Admin Panel: Add a section/page/card named “Important Documents”.
+2) Admin can add documents (title + url + notes) and these automatically appear for ALL chapters.
+3) Pre-seed these 4 documents on first run (if not existing):
+   - MOU between Chapter President and YSP National
+     https://docs.google.com/document/d/1IG4tFjOcb9nVn7ly60Ddj33bvS0bqv1THJP2xkTpvVI/edit?usp=sharing
+   - CODE OF CONDUCT ON THE USE OF THE YSP NAME
+     https://docs.google.com/document/d/1ZvGoIb-les1sRUffLDDTj9pDb4-lfNqykggBvQu2rpg/edit?usp=sharing
+   - CODE OF CONDUCT ON FUNDRAISING FOR YSP CHAPTERS
+     https://docs.google.com/document/d/1v8Ig2R6i0alLkbl93k7LWMDJjXYk5lv5UMRkRAhuA_s/edit?usp=sharing
+   - CODE OF CONDUCT IN HANDLING OFFICERS AND MEMBERS
+     https://docs.google.com/document/d/1xoIYiW4ViC6nvU2YMvMZT-xDv_2vFkIg2ylY5g5W63c/edit?usp=sharing
+4) “Access on the Request/Message Panel on the YSP Chapters”:
+   - Ensure Admin can view ALL chapter requests/messages in one place.
+   - If this panel already exists, just make sure it’s accessible in Admin nav and shows newest first + filter by chapter.
+
+ADMIN UI MINIMUM:
+- List of documents: Title | Notes (short) | Open Link | Edit | Delete
+- “Add Document” modal: Title, URL, Notes (textarea)
+
+------------------------------------------------------------
+B) CHAPTER SIDE REQUIREMENTS
+
+1) Chapter Panel: Add section/page/card named “Important Documents”.
+2) This page shows ALL documents inputted by Admin.
+3) For each document, the chapter must be able to mark “Read”.
+   - When they click “Mark as Read”, show a confirmation warning:
+     “By confirming, you accept responsibility to follow this policy. Non-compliance may result in removal. Proceed?”
+     Buttons: YES / NO
+   - Only on YES should status become “Read”.
+4) MOU submission:
+   - Chapter can submit/upload their signed MOU.
+   - Requirement: “Automatically put it here when they upload:
+     https://drive.google.com/drive/folders/1eAi3sB1KBGZ9nKffbwJbGnaD6N7NIYkY?usp=sharing”
+   IMPLEMENTATION (LOW COST):
+   - Check if Google Drive API upload is already implemented in repo.
+     - IF YES: upload file to that folder (store returned file link).
+     - IF NO: do NOT add OAuth. Instead:
+       a) Provide “Upload Signed MOU” field that accepts either:
+          - a file uploaded to app storage (optional), AND
+          - REQUIRED: a “Drive Link” input where chapter pastes the file link after uploading to that Drive folder.
+       b) Store the submitted Drive link + timestamp + uploader chapter.
+       c) In UI, label clearly: “Upload your file to the Drive folder above, then paste the share link here.”
+   - Show submission status: Not Submitted / Submitted (with link)
+
+5) Request/Message panel for YSP Admin:
+   - Add a “Project Funding Request” form with fields:
+     - proposedActivityName (text)
+     - date (date)
+     - time (time)
+     - rationale (textarea)
+     - howNationalCanHelp (select: “Monetary” / “Other Forms” / “Both”)
+     - optional details/amount (text or textarea)
+   - On submit: save as a request record, visible to Admin in the Admin Request/Message panel.
+
+CHAPTER UI MINIMUM:
+- Important Documents list: Title | Notes | Open | Status (Unread/Read) | Mark as Read
+- MOU Submission card: Drive folder link + upload/link inputs + submit button + current status
+
+------------------------------------------------------------
+DATA MODEL (minimal)
+
+Table/Collection: important_documents
+- id
+- title
+- url
+- notes
+- createdAt
+- updatedAt
+- createdBy (admin id)
+
+Table/Collection: chapter_document_ack
+- id
+- chapterId
+- documentId
+- readAt (nullable)
+- acknowledged (boolean)
+
+Table/Collection: mou_submissions
+- id
+- chapterId
+- driveFolderUrl (constant)
+- driveFileLink (string, nullable)
+- uploadedFileUrl (string, optional if app storage used)
+- submittedAt
+
+Table/Collection: chapter_requests
+- id
+- chapterId
+- type (e.g., "funding_request" | "message")
+- proposedActivityName
+- date
+- time
+- rationale
+- howNationalCanHelp
+- details
+- status (e.g., "new", "in_review", "resolved")
+- createdAt
+
+------------------------------------------------------------
+ROUTING / PERMISSIONS
+- Only Admin can create/edit/delete important_documents.
+- Chapters can only:
+  - read important_documents
+  - create/update their own acknowledgements
+  - submit their own MOU + funding requests
+- Admin can view all chapter_document_ack, mou_submissions, chapter_requests.
+
+------------------------------------------------------------
+ACCEPTANCE CHECKLIST (must pass)
+1) Admin sees “Important Documents” panel and can add a new doc; chapters immediately see it.
+2) The 4 specified documents appear by default (seeded once).
+3) Chapter can mark each doc as “Read” only after confirming the warning (YES/NO).
+4) Chapter can submit MOU with stored Drive link (and optional file upload if implemented).
+5) Admin can view chapter requests/messages and see funding request details (name/date/time/rationale/help type).
+6) No new heavy dependencies; no OAuth implementation unless already present.
+
+DELIVERABLE:
+Implement the above with minimal UI + working persistence. Keep changes small and focused.

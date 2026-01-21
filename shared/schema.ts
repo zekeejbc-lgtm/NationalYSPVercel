@@ -155,6 +155,47 @@ export const contactInfo = pgTable("contact_info", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const importantDocuments = pgTable("important_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const chapterDocumentAck = pgTable("chapter_document_ack", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  documentId: varchar("document_id").notNull().references(() => importantDocuments.id),
+  acknowledged: boolean("acknowledged").default(false).notNull(),
+  readAt: timestamp("read_at"),
+});
+
+export const mouSubmissions = pgTable("mou_submissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  driveFolderUrl: text("drive_folder_url").notNull().default("https://drive.google.com/drive/folders/1eAi3sB1KBGZ9nKffbwJbGnaD6N7NIYkY?usp=sharing"),
+  driveFileLink: text("drive_file_link"),
+  uploadedFileUrl: text("uploaded_file_url"),
+  submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+});
+
+export const chapterRequests = pgTable("chapter_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  type: text("type").notNull().default("funding_request"),
+  proposedActivityName: text("proposed_activity_name"),
+  date: timestamp("date"),
+  time: text("time"),
+  rationale: text("rationale"),
+  howNationalCanHelp: text("how_national_can_help"),
+  details: text("details"),
+  status: text("status").notNull().default("new"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const insertAdminUserSchema = createInsertSchema(adminUsers).pick({
   username: true,
   password: true,
@@ -233,6 +274,31 @@ export const insertKpiCompletionSchema = createInsertSchema(kpiCompletions).omit
   updatedAt: true,
 });
 
+export const insertImportantDocumentSchema = createInsertSchema(importantDocuments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertChapterDocumentAckSchema = createInsertSchema(chapterDocumentAck).omit({
+  id: true,
+});
+
+export const insertMouSubmissionSchema = createInsertSchema(mouSubmissions).omit({
+  id: true,
+  submittedAt: true,
+});
+
+export const insertChapterRequestSchema = createInsertSchema(chapterRequests).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  date: z.preprocess(
+    (val) => (typeof val === "string" ? new Date(val) : val),
+    z.date().optional()
+  ),
+});
+
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
 
@@ -282,3 +348,15 @@ export type KpisData = {
   fundsRaised?: number;
   [key: string]: number | undefined;
 };
+
+export type ImportantDocument = typeof importantDocuments.$inferSelect;
+export type InsertImportantDocument = z.infer<typeof insertImportantDocumentSchema>;
+
+export type ChapterDocumentAck = typeof chapterDocumentAck.$inferSelect;
+export type InsertChapterDocumentAck = z.infer<typeof insertChapterDocumentAckSchema>;
+
+export type MouSubmission = typeof mouSubmissions.$inferSelect;
+export type InsertMouSubmission = z.infer<typeof insertMouSubmissionSchema>;
+
+export type ChapterRequest = typeof chapterRequests.$inferSelect;
+export type InsertChapterRequest = z.infer<typeof insertChapterRequestSchema>;
