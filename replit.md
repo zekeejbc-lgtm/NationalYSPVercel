@@ -43,6 +43,8 @@ Preferred communication style: Simple, everyday language.
   - KPI Templates: Template-based KPI system with quarterly/yearly/both timeframes and numeric/text inputs
   - Members: View all registered YSP members across chapters with Add Member modal, toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, and CSV export
   - Officers: View all chapter officers organized by chapter
+  - Documents: CRUD management for Important Documents (4 default documents seeded: MOU, 3 Code of Conduct documents)
+  - Requests: View and manage chapter funding requests with status tracking (new/in_review/approved/rejected)
 - Chapter Dashboard: Role-based dashboard for chapter accounts with panels for:
   - Project Reports: Submit project reports (auto-published to Publications)
   - Officers: Manage 6 required officer positions (President, Program Dev, Finance, Secretary, Partnership, Communications)
@@ -53,6 +55,8 @@ Preferred communication style: Simple, everyday language.
   - Chapter Directory: View all YSP chapters
   - Leaderboard: Quarterly/Yearly rankings based on KPI completion scores
   - Members: View and manage chapter-scoped members with Add Member modal and toggle buttons for isActive/registeredVoter
+  - Documents: View Important Documents with read acknowledgement confirmation dialogs and MOU submission to hardcoded Drive folder
+  - Requests: Submit funding requests to YSP National with activity details, rationale, and requested support
 
 ### Backend Architecture
 
