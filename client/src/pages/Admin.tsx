@@ -15,6 +15,8 @@ import ChapterAccountsManager from "@/components/admin/ChapterAccountsManager";
 import KpiManager from "@/components/admin/KpiManager";
 import MemberListManager from "@/components/admin/MemberListManager";
 import OfficerListManager from "@/components/admin/OfficerListManager";
+import ImportantDocumentsManager from "@/components/admin/ImportantDocumentsManager";
+import ChapterRequestsPanel from "@/components/admin/ChapterRequestsPanel";
 
 export default function Admin() {
   const [, setLocation] = useLocation();
@@ -130,6 +132,8 @@ export default function Admin() {
             <TabsTrigger value="officers" data-testid="tab-officers">Officers</TabsTrigger>
             <TabsTrigger value="kpis" data-testid="tab-kpis">KPIs</TabsTrigger>
             <TabsTrigger value="volunteer" data-testid="tab-volunteer">Volunteer</TabsTrigger>
+            <TabsTrigger value="documents" data-testid="tab-documents">Documents</TabsTrigger>
+            <TabsTrigger value="requests" data-testid="tab-requests">Requests</TabsTrigger>
             <TabsTrigger value="contact" data-testid="tab-contact">Contact</TabsTrigger>
           </TabsList>
 
@@ -167,6 +171,14 @@ export default function Admin() {
 
           <TabsContent value="volunteer">
             <VolunteerManager />
+          </TabsContent>
+
+          <TabsContent value="documents">
+            <ImportantDocumentsManager />
+          </TabsContent>
+
+          <TabsContent value="requests">
+            <ChapterRequestsPanel />
           </TabsContent>
 
           <TabsContent value="contact">

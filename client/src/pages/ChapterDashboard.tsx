@@ -28,7 +28,9 @@ import {
   UserCheck,
   Share2,
   HandHeart,
-  Users
+  Users,
+  ClipboardList,
+  Send
 } from "lucide-react";
 import type { Chapter, Publication } from "@shared/schema";
 import OfficersPanel from "@/components/chapter/OfficersPanel";
@@ -37,6 +39,8 @@ import VolunteerOpportunityPanel from "@/components/chapter/VolunteerOpportunity
 import ChapterKpiPanel from "@/components/chapter/ChapterKpiPanel";
 import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
 import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
+import ImportantDocumentsPanel from "@/components/chapter/ImportantDocumentsPanel";
+import FundingRequestPanel from "@/components/chapter/FundingRequestPanel";
 
 interface AuthUser {
   id: string;
@@ -280,6 +284,14 @@ export default function ChapterDashboard() {
               <HandHeart className="h-4 w-4" />
               Volunteer
             </TabsTrigger>
+            <TabsTrigger value="documents" className="gap-2" data-testid="tab-documents">
+              <ClipboardList className="h-4 w-4" />
+              Documents
+            </TabsTrigger>
+            <TabsTrigger value="requests" className="gap-2" data-testid="tab-requests">
+              <Send className="h-4 w-4" />
+              Funding
+            </TabsTrigger>
             <TabsTrigger value="social" className="gap-2" data-testid="tab-social">
               <Share2 className="h-4 w-4" />
               Social Media
@@ -394,6 +406,18 @@ export default function ChapterDashboard() {
           <TabsContent value="volunteer">
             {authUser?.chapterId && (
               <VolunteerOpportunityPanel chapterId={authUser.chapterId} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="documents">
+            {authUser?.chapterId && (
+              <ImportantDocumentsPanel chapterId={authUser.chapterId} />
+            )}
+          </TabsContent>
+
+          <TabsContent value="requests">
+            {authUser?.chapterId && (
+              <FundingRequestPanel chapterId={authUser.chapterId} />
             )}
           </TabsContent>
 
