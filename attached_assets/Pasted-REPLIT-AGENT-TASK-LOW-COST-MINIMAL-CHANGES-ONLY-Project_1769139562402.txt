@@ -1,0 +1,70 @@
+REPLIT AGENT TASK (LOW-COST, MINIMAL CHANGES ONLY)
+
+Project: YSP Dashboard Update
+Goal: Implement ONLY the changes below with the smallest possible code edits. Keep it low-cost:
+- Do NOT redesign the UI.
+- Do NOT add new pages unless absolutely required.
+- Do NOT use external APIs, paid services, charts libraries, or complex analytics.
+- Reuse existing components/forms/tables where possible.
+- Use simple database changes + basic UI fields + a lightweight admin summary.
+
+A) MEMBERSHIP FORM (UPDATE FIELDS + COPY)
+1) Add a short note (helper text) near the “comprehensive details” fields:
+   Text: “Comprehensive details are collected for our Annual Voter’s Education.”
+
+2) Add new fields to the membership form submission:
+   - household_size (Number, required, min 1)
+     Label: “How many are in your household?”
+   - household_voters (Number, optional, min 0)
+     Label: “How many registered voters are in your household? (Optional)”
+     Helper text (same note):
+     “Comprehensive details are collected for our Annual Voter’s Education.”
+   - newsletter_opt_in (Boolean checkbox, required default false)
+     Label: “Subscribe to our monthly newsletter for volunteer & organization opportunities.”
+   - sector (Single-select dropdown, required)
+     Label: “Sector”
+     Options (exact):
+       Youth (30 years old and under)
+       PWD
+       Farmers
+       Indigenous People
+       TODA
+       Others
+     If “Others” selected, show optional text input:
+       sector_other (String, optional) Label: “Please specify”
+
+3) Data handling:
+   - Validate numbers properly (no string dates issue; use number inputs).
+   - Store these fields in the same membership submissions table/collection you currently use.
+   - If you already store “registered voter” status, keep it; don’t change existing meaning.
+
+B) ADMIN DASHBOARD (LIGHTWEIGHT SUMMARY + VOTER FIELD SYNC)
+1) Add an admin-only summary card/section:
+   Title: “Household Summary”
+   - total_submissions = count of membership submissions
+   - total_household_size = sum of household_size across all submissions
+   - average_household_size = total_household_size / total_submissions (handle divide-by-zero)
+   Keep it simple text numbers; no charts.
+
+2) Registered Voter field:
+   - Ensure the Admin “Members” view/table includes the “registered_voter” value coming from what the member submitted in the membership form.
+   - If your system has BOTH “membership_submissions” and a “members” table:
+       On approval/creation of a member record from a submission, copy:
+         registered_voter
+         household_size
+         household_voters
+         newsletter_opt_in
+         sector (+ sector_other if applicable)
+     If a member record already exists and is linked to a submission, update registered_voter ONLY if empty/null (avoid overwriting admin edits).
+
+Technical constraints (to keep low-cost):
+- Use your existing DB (no migrations requiring complex tooling; if using Prisma, add minimal fields and run the simplest migration).
+- No advanced filtering/reporting; only the summary numbers above.
+- Keep compute cheap: compute summary via a simple DB aggregate query if available; otherwise fetch minimal fields and reduce in code.
+- Make sure build/publish works.
+
+Deliverables:
+- Updated membership form UI + validation + save.
+- Updated Admin dashboard with Household Summary.
+- Registered voter value displayed and synced as described.
+- Quick smoke test: submit form → check admin sees fields + summary updates.

@@ -23,8 +23,22 @@ interface MembershipFormData {
   contactNumber: string;
   facebookLink?: string;
   registeredVoter: boolean;
+  householdSize: number;
+  householdVoters?: number;
+  newsletterOptIn: boolean;
+  sector: string;
+  sectorOther?: string;
   privacyConsent: boolean;
 }
+
+const SECTOR_OPTIONS = [
+  "Youth (30 years old and under)",
+  "PWD",
+  "Farmers",
+  "Indigenous People",
+  "TODA",
+  "Others",
+];
 
 const PRIVACY_TEXT = `Privacy Advisory and Data Consent
 
@@ -58,15 +72,24 @@ export default function Membership() {
       contactNumber: "",
       facebookLink: "",
       registeredVoter: false,
+      householdSize: 1,
+      householdVoters: undefined,
+      newsletterOptIn: false,
+      sector: "",
+      sectorOther: "",
       privacyConsent: false,
     }
   });
+
+  const watchSector = form.watch("sector");
 
   const submitMutation = useMutation({
     mutationFn: async (data: MembershipFormData) => {
       const { privacyConsent, ...memberData } = data;
       return await apiRequest("POST", "/api/members", {
         ...memberData,
+        householdVoters: memberData.householdVoters || null,
+        sectorOther: memberData.sector === "Others" ? memberData.sectorOther : null,
         isActive: false,
       });
     },
@@ -247,6 +270,121 @@ export default function Membership() {
                           </FormItem>
                         )}
                       />
+
+                      <div className="border-t pt-4 mt-4">
+                        <p className="text-sm text-muted-foreground mb-4 italic">
+                          Comprehensive details are collected for our Annual Voter's Education.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="householdSize"
+                            rules={{ 
+                              required: "Household size is required",
+                              min: { value: 1, message: "Must be at least 1" }
+                            }}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>How many are in your household? *</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    type="number" 
+                                    min={1}
+                                    {...field} 
+                                    onChange={(e) => field.onChange(parseInt(e.target.value) || 1)}
+                                    data-testid="input-household-size" 
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name="householdVoters"
+                            rules={{ min: { value: 0, message: "Cannot be negative" } }}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>How many registered voters are in your household? (Optional)</FormLabel>
+                                <FormControl>
+                                  <Input 
+                                    type="number" 
+                                    min={0}
+                                    {...field} 
+                                    value={field.value ?? ""}
+                                    onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
+                                    data-testid="input-household-voters" 
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <FormField
+                          control={form.control}
+                          name="sector"
+                          rules={{ required: "Please select a sector" }}
+                          render={({ field }) => (
+                            <FormItem className="mt-4">
+                              <FormLabel>Sector *</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-sector">
+                                    <SelectValue placeholder="Select your sector" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {SECTOR_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        {watchSector === "Others" && (
+                          <FormField
+                            control={form.control}
+                            name="sectorOther"
+                            render={({ field }) => (
+                              <FormItem className="mt-4">
+                                <FormLabel>Please specify</FormLabel>
+                                <FormControl>
+                                  <Input {...field} placeholder="Enter your sector" data-testid="input-sector-other" />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
+
+                        <FormField
+                          control={form.control}
+                          name="newsletterOptIn"
+                          render={({ field }) => (
+                            <FormItem className="flex items-start gap-3 mt-4 py-2">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                  data-testid="checkbox-newsletter"
+                                />
+                              </FormControl>
+                              <FormLabel className="!mt-0 font-normal">
+                                Subscribe to our monthly newsletter for volunteer & organization opportunities.
+                              </FormLabel>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
 
                       <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
                         <FormField

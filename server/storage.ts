@@ -121,6 +121,7 @@ export interface IStorage {
   createMember(member: InsertMember): Promise<Member>;
   updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined>;
   deleteMember(id: string): Promise<boolean>;
+  getHouseholdSummary(): Promise<{ totalSubmissions: number; totalHouseholdSize: number; averageHouseholdSize: number }>;
 
   getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]>;
   getAllOfficers(): Promise<ChapterOfficer[]>;
@@ -487,6 +488,14 @@ export class DbStorage implements IStorage {
   async deleteMember(id: string): Promise<boolean> {
     const result = await db.delete(members).where(eq(members.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getHouseholdSummary(): Promise<{ totalSubmissions: number; totalHouseholdSize: number; averageHouseholdSize: number }> {
+    const allMembers = await db.select({ householdSize: members.householdSize }).from(members);
+    const totalSubmissions = allMembers.length;
+    const totalHouseholdSize = allMembers.reduce((sum, m) => sum + (m.householdSize || 1), 0);
+    const averageHouseholdSize = totalSubmissions > 0 ? totalHouseholdSize / totalSubmissions : 0;
+    return { totalSubmissions, totalHouseholdSize, averageHouseholdSize: Math.round(averageHouseholdSize * 100) / 100 };
   }
 
   async getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]> {

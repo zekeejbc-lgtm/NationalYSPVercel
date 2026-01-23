@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut } from "lucide-react";
+import { LogOut, Users, Home } from "lucide-react";
 import ProgramsManager from "@/components/admin/ProgramsManager";
 import ChaptersManager from "@/components/admin/ChaptersManager";
 import VolunteerManager from "@/components/admin/VolunteerManager";
@@ -18,11 +20,22 @@ import OfficerListManager from "@/components/admin/OfficerListManager";
 import ImportantDocumentsManager from "@/components/admin/ImportantDocumentsManager";
 import ChapterRequestsPanel from "@/components/admin/ChapterRequestsPanel";
 
+interface HouseholdSummary {
+  totalSubmissions: number;
+  totalHouseholdSize: number;
+  averageHouseholdSize: number;
+}
+
 export default function Admin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+
+  const { data: householdSummary } = useQuery<HouseholdSummary>({
+    queryKey: ["/api/household-summary"],
+    enabled: authenticated,
+  });
 
   useEffect(() => {
     checkAuth();
@@ -158,6 +171,38 @@ export default function Admin() {
           </TabsContent>
 
           <TabsContent value="members">
+            {householdSummary && (
+              <Card className="mb-6" data-testid="card-household-summary">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Home className="h-5 w-5" />
+                    Household Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="text-center p-4 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold" data-testid="text-total-submissions">
+                        {householdSummary.totalSubmissions}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Total Submissions</div>
+                    </div>
+                    <div className="text-center p-4 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold" data-testid="text-total-household-size">
+                        {householdSummary.totalHouseholdSize}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Total Household Size</div>
+                    </div>
+                    <div className="text-center p-4 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold" data-testid="text-avg-household-size">
+                        {householdSummary.averageHouseholdSize}
+                      </div>
+                      <div className="text-sm text-muted-foreground">Average Household Size</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             <MemberListManager />
           </TabsContent>
 

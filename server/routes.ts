@@ -614,6 +614,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/household-summary", requireAdminAuth, async (req, res) => {
+    const summary = await storage.getHouseholdSummary();
+    res.json(summary);
+  });
+
   app.post("/api/members", async (req, res) => {
     try {
       const memberData = {

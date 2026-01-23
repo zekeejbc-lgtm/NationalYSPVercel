@@ -36,6 +36,11 @@ export const members = pgTable("members", {
   registeredVoter: boolean("registered_voter").default(false).notNull(),
   facebookLink: text("facebook_link"),
   isActive: boolean("is_active").default(false).notNull(),
+  householdSize: integer("household_size").default(1).notNull(),
+  householdVoters: integer("household_voters"),
+  newsletterOptIn: boolean("newsletter_opt_in").default(false).notNull(),
+  sector: text("sector"),
+  sectorOther: text("sector_other"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
