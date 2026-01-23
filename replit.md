@@ -35,13 +35,13 @@ Preferred communication style: Simple, everyday language.
 - Home: Hero section with call-to-action, stats display, featured programs and chapters
 - Programs: Browsable program catalog with detailed modal views
 - Publications: Blog-style page displaying organization news/articles ordered by newest first
-- Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin.
+- Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin. Includes household data collection for Voter's Education program (household size, household voters, sector selection, newsletter opt-in).
 - Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment
 - Contact: Contact information display with email, phone, and social media links
 - Admin Dashboard: Protected dashboard for content management with tabs for:
   - Programs, Chapters, Publications, Volunteer Opportunities, Stats, Contact Info
   - KPI Templates: Template-based KPI system with quarterly/yearly/both timeframes and numeric/text inputs
-  - Members: View all registered YSP members across chapters with Add Member modal, toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, and CSV export
+  - Members: View all registered YSP members across chapters with Add Member modal, toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, CSV export, and Household Summary card displaying total submissions, total household size, and average household size
   - Officers: View all chapter officers organized by chapter
   - Documents: CRUD management for Important Documents (4 default documents seeded: MOU, 3 Code of Conduct documents)
   - Requests: View and manage chapter funding requests with status tracking (new/in_review/approved/rejected)
