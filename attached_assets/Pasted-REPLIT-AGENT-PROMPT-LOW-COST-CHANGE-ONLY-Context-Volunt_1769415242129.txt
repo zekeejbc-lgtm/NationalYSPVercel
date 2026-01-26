@@ -1,0 +1,49 @@
+REPLIT AGENT PROMPT (LOW-COST CHANGE ONLY)
+
+Context:
+- Volunteer Opportunity feature already exists (create/list/view).
+- Task: Add optional Photo/Pubmat upload when posting a Volunteer Opportunity (Admin + Chapter).
+- Keep cost low: minimal edits, minimal dependencies, reuse existing code patterns.
+
+Requirements:
+1) Database / Model update
+- Add ONE optional field to VolunteerOpportunity:
+  - photo_url (string, nullable) OR pubmat_url (string, nullable)
+- Do NOT store base64 in DB.
+
+2) Upload handling (LOW COST)
+- Accept only image files: jpg, jpeg, png, webp
+- Strict max size: 2MB
+- No resizing, no compression, no OCR, no AI processing.
+- Store file in existing storage approach:
+  - If app already saves files locally: save to /uploads/volunteer-opps/ and store relative path in photo_url.
+  - If app already uses cloud storage: reuse it (do not add a new provider).
+- Sanitize filename + make unique (timestamp + random suffix).
+- If user uploads a new image for an existing post, replace photo_url and delete old file if local storage (optional but nice).
+
+3) UI changes (Minimal)
+Admin + Chapter “Post Volunteer Opportunity” form:
+- Add a file input: “Photo/Pubmat (optional)”
+- Keep all existing fields unchanged.
+- Form submits as multipart/form-data only when a file is selected; otherwise keep existing request format.
+
+List/View pages:
+- If photo_url exists, display the image thumbnail/card banner.
+- If none, show nothing (no placeholder needed).
+
+4) API changes
+- Update existing create endpoint to accept optional image file.
+- Update existing edit/update endpoint (if exists) to accept optional image file.
+- Preserve existing validations; add only file validations above.
+
+5) Testing checklist (quick)
+- Create opportunity without image → works
+- Create with valid image under 2MB → works, photo displays
+- Upload invalid type or >2MB → user-friendly error
+- Chapter can upload for their own posts; Admin can upload for any post per current permissions
+
+Implementation notes:
+- Reuse the app’s current upload middleware/utility if any.
+- Avoid adding heavy libraries. Use the lightest built-in/middleware already used by the project.
+- Keep code changes limited to: model/schema, create/update handler, and form UI.
+Deliver as a small patch.

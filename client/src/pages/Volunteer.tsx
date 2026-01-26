@@ -30,6 +30,7 @@ export default function Volunteer() {
                 contactName={opportunity.contactName}
                 contactPhone={opportunity.contactPhone}
                 contactEmail={opportunity.contactEmail || undefined}
+                photoUrl={opportunity.photoUrl}
               />
             ))}
           </div>

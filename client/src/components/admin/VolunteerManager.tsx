@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Edit, Plus } from "lucide-react";
+import { Trash2, Edit, Plus, Image } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
 import type { VolunteerOpportunity } from "@shared/schema";
@@ -15,6 +15,8 @@ export default function VolunteerManager() {
   const { toast } = useToast();
   const [editingOpportunity, setEditingOpportunity] = useState<VolunteerOpportunity | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     eventName: "",
     date: "",
@@ -31,6 +33,8 @@ export default function VolunteerManager() {
 
   const handleAdd = () => {
     setEditingOpportunity(null);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setFormData({
       eventName: "",
       date: "",
@@ -45,11 +49,13 @@ export default function VolunteerManager() {
 
   const handleEdit = (opportunity: VolunteerOpportunity) => {
     setEditingOpportunity(opportunity);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setFormData({
       eventName: opportunity.eventName,
       date: format(new Date(opportunity.date), "yyyy-MM-dd"),
       chapter: opportunity.chapter,
-      sdgs: opportunity.sdgs,
+      sdgs: opportunity.sdgs || "",
       contactName: opportunity.contactName,
       contactPhone: opportunity.contactPhone,
       contactEmail: opportunity.contactEmail || "",
@@ -57,14 +63,45 @@ export default function VolunteerManager() {
     setIsDialogOpen(true);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast({ title: "Error", description: "File must be under 2MB", variant: "destructive" });
+        e.target.value = "";
+        return;
+      }
+      const validTypes = ["image/jpeg", "image/png", "image/webp"];
+      if (!validTypes.includes(file.type)) {
+        toast({ title: "Error", description: "Only JPG, PNG, or WebP images allowed", variant: "destructive" });
+        e.target.value = "";
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
   const createMutation = useMutation({
-    mutationFn: (data: typeof formData) => {
-      const submitData = {
-        ...data,
-        date: new Date(data.date).toISOString(),
-        contactEmail: data.contactEmail || undefined,
-      };
-      return apiRequest("POST", "/api/volunteer-opportunities", submitData);
+    mutationFn: async ({ data, file }: { data: typeof formData; file: File | null }) => {
+      const formDataObj = new FormData();
+      formDataObj.append("eventName", data.eventName);
+      formDataObj.append("date", new Date(data.date).toISOString());
+      formDataObj.append("time", "TBD");
+      formDataObj.append("venue", "TBD");
+      formDataObj.append("chapter", data.chapter);
+      formDataObj.append("sdgs", data.sdgs);
+      formDataObj.append("contactName", data.contactName);
+      formDataObj.append("contactPhone", data.contactPhone);
+      if (data.contactEmail) formDataObj.append("contactEmail", data.contactEmail);
+      if (file) formDataObj.append("photo", file);
+
+      const res = await fetch("/api/volunteer-opportunities", {
+        method: "POST",
+        body: formDataObj,
+        credentials: "include"
+      });
+      if (!res.ok) throw new Error("Failed to create");
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
@@ -84,13 +121,26 @@ export default function VolunteerManager() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: typeof formData }) => {
-      const submitData = {
-        ...data,
-        date: new Date(data.date).toISOString(),
-        contactEmail: data.contactEmail || undefined,
-      };
-      return apiRequest("PUT", `/api/volunteer-opportunities/${id}`, submitData);
+    mutationFn: async ({ id, data, file }: { id: string; data: typeof formData; file: File | null }) => {
+      const formDataObj = new FormData();
+      formDataObj.append("eventName", data.eventName);
+      formDataObj.append("date", new Date(data.date).toISOString());
+      formDataObj.append("time", "TBD");
+      formDataObj.append("venue", "TBD");
+      formDataObj.append("chapter", data.chapter);
+      formDataObj.append("sdgs", data.sdgs);
+      formDataObj.append("contactName", data.contactName);
+      formDataObj.append("contactPhone", data.contactPhone);
+      if (data.contactEmail) formDataObj.append("contactEmail", data.contactEmail);
+      if (file) formDataObj.append("photo", file);
+
+      const res = await fetch(`/api/volunteer-opportunities/${id}`, {
+        method: "PUT",
+        body: formDataObj,
+        credentials: "include"
+      });
+      if (!res.ok) throw new Error("Failed to update");
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
@@ -130,9 +180,9 @@ export default function VolunteerManager() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingOpportunity) {
-      updateMutation.mutate({ id: editingOpportunity.id, data: formData });
+      updateMutation.mutate({ id: editingOpportunity.id, data: formData, file: selectedFile });
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate({ data: formData, file: selectedFile });
     }
   };
 
@@ -168,7 +218,15 @@ export default function VolunteerManager() {
               {opportunities.map((opportunity) => (
                 <Card key={opportunity.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between">
+                    <div className="flex items-start justify-between gap-4">
+                      {opportunity.photoUrl && (
+                        <img 
+                          src={opportunity.photoUrl} 
+                          alt={opportunity.eventName}
+                          className="w-20 h-20 object-cover rounded-md flex-shrink-0"
+                          data-testid={`img-volunteer-${opportunity.id}`}
+                        />
+                      )}
                       <div className="flex-1">
                         <h3 className="font-semibold">{opportunity.eventName}</h3>
                         <p className="text-sm text-muted-foreground">
@@ -296,6 +354,32 @@ export default function VolunteerManager() {
                 placeholder="juan@youthservice.ph"
                 data-testid="input-volunteer-contact-email"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="photo">Photo/Pubmat (Optional)</Label>
+              <Input
+                id="photo"
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleFileChange}
+                data-testid="input-volunteer-photo"
+              />
+              <p className="text-xs text-muted-foreground">
+                JPG, PNG, or WebP only. Max 2MB.
+              </p>
+              {editingOpportunity?.photoUrl && !selectedFile && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Image className="h-4 w-4" />
+                  <span>Current image: {editingOpportunity.photoUrl.split('/').pop()}</span>
+                </div>
+              )}
+              {selectedFile && (
+                <div className="flex items-center gap-2 text-sm text-green-600">
+                  <Image className="h-4 w-4" />
+                  <span>Selected: {selectedFile.name}</span>
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <Button 

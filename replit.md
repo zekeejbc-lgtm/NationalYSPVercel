@@ -36,7 +36,7 @@ Preferred communication style: Simple, everyday language.
 - Programs: Browsable program catalog with detailed modal views
 - Publications: Blog-style page displaying organization news/articles ordered by newest first
 - Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin. Includes household data collection for Voter's Education program (household size, household voters, sector selection, newsletter opt-in).
-- Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment
+- Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment, with optional photo/pubmat display
 - Contact: Contact information display with email, phone, and social media links
 - Admin Dashboard: Protected dashboard for content management with tabs for:
   - Programs, Chapters, Publications, Volunteer Opportunities, Stats, Contact Info

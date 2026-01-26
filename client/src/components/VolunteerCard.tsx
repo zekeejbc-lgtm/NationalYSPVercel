@@ -12,6 +12,7 @@ interface VolunteerCardProps {
   contactName: string;
   contactPhone: string;
   contactEmail?: string;
+  photoUrl?: string | null;
 }
 
 const SDG_COLORS: Record<number, string> = {
@@ -43,12 +44,22 @@ export default function VolunteerCard({
   contactName,
   contactPhone,
   contactEmail,
+  photoUrl,
 }: VolunteerCardProps) {
   return (
     <Card 
-      className="hover-elevate transition-all"
+      className="hover-elevate transition-all overflow-hidden"
       data-testid={`card-volunteer-${id}`}
     >
+      {photoUrl && (
+        <div className="w-full h-48 overflow-hidden">
+          <img 
+            src={photoUrl} 
+            alt={eventName}
+            className="w-full h-full object-cover"
+          />
+        </div>
+      )}
       <CardHeader>
         <h3 className="text-lg font-semibold">{eventName}</h3>
         <div className="flex flex-wrap gap-2 mt-2">

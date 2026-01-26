@@ -48,6 +48,30 @@ const upload = multer({
   },
 });
 
+const volunteerUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, "client/public/uploads");
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      cb(null, "volunteer-" + uniqueSuffix + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error("Only jpg, png, or webp images under 2MB are allowed"));
+    }
+  },
+});
+
 declare module "express-session" {
   interface SessionData {
     userId?: string;
@@ -375,9 +399,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(opportunity);
   });
 
-  app.post("/api/volunteer-opportunities", requireAdminAuth, async (req, res) => {
+  app.post("/api/volunteer-opportunities", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
-      const validated = insertVolunteerOpportunitySchema.parse(req.body);
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      const validated = insertVolunteerOpportunitySchema.parse({
+        ...req.body,
+        photoUrl
+      });
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);
     } catch (error: any) {
@@ -386,9 +414,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/volunteer-opportunities/:id", requireAdminAuth, async (req, res) => {
+  app.put("/api/volunteer-opportunities/:id", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
-      const validated = insertVolunteerOpportunitySchema.partial().parse(req.body);
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      const updateData = { ...req.body };
+      if (photoUrl) {
+        updateData.photoUrl = photoUrl;
+      }
+      const validated = insertVolunteerOpportunitySchema.partial().parse(updateData);
       const opportunity = await storage.updateVolunteerOpportunity(req.params.id, validated);
       if (!opportunity) {
         return res.status(404).json({ error: "Volunteer opportunity not found" });
@@ -842,16 +875,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/volunteer-opportunities/chapter", requireChapterAuth, async (req, res) => {
+  app.post("/api/volunteer-opportunities/chapter", requireChapterAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
       const chapterId = req.session.chapterId!;
       const chapter = await storage.getChapter(chapterId);
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
       
       const validated = insertVolunteerOpportunitySchema.parse({
         ...req.body,
         chapterId,
         chapter: chapter?.name || "",
-        sdgs: req.body.sdgs || ""
+        sdgs: req.body.sdgs || "",
+        photoUrl
       });
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);

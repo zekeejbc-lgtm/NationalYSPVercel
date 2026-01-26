@@ -141,6 +141,7 @@ export const volunteerOpportunities = pgTable("volunteer_opportunities", {
   contactPhone: text("contact_phone").notNull(),
   contactEmail: text("contact_email"),
   ageRequirement: text("age_requirement").default("18+").notNull(),
+  photoUrl: text("photo_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

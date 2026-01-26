@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { HandHeart, Plus, Calendar, MapPin, Clock, User, AlertTriangle } from "lucide-react";
+import { queryClient } from "@/lib/queryClient";
+import { HandHeart, Plus, Calendar, MapPin, Clock, User, AlertTriangle, Image } from "lucide-react";
 import { format } from "date-fns";
 import type { VolunteerOpportunity } from "@shared/schema";
 
@@ -22,6 +22,8 @@ interface VolunteerOpportunityPanelProps {
 export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpportunityPanelProps) {
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     eventName: "",
     date: "",
@@ -43,9 +45,44 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
     enabled: !!chapterId,
   });
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast({ title: "Error", description: "File must be under 2MB", variant: "destructive" });
+        e.target.value = "";
+        return;
+      }
+      const validTypes = ["image/jpeg", "image/png", "image/webp"];
+      if (!validTypes.includes(file.type)) {
+        toast({ title: "Error", description: "Only JPG, PNG, or WebP images allowed", variant: "destructive" });
+        e.target.value = "";
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
-      return await apiRequest("POST", "/api/volunteer-opportunities/chapter", data);
+    mutationFn: async ({ data, file }: { data: typeof formData; file: File | null }) => {
+      const formDataObj = new FormData();
+      formDataObj.append("eventName", data.eventName);
+      formDataObj.append("date", data.date);
+      formDataObj.append("time", data.time);
+      formDataObj.append("venue", data.venue);
+      formDataObj.append("contactName", data.contactName);
+      formDataObj.append("contactPhone", data.contactPhone);
+      formDataObj.append("ageRequirement", data.ageRequirement);
+      if (data.contactEmail) formDataObj.append("contactEmail", data.contactEmail);
+      if (file) formDataObj.append("photo", file);
+
+      const res = await fetch("/api/volunteer-opportunities/chapter", {
+        method: "POST",
+        body: formDataObj,
+        credentials: "include"
+      });
+      if (!res.ok) throw new Error("Failed to create");
+      return res.json();
     },
     onSuccess: () => {
       toast({ title: "Success", description: "Volunteer opportunity created and published to the main website" });
@@ -60,6 +97,8 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
 
   const resetForm = () => {
     setIsCreating(false);
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setFormData({
       eventName: "",
       date: "",
@@ -79,16 +118,7 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
       return;
     }
 
-    createMutation.mutate({
-      eventName: formData.eventName,
-      date: formData.date,
-      time: formData.time,
-      venue: formData.venue,
-      contactName: formData.contactName,
-      contactPhone: formData.contactPhone,
-      contactEmail: formData.contactEmail || null,
-      ageRequirement: formData.ageRequirement
-    });
+    createMutation.mutate({ data: formData, file: selectedFile });
   };
 
   const upcomingOpportunities = opportunities.filter(o => new Date(o.date) >= new Date());
@@ -202,6 +232,25 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Photo/Pubmat (Optional)</Label>
+                    <Input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleFileChange}
+                      data-testid="input-event-photo"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      JPG, PNG, or WebP only. Max 2MB.
+                    </p>
+                    {selectedFile && (
+                      <div className="flex items-center gap-2 text-sm text-green-600">
+                        <Image className="h-4 w-4" />
+                        <span>Selected: {selectedFile.name}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-opportunity">
@@ -223,8 +272,15 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
               <div className="space-y-3">
                 {upcomingOpportunities.map((opp) => (
                   <div key={opp.id} className="p-4 border rounded-lg hover-elevate">
-                    <div className="flex items-start justify-between">
-                      <div>
+                    <div className="flex items-start justify-between gap-4">
+                      {opp.photoUrl && (
+                        <img 
+                          src={opp.photoUrl} 
+                          alt={opp.eventName}
+                          className="w-16 h-16 object-cover rounded-md flex-shrink-0"
+                        />
+                      )}
+                      <div className="flex-1">
                         <h4 className="font-medium">{opp.eventName}</h4>
                         <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
                           <span className="flex items-center gap-1">
