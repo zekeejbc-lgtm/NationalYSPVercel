@@ -31,7 +31,9 @@ export const members = pgTable("members", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   fullName: text("full_name").notNull(),
   age: integer("age").notNull(),
+  birthdate: timestamp("birthdate"),
   chapterId: varchar("chapter_id").references(() => chapters.id),
+  barangayId: varchar("barangay_id"),
   contactNumber: text("contact_number").notNull(),
   registeredVoter: boolean("registered_voter").default(false).notNull(),
   facebookLink: text("facebook_link"),
@@ -47,8 +49,11 @@ export const members = pgTable("members", {
 export const chapterOfficers = pgTable("chapter_officers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  barangayId: varchar("barangay_id"),
+  level: text("level").notNull().default("chapter"),
   position: text("position").notNull(),
   fullName: text("full_name").notNull(),
+  birthdate: timestamp("birthdate"),
   contactNumber: text("contact_number").notNull(),
   chapterEmail: text("chapter_email").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -64,6 +69,8 @@ export const kpiTemplates = pgTable("kpi_templates", {
   year: integer("year").notNull(),
   quarter: integer("quarter"),
   targetValue: integer("target_value"),
+  scope: text("scope").notNull().default("chapter"),
+  linkedEntityId: varchar("linked_entity_id"),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -83,6 +90,17 @@ export const kpiCompletions = pgTable("kpi_completions", {
 export const chapterUsers = pgTable("chapter_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  mustChangePassword: boolean("must_change_password").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const barangayUsers = pgTable("barangay_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  barangayName: text("barangay_name").notNull(),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
@@ -218,6 +236,11 @@ export const insertChapterUserSchema = createInsertSchema(chapterUsers).omit({
   createdAt: true,
 });
 
+export const insertBarangayUserSchema = createInsertSchema(barangayUsers).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertProjectReportSchema = createInsertSchema(projectReports).omit({
   id: true,
   createdAt: true,
@@ -261,12 +284,22 @@ export const insertContactInfoSchema = createInsertSchema(contactInfo).omit({
 export const insertMemberSchema = createInsertSchema(members).omit({
   id: true,
   createdAt: true,
+}).extend({
+  birthdate: z.preprocess(
+    (val) => (typeof val === "string" && val ? new Date(val) : val),
+    z.date().nullable().optional()
+  ),
 });
 
 export const insertChapterOfficerSchema = createInsertSchema(chapterOfficers).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+}).extend({
+  birthdate: z.preprocess(
+    (val) => (typeof val === "string" && val ? new Date(val) : val),
+    z.date().nullable().optional()
+  ),
 });
 
 export const insertKpiTemplateSchema = createInsertSchema(kpiTemplates).omit({
@@ -313,6 +346,9 @@ export type InsertChapter = z.infer<typeof insertChapterSchema>;
 
 export type ChapterUser = typeof chapterUsers.$inferSelect;
 export type InsertChapterUser = z.infer<typeof insertChapterUserSchema>;
+
+export type BarangayUser = typeof barangayUsers.$inferSelect;
+export type InsertBarangayUser = z.infer<typeof insertBarangayUserSchema>;
 
 export type ProjectReport = typeof projectReports.$inferSelect;
 export type InsertProjectReport = z.infer<typeof insertProjectReportSchema>;

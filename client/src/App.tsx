@@ -15,6 +15,7 @@ import Admin from "@/pages/Admin";
 import AdminLogin from "@/pages/AdminLogin";
 import Login from "@/pages/Login";
 import ChapterDashboard from "@/pages/ChapterDashboard";
+import BarangayDashboard from "@/pages/BarangayDashboard";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -30,6 +31,7 @@ function Router() {
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin" component={Admin} />
       <Route path="/chapter-dashboard" component={ChapterDashboard} />
+      <Route path="/barangay-dashboard" component={BarangayDashboard} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -37,7 +39,7 @@ function Router() {
 
 function AppContent() {
   const [location] = useLocation();
-  const hideNavFooter = location.startsWith("/chapter-dashboard") || location === "/login";
+  const hideNavFooter = location.startsWith("/chapter-dashboard") || location.startsWith("/barangay-dashboard") || location === "/login";
   
   return (
     <div className="flex flex-col min-h-screen">

@@ -3,6 +3,8 @@ import {
   type InsertAdminUser,
   type ChapterUser,
   type InsertChapterUser,
+  type BarangayUser,
+  type InsertBarangayUser,
   type Program,
   type InsertProgram,
   type Chapter,
@@ -37,6 +39,7 @@ import {
   type InsertChapterRequest,
   adminUsers,
   chapterUsers,
+  barangayUsers,
   programs,
   chapters,
   volunteerOpportunities,
@@ -69,6 +72,19 @@ export interface IStorage {
   createChapterUser(user: InsertChapterUser): Promise<ChapterUser>;
   updateChapterUser(id: string, user: Partial<InsertChapterUser>): Promise<ChapterUser | undefined>;
   deleteChapterUser(id: string): Promise<boolean>;
+
+  getBarangayUsers(): Promise<BarangayUser[]>;
+  getBarangayUser(id: string): Promise<BarangayUser | undefined>;
+  getBarangayUserByUsername(username: string): Promise<BarangayUser | undefined>;
+  getBarangayUsersByChapterId(chapterId: string): Promise<BarangayUser[]>;
+  createBarangayUser(user: InsertBarangayUser): Promise<BarangayUser>;
+  updateBarangayUser(id: string, user: Partial<InsertBarangayUser>): Promise<BarangayUser | undefined>;
+  deleteBarangayUser(id: string): Promise<boolean>;
+
+  getMembersByBarangay(barangayId: string): Promise<Member[]>;
+  getOfficersByBarangay(barangayId: string): Promise<ChapterOfficer[]>;
+  getMemberTotals(chapterId?: string, barangayId?: string): Promise<number>;
+  getBirthdaysToday(): Promise<{ members: Member[]; officers: ChapterOfficer[] }>;
 
   getPrograms(): Promise<Program[]>;
   getProgram(id: string): Promise<Program | undefined>;
@@ -213,6 +229,82 @@ export class DbStorage implements IStorage {
   async deleteChapterUser(id: string): Promise<boolean> {
     const result = await db.delete(chapterUsers).where(eq(chapterUsers.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getBarangayUsers(): Promise<BarangayUser[]> {
+    return db.select().from(barangayUsers).orderBy(desc(barangayUsers.createdAt));
+  }
+
+  async getBarangayUser(id: string): Promise<BarangayUser | undefined> {
+    const result = await db.select().from(barangayUsers).where(eq(barangayUsers.id, id));
+    return result[0];
+  }
+
+  async getBarangayUserByUsername(username: string): Promise<BarangayUser | undefined> {
+    const result = await db.select().from(barangayUsers).where(eq(barangayUsers.username, username));
+    return result[0];
+  }
+
+  async getBarangayUsersByChapterId(chapterId: string): Promise<BarangayUser[]> {
+    return db.select().from(barangayUsers).where(eq(barangayUsers.chapterId, chapterId));
+  }
+
+  async createBarangayUser(user: InsertBarangayUser): Promise<BarangayUser> {
+    const hashedPassword = await bcrypt.hash(user.password, 10);
+    const result = await db.insert(barangayUsers).values({
+      ...user,
+      password: hashedPassword,
+    }).returning();
+    return result[0];
+  }
+
+  async updateBarangayUser(id: string, user: Partial<InsertBarangayUser>): Promise<BarangayUser | undefined> {
+    const updateData: Partial<InsertBarangayUser> = { ...user };
+    if (user.password) {
+      updateData.password = await bcrypt.hash(user.password, 10);
+    }
+    const result = await db.update(barangayUsers).set(updateData).where(eq(barangayUsers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteBarangayUser(id: string): Promise<boolean> {
+    const result = await db.delete(barangayUsers).where(eq(barangayUsers.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getMembersByBarangay(barangayId: string): Promise<Member[]> {
+    return db.select().from(members).where(eq(members.barangayId, barangayId)).orderBy(desc(members.createdAt));
+  }
+
+  async getOfficersByBarangay(barangayId: string): Promise<ChapterOfficer[]> {
+    return db.select().from(chapterOfficers).where(eq(chapterOfficers.barangayId, barangayId)).orderBy(asc(chapterOfficers.position));
+  }
+
+  async getMemberTotals(chapterId?: string, barangayId?: string): Promise<number> {
+    let query = db.select({ count: sql<number>`count(*)` }).from(members);
+    if (barangayId) {
+      query = query.where(eq(members.barangayId, barangayId)) as typeof query;
+    } else if (chapterId) {
+      query = query.where(eq(members.chapterId, chapterId)) as typeof query;
+    }
+    const result = await query;
+    return Number(result[0]?.count || 0);
+  }
+
+  async getBirthdaysToday(): Promise<{ members: Member[]; officers: ChapterOfficer[] }> {
+    const today = new Date();
+    const month = today.getMonth() + 1;
+    const day = today.getDate();
+    
+    const birthdayMembers = await db.select().from(members).where(
+      sql`EXTRACT(MONTH FROM ${members.birthdate}) = ${month} AND EXTRACT(DAY FROM ${members.birthdate}) = ${day}`
+    );
+    
+    const birthdayOfficers = await db.select().from(chapterOfficers).where(
+      sql`EXTRACT(MONTH FROM ${chapterOfficers.birthdate}) = ${month} AND EXTRACT(DAY FROM ${chapterOfficers.birthdate}) = ${day}`
+    );
+    
+    return { members: birthdayMembers, officers: birthdayOfficers };
   }
 
   async getPrograms(): Promise<Program[]> {

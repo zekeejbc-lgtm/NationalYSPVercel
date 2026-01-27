@@ -1,0 +1,105 @@
+SYSTEM GOAL:
+Build a LOW-COST, lightweight dashboard using simple CRUD only.
+Avoid complex logic, background jobs, analytics, or AI processing.
+Reuse tables and components whenever possible to reduce cost.
+
+--------------------------------
+A. SIGN-IN PANEL
+--------------------------------
+- Single sign-in screen with role selector:
+  - Admin
+  - Chapter
+  - Barangay Chapter
+- Explicit label: "Sign in as Barangay Chapter"
+- Role-based access only (no dynamic permission engine)
+
+--------------------------------
+B. BARANGAY CHAPTER DASHBOARD
+--------------------------------
+- On Barangay login, require selection of City/Municipality
+- City list must be pulled from existing Chapters table (dropdown only)
+- Barangay Dashboard uses SAME layout and features as Chapter Dashboard
+- All data must be filtered by Barangay
+- Reuse existing components and logic (do not duplicate)
+
+Barangay access includes:
+- Members list (Barangay-filtered)
+- Officers list (Barangay-filtered)
+- Reports / activities (Barangay scope only)
+
+--------------------------------
+C. BARANGAY OFFICERS
+--------------------------------
+- Use SAME officers table as Chapter Officers
+- Set level = "barangay"
+- Rename position field:
+  - From "City/Municipality President"
+  - To "Barangay President"
+- Add field:
+  - birthdate (date)
+
+--------------------------------
+D. ADMIN PANEL
+--------------------------------
+
+1. BARANGAY ACCOUNTS
+- Admin can manually create Barangay accounts
+- Each Barangay account must be linked to:
+  - One Chapter
+  - One City/Municipality
+- No auto-generation or automation
+
+2. MEMBER TOTALS
+- Show total members count
+- Allow filtering by:
+  - Chapter
+  - Barangay
+- Use simple COUNT only (no charts, no analytics)
+
+3. KPI MANAGEMENT
+- Admin can manually create KPIs for:
+  - Selected Chapters
+  - Selected Barangays
+  - ALL Chapters
+  - ALL Barangays
+  - ALL Chapters and Barangays
+- KPI fields:
+  - KPI Name
+  - Target Number
+  - Scope (Chapter / Barangay / All)
+  - Linked Entity ID
+- No progress tracking or calculations
+
+4. BIRTHDAYS TODAY PANELS
+- Members panel:
+  - Show members where birthdate = today
+- Officers directory panel:
+  - Show officers where birthdate = today
+- Use date comparison on page load only
+
+--------------------------------
+E. MEMBERSHIP FORM
+--------------------------------
+- Add field:
+  - birthdate (date picker)
+- Do NOT calculate age
+- Do NOT trigger notifications or workflows
+
+--------------------------------
+F. CHAPTER OFFICER INPUT
+--------------------------------
+- When adding Chapter Officers:
+  - Add field: birthdate (date)
+- Use SAME officers table
+- Set level = "chapter"
+
+--------------------------------
+COST CONTROL RULES
+--------------------------------
+- One table per entity only
+- No duplicate tables for Chapter and Barangay
+- No background jobs or cron tasks
+- No analytics libraries
+- No AI processing
+- Manual refresh only
+- Dropdowns instead of search queries

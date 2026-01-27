@@ -19,6 +19,7 @@ import type { Chapter } from "@shared/schema";
 interface MembershipFormData {
   fullName: string;
   age: number;
+  birthdate?: string;
   chapterId: string;
   contactNumber: string;
   facebookLink?: string;
@@ -68,6 +69,7 @@ export default function Membership() {
     defaultValues: {
       fullName: "",
       age: 18,
+      birthdate: "",
       chapterId: "",
       contactNumber: "",
       facebookLink: "",
@@ -88,6 +90,7 @@ export default function Membership() {
       const { privacyConsent, ...memberData } = data;
       return await apiRequest("POST", "/api/members", {
         ...memberData,
+        birthdate: memberData.birthdate || null,
         householdVoters: memberData.householdVoters || null,
         sectorOther: memberData.sector === "Others" ? memberData.sectorOther : null,
         isActive: false,
@@ -192,6 +195,24 @@ export default function Membership() {
                                 onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
                                 placeholder="Enter your age"
                                 data-testid="input-public-age" 
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="birthdate"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Birthdate</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="date" 
+                                {...field} 
+                                data-testid="input-public-birthdate" 
                               />
                             </FormControl>
                             <FormMessage />

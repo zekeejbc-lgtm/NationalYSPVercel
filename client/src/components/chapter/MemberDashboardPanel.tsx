@@ -14,21 +14,23 @@ import type { Member } from "@shared/schema";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 
-interface MemberDashboardPanelProps {
+export interface MemberDashboardPanelProps {
   chapterId: string;
-  chapterName: string;
+  chapterName?: string;
+  barangayId?: string;
 }
 
 interface AddMemberFormData {
   fullName: string;
   age: number;
+  birthdate?: string;
   contactNumber: string;
   registeredVoter: boolean;
   facebookLink?: string;
   isActive: boolean;
 }
 
-export default function MemberDashboardPanel({ chapterId, chapterName }: MemberDashboardPanelProps) {
+export default function MemberDashboardPanel({ chapterId, chapterName, barangayId }: MemberDashboardPanelProps) {
   const { toast } = useToast();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -38,6 +40,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
     defaultValues: {
       fullName: "",
       age: 18,
+      birthdate: "",
       contactNumber: "",
       registeredVoter: false,
       facebookLink: "",
@@ -46,19 +49,26 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
   });
 
   const { data: members = [], isLoading } = useQuery<Member[]>({
-    queryKey: ["/api/members", { chapterId }],
+    queryKey: ["/api/members", { chapterId, barangayId }],
     queryFn: async () => {
-      const res = await fetch(`/api/members`, { credentials: "include" });
+      let url = `/api/members?chapterId=${chapterId}`;
+      if (barangayId) {
+        url += `&barangayId=${barangayId}`;
+      }
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch members");
       return res.json();
     },
+    enabled: !!chapterId,
   });
 
   const createMutation = useMutation({
     mutationFn: async (data: AddMemberFormData) => {
       return await apiRequest("POST", "/api/members", {
         ...data,
+        birthdate: data.birthdate || null,
         chapterId,
+        barangayId: barangayId || null,
       });
     },
     onSuccess: () => {
@@ -162,6 +172,23 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
                             {...field} 
                             onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
                             data-testid="input-chapter-member-age" 
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="birthdate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Birthdate</FormLabel>
+                        <FormControl>
+                          <Input 
+                            type="date" 
+                            {...field} 
+                            data-testid="input-chapter-member-birthdate" 
                           />
                         </FormControl>
                         <FormMessage />
@@ -281,6 +308,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
               <tr className="bg-muted/50">
                 <th className="text-left p-4 font-medium text-sm">Name</th>
                 <th className="text-left p-4 font-medium text-sm">Age</th>
+                <th className="text-left p-4 font-medium text-sm">Birthdate</th>
                 <th className="text-left p-4 font-medium text-sm">Contact</th>
                 <th className="text-center p-4 font-medium text-sm">Registered Voter</th>
                 <th className="text-center p-4 font-medium text-sm">Active</th>
@@ -290,11 +318,11 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-muted-foreground">Loading members...</td>
+                  <td colSpan={7} className="p-8 text-center text-muted-foreground">Loading members...</td>
                 </tr>
               ) : filteredMembers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
                     No members found. {searchTerm ? "Try adjusting your search." : "Click 'Add Member' to get started."}
                   </td>
                 </tr>
@@ -315,6 +343,16 @@ export default function MemberDashboardPanel({ chapterId, chapterName }: MemberD
                       )}
                     </td>
                     <td className="p-4">{member.age}</td>
+                    <td className="p-4">
+                      {member.birthdate ? (
+                        <div className="flex items-center gap-1 text-sm">
+                          <Calendar className="h-3 w-3 text-muted-foreground" />
+                          <span>{member.birthdate}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </td>
                     <td className="p-4">
                       <div className="flex items-center gap-1 text-sm">
                         <Phone className="h-3 w-3 text-muted-foreground" />

@@ -6,17 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Building2, Shield } from "lucide-react";
+import { Building2, Shield, MapPin } from "lucide-react";
 
-type LoginRole = "chapter" | "admin" | null;
+type LoginRole = "chapter" | "admin" | "barangay" | null;
 
 interface AuthResponse {
   authenticated: boolean;
   user?: {
     id: string;
     username: string;
-    role: "admin" | "chapter";
+    role: "admin" | "chapter" | "barangay";
     chapterId?: string;
+    barangayId?: string;
+    barangayName?: string;
     mustChangePassword?: boolean;
   };
 }
@@ -70,6 +72,15 @@ export default function Login() {
               setLocation("/chapter-dashboard");
             }
             return;
+          } else if (userRole === "barangay") {
+            console.log("[Login] Redirecting to /barangay-dashboard");
+            hasRedirected.current = true;
+            if (data.user.mustChangePassword) {
+              setLocation("/barangay-dashboard?changePassword=true");
+            } else {
+              setLocation("/barangay-dashboard");
+            }
+            return;
           } else {
             console.log("[Login] Unknown role:", userRole);
             toast({
@@ -97,7 +108,11 @@ export default function Login() {
     console.log("[Login] LOGIN_STARTED");
 
     try {
-      const endpoint = role === "admin" ? "/api/auth/login/admin" : "/api/auth/login/chapter";
+      const endpoint = role === "admin" 
+        ? "/api/auth/login/admin" 
+        : role === "barangay" 
+          ? "/api/auth/login/barangay" 
+          : "/api/auth/login/chapter";
       console.log("[Login] Attempting login as:", role, "endpoint:", endpoint);
       
       const response = await fetch(endpoint, {
@@ -123,7 +138,11 @@ export default function Login() {
       console.log("[Login] TOKEN_SAVED: true");
       console.log("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
       
-      const targetPath = role === "admin" ? "/admin" : "/chapter-dashboard";
+      const targetPath = role === "admin" 
+        ? "/admin" 
+        : role === "barangay" 
+          ? "/barangay-dashboard" 
+          : "/chapter-dashboard";
       console.log("[Login] REDIRECT_TO:", targetPath);
       
       toast({
@@ -137,6 +156,12 @@ export default function Login() {
       
       if (role === "admin") {
         setLocation("/admin");
+      } else if (role === "barangay") {
+        if (data?.user?.mustChangePassword) {
+          setLocation("/barangay-dashboard?changePassword=true");
+        } else {
+          setLocation("/barangay-dashboard");
+        }
       } else {
         if (data?.user?.mustChangePassword) {
           setLocation("/chapter-dashboard?changePassword=true");
@@ -206,6 +231,16 @@ export default function Login() {
             <Button 
               variant="outline" 
               className="w-full h-24 flex-col gap-2"
+              onClick={() => setRole("barangay")}
+              data-testid="button-login-barangay"
+            >
+              <MapPin className="h-8 w-8 text-primary" />
+              <span className="font-medium">Sign in as Barangay Chapter</span>
+              <span className="text-xs text-muted-foreground">For barangay representatives</span>
+            </Button>
+            <Button 
+              variant="outline" 
+              className="w-full h-24 flex-col gap-2"
               onClick={() => setRole("admin")}
               data-testid="button-login-admin"
             >
@@ -230,12 +265,14 @@ export default function Login() {
             className="h-16 w-auto mx-auto mb-4"
           />
           <CardTitle className="text-2xl">
-            {role === "admin" ? "Admin Login" : "Chapter Login"}
+            {role === "admin" ? "Admin Login" : role === "barangay" ? "Barangay Chapter Login" : "Chapter Login"}
           </CardTitle>
           <CardDescription>
             {role === "admin" 
               ? "Sign in to manage website content" 
-              : "Sign in to submit project reports"}
+              : role === "barangay"
+                ? "Sign in to manage barangay chapter"
+                : "Sign in to submit project reports"}
           </CardDescription>
         </CardHeader>
         <CardContent>

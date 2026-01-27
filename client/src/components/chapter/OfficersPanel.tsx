@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { UserCheck, Plus, Save, Trash2, Edit2, Phone, Mail } from "lucide-react";
+import { UserCheck, Plus, Save, Trash2, Edit2, Phone, Mail, Calendar } from "lucide-react";
 import type { ChapterOfficer } from "@shared/schema";
 
 const OFFICER_POSITIONS = [
@@ -20,25 +20,44 @@ const OFFICER_POSITIONS = [
   "Communications and Marketing Officer"
 ];
 
-interface OfficersPanelProps {
+export interface OfficersPanelProps {
   chapterId: string;
+  level?: "chapter" | "barangay";
+  barangayId?: string;
 }
 
-export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
+const BARANGAY_OFFICER_POSITIONS = [
+  "Barangay President",
+  "Program Development Officer",
+  "Finance and Treasury Officer",
+  "Secretary and Documentation Officer",
+  "Partnership and Fundraising Officer",
+  "Communications and Marketing Officer"
+];
+
+export default function OfficersPanel({ chapterId, level = "chapter", barangayId }: OfficersPanelProps) {
   const { toast } = useToast();
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     position: "",
     fullName: "",
+    birthdate: "",
     contactNumber: "",
     chapterEmail: ""
   });
 
   const { data: officers = [], isLoading } = useQuery<ChapterOfficer[]>({
-    queryKey: ["/api/chapter-officers", { chapterId }],
+    queryKey: ["/api/chapter-officers", { chapterId, barangayId, level }],
     queryFn: async () => {
-      const res = await fetch(`/api/chapter-officers?chapterId=${chapterId}`, { credentials: "include" });
+      let url = `/api/chapter-officers?chapterId=${chapterId}`;
+      if (barangayId) {
+        url += `&barangayId=${barangayId}`;
+      }
+      if (level) {
+        url += `&level=${level}`;
+      }
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch officers");
       return res.json();
     },
@@ -47,7 +66,13 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
-      return await apiRequest("POST", "/api/chapter-officers", data);
+      return await apiRequest("POST", "/api/chapter-officers", {
+        ...data,
+        chapterId,
+        barangayId: barangayId || null,
+        level: level || "chapter",
+        birthdate: data.birthdate || null,
+      });
     },
     onSuccess: () => {
       toast({ title: "Success", description: "Officer added successfully" });
@@ -89,7 +114,7 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
   const resetForm = () => {
     setIsAdding(false);
     setEditingId(null);
-    setFormData({ position: "", fullName: "", contactNumber: "", chapterEmail: "" });
+    setFormData({ position: "", fullName: "", birthdate: "", contactNumber: "", chapterEmail: "" });
   };
 
   const handleEdit = (officer: ChapterOfficer) => {
@@ -97,6 +122,7 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
     setFormData({
       position: officer.position,
       fullName: officer.fullName,
+      birthdate: officer.birthdate || "",
       contactNumber: officer.contactNumber,
       chapterEmail: officer.chapterEmail
     });
@@ -172,6 +198,15 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label>Birthdate</Label>
+                    <Input
+                      type="date"
+                      value={formData.birthdate}
+                      onChange={(e) => setFormData({ ...formData, birthdate: e.target.value })}
+                      data-testid="input-officer-birthdate"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label>Contact Number *</Label>
                     <Input
                       value={formData.contactNumber}
@@ -220,7 +255,7 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
                     <span className="font-medium">{officer.fullName}</span>
                     <Badge variant="secondary">{officer.position}</Badge>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1">
                       <Phone className="h-3 w-3" />
                       {officer.contactNumber}
@@ -229,6 +264,12 @@ export default function OfficersPanel({ chapterId }: OfficersPanelProps) {
                       <Mail className="h-3 w-3" />
                       {officer.chapterEmail}
                     </span>
+                    {officer.birthdate && (
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {officer.birthdate}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">

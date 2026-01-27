@@ -13,6 +13,7 @@ import {
   insertPublicationSchema,
   insertProjectReportSchema,
   insertChapterUserSchema,
+  insertBarangayUserSchema,
   insertChapterKpiSchema,
   insertMemberSchema,
   insertChapterOfficerSchema,
@@ -75,8 +76,10 @@ const volunteerUpload = multer({
 declare module "express-session" {
   interface SessionData {
     userId?: string;
-    role?: "admin" | "chapter";
+    role?: "admin" | "chapter" | "barangay";
     chapterId?: string;
+    barangayId?: string;
+    barangayName?: string;
   }
 }
 
@@ -97,6 +100,20 @@ function requireAdminAuth(req: Request, res: Response, next: Function) {
 function requireChapterAuth(req: Request, res: Response, next: Function) {
   if (!req.session.userId || req.session.role !== "chapter") {
     return res.status(401).json({ error: "Chapter access required" });
+  }
+  next();
+}
+
+function requireBarangayAuth(req: Request, res: Response, next: Function) {
+  if (!req.session.userId || req.session.role !== "barangay") {
+    return res.status(401).json({ error: "Barangay access required" });
+  }
+  next();
+}
+
+function requireChapterOrBarangayAuth(req: Request, res: Response, next: Function) {
+  if (!req.session.userId || (req.session.role !== "chapter" && req.session.role !== "barangay")) {
+    return res.status(401).json({ error: "Chapter or Barangay access required" });
   }
   next();
 }
@@ -180,6 +197,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  app.post("/api/auth/login/barangay", async (req, res) => {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password required" });
+    }
+
+    const user = await storage.getBarangayUserByUsername(username);
+    
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    if (!user.isActive) {
+      return res.status(401).json({ error: "Account is inactive" });
+    }
+
+    const chapter = await storage.getChapter(user.chapterId);
+
+    req.session.userId = user.id;
+    req.session.role = "barangay";
+    req.session.chapterId = user.chapterId;
+    req.session.barangayId = user.id;
+    req.session.barangayName = user.barangayName;
+    
+    req.session.save((err) => {
+      if (err) {
+        console.error("[Auth] Session save error:", err);
+        return res.status(500).json({ error: "Failed to save session" });
+      }
+      res.json({ 
+        success: true, 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          role: "barangay",
+          chapterId: user.chapterId,
+          chapterName: chapter?.name || "",
+          barangayName: user.barangayName,
+          mustChangePassword: user.mustChangePassword
+        } 
+      });
+    });
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy((err) => {
       if (err) {
@@ -219,6 +286,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           role: "chapter",
           chapterId: user.chapterId,
           chapterName: chapter?.name || "",
+          mustChangePassword: user.mustChangePassword
+        } 
+      });
+    }
+
+    if (req.session.role === "barangay") {
+      const user = await storage.getBarangayUser(req.session.userId);
+      if (!user) {
+        return res.json({ authenticated: false });
+      }
+      const chapter = await storage.getChapter(user.chapterId);
+      return res.json({ 
+        authenticated: true, 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          role: "barangay",
+          chapterId: user.chapterId,
+          chapterName: chapter?.name || "",
+          barangayId: user.id,
+          barangayName: user.barangayName,
           mustChangePassword: user.mustChangePassword
         } 
       });
@@ -384,6 +472,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "User not found" });
     }
     res.json({ success: true });
+  });
+
+  // Barangay user management routes
+  app.get("/api/barangay-users", requireAdminAuth, async (req, res) => {
+    const { chapterId } = req.query;
+    let users;
+    if (chapterId) {
+      users = await storage.getBarangayUsersByChapterId(chapterId as string);
+    } else {
+      users = await storage.getBarangayUsers();
+    }
+    res.json(users.map(u => ({ ...u, password: undefined })));
+  });
+
+  app.get("/api/chapters/:id/barangay-users", requireAdminAuth, async (req, res) => {
+    const users = await storage.getBarangayUsersByChapterId(req.params.id);
+    res.json(users.map(u => ({ ...u, password: undefined })));
+  });
+
+  app.post("/api/barangay-users", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertBarangayUserSchema.parse(req.body);
+      const user = await storage.createBarangayUser(validated);
+      res.json({ ...user, password: undefined });
+    } catch (error: any) {
+      if (error.code === '23505') {
+        return res.status(400).json({ error: "Username already exists" });
+      }
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/barangay-users/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertBarangayUserSchema.partial().parse(req.body);
+      const user = await storage.updateBarangayUser(req.params.id, validated);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({ ...user, password: undefined });
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/barangay-users/:id", requireAdminAuth, async (req, res) => {
+    const deleted = await storage.deleteBarangayUser(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json({ success: true });
+  });
+
+  // Member totals and birthdays endpoints
+  app.get("/api/member-totals", requireAdminAuth, async (req, res) => {
+    const { chapterId, barangayId } = req.query;
+    const total = await storage.getMemberTotals(
+      chapterId as string | undefined, 
+      barangayId as string | undefined
+    );
+    res.json({ total });
+  });
+
+  app.get("/api/birthdays-today", requireAdminAuth, async (req, res) => {
+    const result = await storage.getBirthdaysToday();
+    res.json(result);
   });
 
   app.get("/api/volunteer-opportunities", async (req, res) => {
@@ -633,6 +789,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/members", requireAuth, async (req, res) => {
     const chapterId = req.query.chapterId as string | undefined;
+    const barangayId = req.query.barangayId as string | undefined;
     
     if (req.session.role === "admin") {
       const members = chapterId && chapterId !== "all"
@@ -641,6 +798,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(members);
     } else if (req.session.role === "chapter") {
       const members = await storage.getMembersByChapter(req.session.chapterId!);
+      res.json(members);
+    } else if (req.session.role === "barangay") {
+      const members = await storage.getMembersByBarangay(req.session.barangayId!);
       res.json(members);
     } else {
       res.status(403).json({ error: "Access denied" });
@@ -710,19 +870,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/chapter-officers", requireAuth, async (req, res) => {
     const chapterId = req.query.chapterId as string;
+    const barangayId = req.query.barangayId as string | undefined;
+    const level = req.query.level as string | undefined;
+    
     if (!chapterId) {
       return res.status(400).json({ error: "chapterId required" });
     }
-    const officers = await storage.getChapterOfficers(chapterId);
-    res.json(officers);
+    
+    if (barangayId && level === "barangay") {
+      const officers = await storage.getOfficersByBarangay(barangayId);
+      res.json(officers);
+    } else {
+      const officers = await storage.getChapterOfficers(chapterId);
+      res.json(officers);
+    }
   });
 
-  app.post("/api/chapter-officers", requireChapterAuth, async (req, res) => {
+  app.post("/api/chapter-officers", requireChapterOrBarangayAuth, async (req, res) => {
     try {
       const chapterId = req.session.chapterId!;
+      const barangayId = req.session.role === "barangay" ? req.session.barangayId : req.body.barangayId;
+      const level = req.session.role === "barangay" ? "barangay" : (req.body.level || "chapter");
+      
       const validated = insertChapterOfficerSchema.parse({
         ...req.body,
-        chapterId
+        chapterId,
+        barangayId: barangayId || null,
+        level
       });
       const officer = await storage.createChapterOfficer(validated);
       res.json(officer);
@@ -732,7 +906,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/chapter-officers/:id", requireChapterAuth, async (req, res) => {
+  app.put("/api/chapter-officers/:id", requireChapterOrBarangayAuth, async (req, res) => {
     try {
       const validated = insertChapterOfficerSchema.partial().parse(req.body);
       const officer = await storage.updateChapterOfficer(req.params.id, validated);
@@ -746,7 +920,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/chapter-officers/:id", requireChapterAuth, async (req, res) => {
+  app.delete("/api/chapter-officers/:id", requireChapterOrBarangayAuth, async (req, res) => {
     const deleted = await storage.deleteChapterOfficer(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: "Officer not found" });

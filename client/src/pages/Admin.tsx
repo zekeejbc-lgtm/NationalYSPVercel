@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home } from "lucide-react";
+import { LogOut, Users, Home, Cake } from "lucide-react";
 import ProgramsManager from "@/components/admin/ProgramsManager";
 import ChaptersManager from "@/components/admin/ChaptersManager";
 import VolunteerManager from "@/components/admin/VolunteerManager";
@@ -14,6 +14,7 @@ import StatsManager from "@/components/admin/StatsManager";
 import ContactManager from "@/components/admin/ContactManager";
 import PublicationsManager from "@/components/admin/PublicationsManager";
 import ChapterAccountsManager from "@/components/admin/ChapterAccountsManager";
+import BarangayAccountsManager from "@/components/admin/BarangayAccountsManager";
 import KpiManager from "@/components/admin/KpiManager";
 import MemberListManager from "@/components/admin/MemberListManager";
 import OfficerListManager from "@/components/admin/OfficerListManager";
@@ -26,6 +27,11 @@ interface HouseholdSummary {
   averageHouseholdSize: number;
 }
 
+interface BirthdayData {
+  members: Array<{ id: string; fullName: string; birthdate: string | null; chapterId: string }>;
+  officers: Array<{ id: string; fullName: string; birthdate: string | null; chapterId: string }>;
+}
+
 export default function Admin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -34,6 +40,11 @@ export default function Admin() {
 
   const { data: householdSummary } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
+    enabled: authenticated,
+  });
+
+  const { data: birthdaysToday } = useQuery<BirthdayData>({
+    queryKey: ["/api/birthdays-today"],
     enabled: authenticated,
   });
 
@@ -141,6 +152,7 @@ export default function Admin() {
             <TabsTrigger value="publications" data-testid="tab-publications">Publications</TabsTrigger>
             <TabsTrigger value="chapters" data-testid="tab-chapters">Chapters</TabsTrigger>
             <TabsTrigger value="accounts" data-testid="tab-accounts">Chapter Accounts</TabsTrigger>
+            <TabsTrigger value="barangay-accounts" data-testid="tab-barangay-accounts">Barangay Accounts</TabsTrigger>
             <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
             <TabsTrigger value="officers" data-testid="tab-officers">Officers</TabsTrigger>
             <TabsTrigger value="kpis" data-testid="tab-kpis">KPIs</TabsTrigger>
@@ -151,6 +163,32 @@ export default function Admin() {
           </TabsList>
 
           <TabsContent value="stats">
+            {birthdaysToday && (birthdaysToday.members.length > 0 || birthdaysToday.officers.length > 0) && (
+              <Card className="mb-6" data-testid="card-birthdays-today">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Cake className="h-5 w-5 text-primary" />
+                    Birthdays Today
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {birthdaysToday.members.map((member) => (
+                      <div key={member.id} className="flex items-center gap-2 p-2 bg-muted/30 rounded-lg">
+                        <span className="font-medium">{member.fullName}</span>
+                        <span className="text-sm text-muted-foreground">(Member)</span>
+                      </div>
+                    ))}
+                    {birthdaysToday.officers.map((officer) => (
+                      <div key={officer.id} className="flex items-center gap-2 p-2 bg-muted/30 rounded-lg">
+                        <span className="font-medium">{officer.fullName}</span>
+                        <span className="text-sm text-muted-foreground">(Officer)</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             <StatsManager />
           </TabsContent>
 
@@ -168,6 +206,10 @@ export default function Admin() {
 
           <TabsContent value="accounts">
             <ChapterAccountsManager />
+          </TabsContent>
+
+          <TabsContent value="barangay-accounts">
+            <BarangayAccountsManager />
           </TabsContent>
 
           <TabsContent value="members">

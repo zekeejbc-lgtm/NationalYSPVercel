@@ -35,28 +35,32 @@ Preferred communication style: Simple, everyday language.
 - Home: Hero section with call-to-action, stats display, featured programs and chapters
 - Programs: Browsable program catalog with detailed modal views
 - Publications: Blog-style page displaying organization news/articles ordered by newest first
-- Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin. Includes household data collection for Voter's Education program (household size, household voters, sector selection, newsletter opt-in).
+- Membership: Built-in membership registration form with dynamic chapter dropdown and privacy consent modal, plus interactive Leaflet map showing chapter locations. New member registrations are saved as inactive by default until approved by admin. Includes household data collection for Voter's Education program (household size, household voters, sector selection, newsletter opt-in). Now includes optional birthdate field.
 - Volunteer: Listings of volunteer opportunities filtered by chapter and SDG alignment, with optional photo/pubmat display
 - Contact: Contact information display with email, phone, and social media links
 - Admin Dashboard: Protected dashboard for content management with tabs for:
-  - Programs, Chapters, Publications, Volunteer Opportunities, Stats, Contact Info
+  - Programs, Chapters, Publications, Volunteer Opportunities, Stats (with Birthdays Today panel), Contact Info
+  - Chapter Accounts: Manage chapter user login credentials
+  - Barangay Accounts: Manage barangay chapter login credentials (under parent chapters)
   - KPI Templates: Template-based KPI system with quarterly/yearly/both timeframes and numeric/text inputs
-  - Members: View all registered YSP members across chapters with Add Member modal, toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, CSV export, and Household Summary card displaying total submissions, total household size, and average household size
-  - Officers: View all chapter officers organized by chapter
+  - Members: View all registered YSP members across chapters with Add Member modal (includes birthdate field), toggle buttons for isActive/registeredVoter (using per-row updatingMemberId tracking to prevent disabling all buttons), search/filter by chapter, CSV export, and Household Summary card displaying total submissions, total household size, and average household size
+  - Officers: View all chapter officers organized by chapter (includes birthdate field)
   - Documents: CRUD management for Important Documents (4 default documents seeded: MOU, 3 Code of Conduct documents)
   - Requests: View and manage chapter funding requests with status tracking (new/in_review/approved/rejected)
 - Chapter Dashboard: Role-based dashboard for chapter accounts with panels for:
   - Project Reports: Submit project reports (auto-published to Publications)
-  - Officers: Manage 6 required officer positions (President, Program Dev, Finance, Secretary, Partnership, Communications)
+  - Officers: Manage 6 required officer positions (President, Program Dev, Finance, Secretary, Partnership, Communications) with birthdate field
   - KPIs: View assigned KPI templates with progress tracking and completion marking
   - Volunteer Opportunities: Create volunteer events with safety disclaimers for age requirements
   - Social Media: Manage Facebook and Instagram links
   - Publications: View organization-wide publications
   - Chapter Directory: View all YSP chapters
   - Leaderboard: Quarterly/Yearly rankings based on KPI completion scores
-  - Members: View and manage chapter-scoped members with Add Member modal and toggle buttons for isActive/registeredVoter
+  - Members: View and manage chapter-scoped members with Add Member modal (includes birthdate field) and toggle buttons for isActive/registeredVoter
   - Documents: View Important Documents with read acknowledgement confirmation dialogs and MOU submission to hardcoded Drive folder
   - Requests: Submit funding requests to YSP National with activity details, rationale, and requested support
+- Barangay Dashboard: Simplified dashboard for barangay chapter accounts that reuses Chapter Dashboard components with barangay-specific filtering. Supports member management and officer management scoped to the barangay level.
+- Login Page: Three-way role selector supporting Admin, Chapter, and Barangay Chapter login with dedicated icons (Shield, Building2, MapPin)
 
 ### Backend Architecture
 
@@ -83,6 +87,10 @@ Preferred communication style: Simple, everyday language.
 - Users table: Authentication credentials (username/password hash)
 - Programs table: Title, description, full description, image URL, timestamps
 - Chapters table: Name, location, contact info, representative details, photos, latitude/longitude for map positioning
+- ChapterUsers table: Chapter account login credentials (username/password hash, isActive, mustChangePassword)
+- BarangayUsers table: Barangay chapter login credentials (chapterId reference, barangayName, username/password hash, isActive, mustChangePassword)
+- Members table: Member information including fullName, age, birthdate, contactNumber, facebookLink, chapterId, isActive, registeredVoter, household data
+- ChapterOfficers table: Officer information including position, fullName, birthdate, contactNumber, chapterEmail, chapterId
 - Publications table: Title, content, imageUrl, facebookLink, publishedAt timestamp
 - Volunteer Opportunities table: Event details, date, chapter affiliation, SDG alignment, contact information
 - Stats table: Global metrics (projects completed, active chapters, total members)
