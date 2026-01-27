@@ -21,6 +21,7 @@ interface MembershipFormData {
   age: number;
   birthdate?: string;
   chapterId: string;
+  barangayId?: string;
   contactNumber: string;
   facebookLink?: string;
   registeredVoter: boolean;
@@ -30,6 +31,12 @@ interface MembershipFormData {
   sector: string;
   sectorOther?: string;
   privacyConsent: boolean;
+}
+
+interface BarangayOption {
+  id: string;
+  barangayName: string;
+  chapterId: string;
 }
 
 const SECTOR_OPTIONS = [
@@ -60,9 +67,21 @@ export default function Membership() {
   const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [selectedChapterId, setSelectedChapterId] = useState<string>("");
 
   const { data: chapters = [] } = useQuery<Chapter[]>({ 
     queryKey: ["/api/chapters"] 
+  });
+
+  const { data: barangays = [] } = useQuery<BarangayOption[]>({
+    queryKey: ["/api/chapters", selectedChapterId, "barangays"],
+    queryFn: async () => {
+      if (!selectedChapterId) return [];
+      const res = await fetch(`/api/chapters/${selectedChapterId}/barangays`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedChapterId,
   });
 
   const form = useForm<MembershipFormData>({
@@ -71,6 +90,7 @@ export default function Membership() {
       age: 18,
       birthdate: "",
       chapterId: "",
+      barangayId: "",
       contactNumber: "",
       facebookLink: "",
       registeredVoter: false,
@@ -91,6 +111,7 @@ export default function Membership() {
       return await apiRequest("POST", "/api/members", {
         ...memberData,
         birthdate: memberData.birthdate || null,
+        barangayId: memberData.barangayId || null,
         householdVoters: memberData.householdVoters || null,
         sectorOther: memberData.sector === "Others" ? memberData.sectorOther : null,
         isActive: false,
@@ -99,6 +120,7 @@ export default function Membership() {
     onSuccess: () => {
       setShowSuccess(true);
       form.reset();
+      setSelectedChapterId("");
     },
     onError: (error: any) => {
       toast({ 
@@ -227,7 +249,14 @@ export default function Membership() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Chapter *</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value}>
+                            <Select 
+                              onValueChange={(value) => {
+                                field.onChange(value);
+                                setSelectedChapterId(value);
+                                form.setValue("barangayId", "");
+                              }} 
+                              value={field.value}
+                            >
                               <FormControl>
                                 <SelectTrigger data-testid="select-public-chapter">
                                   <SelectValue placeholder="Select your chapter" />
@@ -245,6 +274,34 @@ export default function Membership() {
                           </FormItem>
                         )}
                       />
+
+                      {barangays.length > 0 && (
+                        <FormField
+                          control={form.control}
+                          name="barangayId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Barangay (optional)</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value || ""}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-public-barangay">
+                                    <SelectValue placeholder="Select your barangay (if applicable)" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="">None / Not Applicable</SelectItem>
+                                  {barangays.map((barangay) => (
+                                    <SelectItem key={barangay.id} value={barangay.id}>
+                                      {barangay.barangayName}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       <FormField
                         control={form.control}

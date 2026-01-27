@@ -37,6 +37,8 @@ import {
   type InsertMouSubmission,
   type ChapterRequest,
   type InsertChapterRequest,
+  type KpiScope,
+  type InsertKpiScope,
   adminUsers,
   chapterUsers,
   barangayUsers,
@@ -52,6 +54,7 @@ import {
   chapterOfficers,
   kpiTemplates,
   kpiCompletions,
+  kpiScopes,
   importantDocuments,
   chapterDocumentAck,
   mouSubmissions,
@@ -148,11 +151,16 @@ export interface IStorage {
   deleteChapterOfficer(id: string): Promise<boolean>;
 
   getKpiTemplates(year?: number, quarter?: number): Promise<KpiTemplate[]>;
-  getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string): Promise<KpiTemplate[]>;
+  getKpiTemplatesForChapter(year?: number, chapterId?: string, quarter?: number): Promise<KpiTemplate[]>;
+  getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string, quarter?: number): Promise<KpiTemplate[]>;
   getKpiTemplate(id: string): Promise<KpiTemplate | undefined>;
   createKpiTemplate(template: InsertKpiTemplate): Promise<KpiTemplate>;
   updateKpiTemplate(id: string, template: Partial<InsertKpiTemplate>): Promise<KpiTemplate | undefined>;
   deleteKpiTemplate(id: string): Promise<boolean>;
+
+  getKpiScopesByTemplateId(kpiTemplateId: string): Promise<KpiScope[]>;
+  createKpiScopes(scopes: InsertKpiScope[]): Promise<KpiScope[]>;
+  deleteKpiScopesByTemplateId(kpiTemplateId: string): Promise<boolean>;
 
   getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]>;
   getKpiCompletion(id: string): Promise<KpiCompletion | undefined>;
@@ -658,28 +666,51 @@ export class DbStorage implements IStorage {
     return db.select().from(kpiTemplates).orderBy(desc(kpiTemplates.year), kpiTemplates.name);
   }
 
-  async getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string): Promise<KpiTemplate[]> {
-    const conditions: any[] = [];
-    
-    conditions.push(sql`scope = 'all_barangays'`);
-    
-    if (barangayId) {
-      conditions.push(sql`(scope = 'barangay' AND linked_entity_id = ${barangayId})`);
-    }
-    if (chapterId) {
-      conditions.push(sql`(scope = 'chapter_barangays' AND linked_entity_id = ${chapterId})`);
-    }
-
-    const scopeCondition = conditions.length > 0 
-      ? sql.join(conditions, sql` OR `)
-      : sql`1=0`;
-
+  async getKpiTemplatesForChapter(year?: number, chapterId?: string, quarter?: number): Promise<KpiTemplate[]> {
     const query = sql`
-      SELECT * FROM kpi_templates
-      WHERE is_active = true
-      ${year ? sql`AND year = ${year}` : sql``}
-      AND (${scopeCondition})
-      ORDER BY name ASC
+      SELECT DISTINCT kt.* FROM kpi_templates kt
+      LEFT JOIN kpi_scopes ks ON kt.id = ks.kpi_template_id
+      WHERE kt.is_active = true
+      ${year ? sql`AND kt.year = ${year}` : sql``}
+      ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
+      AND (
+        kt.scope = 'all_chapters_and_barangays'
+        OR kt.scope = 'all_chapters'
+        ${chapterId ? sql`OR (kt.scope = 'selected_chapters' AND ks.entity_type = 'chapter' AND ks.entity_id = ${chapterId})` : sql``}
+      )
+      ORDER BY kt.name ASC
+    `;
+    const result = await db.execute(query);
+    return (result.rows as any[]).map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      timeframe: row.timeframe,
+      inputType: row.input_type,
+      year: row.year,
+      quarter: row.quarter,
+      targetValue: row.target_value,
+      scope: row.scope,
+      linkedEntityId: row.linked_entity_id,
+      isActive: row.is_active,
+      createdAt: row.created_at
+    }));
+  }
+
+  async getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string, quarter?: number): Promise<KpiTemplate[]> {
+    const query = sql`
+      SELECT DISTINCT kt.* FROM kpi_templates kt
+      LEFT JOIN kpi_scopes ks ON kt.id = ks.kpi_template_id
+      WHERE kt.is_active = true
+      ${year ? sql`AND kt.year = ${year}` : sql``}
+      ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
+      AND (
+        kt.scope = 'all_chapters_and_barangays'
+        OR kt.scope = 'all_barangays'
+        ${barangayId ? sql`OR (kt.scope = 'selected_barangays' AND ks.entity_type = 'barangay' AND ks.entity_id = ${barangayId})` : sql``}
+        ${chapterId ? sql`OR (kt.scope = 'selected_chapters' AND ks.entity_type = 'chapter' AND ks.entity_id = ${chapterId})` : sql``}
+      )
+      ORDER BY kt.name ASC
     `;
     const result = await db.execute(query);
     return (result.rows as any[]).map(row => ({
@@ -714,9 +745,25 @@ export class DbStorage implements IStorage {
   }
 
   async deleteKpiTemplate(id: string): Promise<boolean> {
+    await db.delete(kpiScopes).where(eq(kpiScopes.kpiTemplateId, id));
     await db.delete(kpiCompletions).where(eq(kpiCompletions.kpiTemplateId, id));
     const result = await db.delete(kpiTemplates).where(eq(kpiTemplates.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getKpiScopesByTemplateId(kpiTemplateId: string): Promise<KpiScope[]> {
+    return db.select().from(kpiScopes).where(eq(kpiScopes.kpiTemplateId, kpiTemplateId));
+  }
+
+  async createKpiScopes(scopes: InsertKpiScope[]): Promise<KpiScope[]> {
+    if (scopes.length === 0) return [];
+    const result = await db.insert(kpiScopes).values(scopes).returning();
+    return result;
+  }
+
+  async deleteKpiScopesByTemplateId(kpiTemplateId: string): Promise<boolean> {
+    await db.delete(kpiScopes).where(eq(kpiScopes.kpiTemplateId, kpiTemplateId));
+    return true;
   }
 
   async getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]> {

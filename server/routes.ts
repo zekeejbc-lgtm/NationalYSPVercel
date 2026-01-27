@@ -403,6 +403,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(chapter);
   });
 
+  app.get("/api/chapters/:id/barangays", async (req, res) => {
+    const barangays = await storage.getBarangayUsersByChapterId(req.params.id);
+    res.json(barangays.filter(b => b.isActive).map(b => ({ 
+      id: b.id, 
+      barangayName: b.barangayName,
+      chapterId: b.chapterId 
+    })));
+  });
+
   app.post("/api/chapters", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertChapterSchema.parse(req.body);
@@ -952,9 +961,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const barangayScope = req.query.barangayScope === "true";
     const barangayId = req.query.barangayId as string | undefined;
     const chapterId = req.query.chapterId as string | undefined;
+    const chapterScope = req.query.chapterScope === "true";
     
     if (barangayScope && barangayId) {
-      const templates = await storage.getKpiTemplatesForBarangay(year, barangayId, chapterId);
+      const templates = await storage.getKpiTemplatesForBarangay(year, barangayId, chapterId, quarter);
+      res.json(templates);
+    } else if (chapterScope && chapterId) {
+      const templates = await storage.getKpiTemplatesForChapter(year, chapterId, quarter);
       res.json(templates);
     } else {
       const templates = await storage.getKpiTemplates(year, quarter);
@@ -970,10 +983,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(template);
   });
 
+  app.get("/api/kpi-templates/:id/scopes", requireAdminAuth, async (req, res) => {
+    const scopes = await storage.getKpiScopesByTemplateId(req.params.id);
+    res.json(scopes);
+  });
+
   app.post("/api/kpi-templates", requireAdminAuth, async (req, res) => {
     try {
-      const validated = insertKpiTemplateSchema.parse(req.body);
+      const { selectedEntityIds, ...templateData } = req.body;
+      const validated = insertKpiTemplateSchema.parse(templateData);
       const template = await storage.createKpiTemplate(validated);
+      
+      if (selectedEntityIds && selectedEntityIds.length > 0 && 
+          (validated.scope === "selected_chapters" || validated.scope === "selected_barangays")) {
+        const entityType = validated.scope === "selected_chapters" ? "chapter" : "barangay";
+        const scopes = selectedEntityIds.map((entityId: string) => ({
+          kpiTemplateId: template.id,
+          entityType,
+          entityId
+        }));
+        await storage.createKpiScopes(scopes);
+      }
+      
       res.json(template);
     } catch (error: any) {
       const validationError = fromError(error);
@@ -983,11 +1014,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/kpi-templates/:id", requireAdminAuth, async (req, res) => {
     try {
-      const validated = insertKpiTemplateSchema.partial().parse(req.body);
+      const { selectedEntityIds, ...templateData } = req.body;
+      const validated = insertKpiTemplateSchema.partial().parse(templateData);
       const template = await storage.updateKpiTemplate(req.params.id, validated);
       if (!template) {
         return res.status(404).json({ error: "KPI template not found" });
       }
+      
+      if (validated.scope === "selected_chapters" || validated.scope === "selected_barangays") {
+        await storage.deleteKpiScopesByTemplateId(req.params.id);
+        if (selectedEntityIds && selectedEntityIds.length > 0) {
+          const entityType = validated.scope === "selected_chapters" ? "chapter" : "barangay";
+          const scopes = selectedEntityIds.map((entityId: string) => ({
+            kpiTemplateId: template.id,
+            entityType,
+            entityId
+          }));
+          await storage.createKpiScopes(scopes);
+        }
+      } else if (validated.scope) {
+        await storage.deleteKpiScopesByTemplateId(req.params.id);
+      }
+      
       res.json(template);
     } catch (error: any) {
       const validationError = fromError(error);

@@ -87,6 +87,14 @@ export const kpiCompletions = pgTable("kpi_completions", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const kpiScopes = pgTable("kpi_scopes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  kpiTemplateId: varchar("kpi_template_id").notNull().references(() => kpiTemplates.id),
+  entityType: text("entity_type").notNull(),
+  entityId: varchar("entity_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const chapterUsers = pgTable("chapter_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
@@ -313,6 +321,11 @@ export const insertKpiCompletionSchema = createInsertSchema(kpiCompletions).omit
   updatedAt: true,
 });
 
+export const insertKpiScopeSchema = createInsertSchema(kpiScopes).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertImportantDocumentSchema = createInsertSchema(importantDocuments).omit({
   id: true,
   createdAt: true,
@@ -382,6 +395,9 @@ export type InsertKpiTemplate = z.infer<typeof insertKpiTemplateSchema>;
 
 export type KpiCompletion = typeof kpiCompletions.$inferSelect;
 export type InsertKpiCompletion = z.infer<typeof insertKpiCompletionSchema>;
+
+export type KpiScope = typeof kpiScopes.$inferSelect;
+export type InsertKpiScope = z.infer<typeof insertKpiScopeSchema>;
 
 export type KpisData = {
   projectsCompleted?: number;

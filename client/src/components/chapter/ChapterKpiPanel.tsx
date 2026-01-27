@@ -27,9 +27,9 @@ export default function ChapterKpiPanel({ chapterId }: ChapterKpiPanelProps) {
   const [viewTab, setViewTab] = useState("quarterly");
 
   const { data: templates = [] } = useQuery<KpiTemplate[]>({
-    queryKey: ["/api/kpi-templates", { year: selectedYear }],
+    queryKey: ["/api/kpi-templates", { year: selectedYear, chapterId }],
     queryFn: async () => {
-      const res = await fetch(`/api/kpi-templates?year=${selectedYear}`, { credentials: "include" });
+      const res = await fetch(`/api/kpi-templates?year=${selectedYear}&chapterScope=true&chapterId=${chapterId}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch KPI templates");
       return res.json();
     },

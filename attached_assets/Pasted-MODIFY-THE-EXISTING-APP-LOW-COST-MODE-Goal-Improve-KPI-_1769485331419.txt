@@ -1,0 +1,116 @@
+MODIFY THE EXISTING APP (LOW-COST MODE)
+Goal: Improve KPI assignment in Admin + add Chapter/Barangay cascading selection in Membership Form.
+STRICT COST RULES: reuse existing tables/components, minimal queries, no background jobs, no analytics, no AI.
+
+GLOBAL COST RULES
+- Do NOT duplicate tables for Chapter vs Barangay.
+- Prefer one KPI table + one KPI assignment table (or a single KPI table with scope fields).
+- Use dropdowns (no fuzzy search).
+- No cron jobs, no email/SMS notifications.
+- Keep queries to simple SELECT / INSERT / UPDATE with indexed columns.
+
+--------------------------------
+A. ADMIN: KPI DASHBOARD (ASSIGNMENT + CREATION)
+--------------------------------
+
+ADMIN REQUIREMENT:
+On the KPI dashboard, Admin must be able to create and assign KPIs for:
+1) Selected Chapters
+2) Selected Barangays
+3) ALL Chapters
+4) ALL Barangays
+5) ALL Barangays and Chapters (global to everyone)
+
+LOW-COST IMPLEMENTATION (RECOMMENDED DATA MODEL):
+Use ONE KPI table with scope fields (no complex assignment engine).
+
+kpis table fields:
+- id (pk)
+- kpi_name (text)
+- description (text, optional)
+- target_number (number)
+- scope_type (enum):
+    - selected_chapters
+    - selected_barangays
+    - all_chapters
+    - all_barangays
+    - all_chapters_and_barangays
+- created_by_admin_id (fk)
+- created_at (datetime)
+
+kpi_scopes table fields (only used when scope_type is selected_*):
+- id (pk)
+- kpi_id (fk -> kpis.id)
+- entity_type (enum: chapter, barangay)
+- entity_id (number)
+Indexes:
+- kpi_scopes(kpi_id)
+- kpi_scopes(entity_type, entity_id)
+
+ADMIN UI FLOW (SIMPLE):
+- "Create KPI" form:
+  - KPI Name
+  - Target Number
+  - Scope Type dropdown (5 options)
+  - If Scope Type = selected_chapters:
+      show multi-select dropdown of Chapters (IDs)
+  - If Scope Type = selected_barangays:
+      show multi-select dropdown of Barangays (IDs)
+  - For all_* scope types: no selection needed
+- On submit:
+  - Insert into kpis
+  - If selected_*: bulk insert rows into kpi_scopes (one row per selected entity)
+
+KPI VISIBILITY LOGIC (CHEAP, MIN QUERIES):
+When viewing KPIs for a specific context:
+- If scope_type in (all_chapters, all_barangays, all_chapters_and_barangays): always show as applicable.
+- If scope_type = selected_chapters:
+    show only if there exists kpi_scopes row where entity_type='chapter' and entity_id = selected chapter id
+- If scope_type = selected_barangays:
+    show only if there exists kpi_scopes row where entity_type='barangay' and entity_id = selected barangay id
+
+Do NOT compute progress, scoring, or trends.
+
+--------------------------------
+B. MEMBERSHIP FORM: CHAPTER + OPTIONAL BARANGAY (CASCADING DROPDOWN)
+--------------------------------
+
+REQUIREMENT:
+1) Membership form must ask member to select which Chapter they chose.
+2) If there are Barangays under the selected Chapter, show Barangay as an optional/required choice (only if exists).
+
+LOW-COST IMPLEMENTATION:
+- Add field: chapter_id (required, dropdown)
+- Add field: barangay_id (optional; only shown/enabled if there are barangays under that chapter)
+
+UI LOGIC:
+1) Load Chapters dropdown on form load (one simple query).
+2) When chapter_id changes:
+   - Query barangays where chapter_id = selected chapter_id
+   - If result count > 0:
+       show barangay dropdown with those barangays
+       make barangay_id required (ONLY if you want strict mapping) OR keep optional (recommended low-friction)
+   - Else:
+       hide barangay dropdown
+       set barangay_id = null
+
+DATABASE UPDATES:
+- members table add:
+  - chapter_id (fk)
+  - barangay_id (fk, nullable)
+Indexes:
+- members(chapter_id)
+- members(barangay_id)
+
+VALIDATION RULES:
+- chapter_id must always be provided.
+- barangay_id may be null.
+- If barangay_id is provided, it must belong to the selected chapter_id (validate with a simple lookup).
+
+ACCEPTANCE TESTS
+- Admin can create KPI with each of the 5 scope types.
+- For selected_chapters/selected_barangays, Admin can pick multiple entities and they are saved in kpi_scopes.
+- Membership form requires Chapter selection.
+- Barangay dropdown only appears if the chosen Chapter has barangays, and saves correctly.
+
+END OF MODIFICATION

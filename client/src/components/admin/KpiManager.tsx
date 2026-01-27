@@ -11,8 +11,23 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin } from "lucide-react";
 import type { Chapter, KpiTemplate } from "@shared/schema";
+
+interface BarangayUser {
+  id: string;
+  barangayName: string;
+  chapterId: string;
+}
+
+const SCOPE_OPTIONS = [
+  { value: "all_chapters_and_barangays", label: "All Chapters & Barangays" },
+  { value: "all_chapters", label: "All Chapters Only" },
+  { value: "all_barangays", label: "All Barangays Only" },
+  { value: "selected_chapters", label: "Selected Chapters" },
+  { value: "selected_barangays", label: "Selected Barangays" },
+];
 
 export default function KpiManager() {
   const { toast } = useToast();
@@ -31,11 +46,22 @@ export default function KpiManager() {
     year: currentYear,
     quarter: null as number | null,
     targetValue: null as number | null,
-    isActive: true
+    isActive: true,
+    scope: "all_chapters_and_barangays",
+    selectedEntityIds: [] as string[]
   });
 
   const { data: chapters = [] } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
+  });
+
+  const { data: barangayUsers = [] } = useQuery<BarangayUser[]>({
+    queryKey: ["/api/barangay-users"],
+    queryFn: async () => {
+      const res = await fetch("/api/barangay-users", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch barangay users");
+      return res.json();
+    },
   });
 
   const { data: kpiTemplates = [], isLoading } = useQuery<KpiTemplate[]>({
@@ -102,12 +128,28 @@ export default function KpiManager() {
       year: currentYear,
       quarter: null,
       targetValue: null,
-      isActive: true
+      isActive: true,
+      scope: "all_chapters_and_barangays",
+      selectedEntityIds: []
     });
   };
 
-  const handleEdit = (template: KpiTemplate) => {
+  const handleEdit = async (template: KpiTemplate) => {
     setEditingId(template.id);
+    
+    let entityIds: string[] = [];
+    if (template.scope === "selected_chapters" || template.scope === "selected_barangays") {
+      try {
+        const res = await fetch(`/api/kpi-templates/${template.id}/scopes`);
+        if (res.ok) {
+          const scopes = await res.json();
+          entityIds = scopes.map((s: { entityId: string }) => s.entityId);
+        }
+      } catch (e) {
+        console.error("Failed to load scopes:", e);
+      }
+    }
+    
     setFormData({
       name: template.name,
       description: template.description || "",
@@ -116,7 +158,9 @@ export default function KpiManager() {
       year: template.year,
       quarter: template.quarter,
       targetValue: template.targetValue,
-      isActive: template.isActive
+      isActive: template.isActive,
+      scope: template.scope || "all_chapters_and_barangays",
+      selectedEntityIds: entityIds
     });
     setIsCreating(true);
   };
@@ -128,16 +172,54 @@ export default function KpiManager() {
       return;
     }
 
+    if ((formData.scope === "selected_chapters" || formData.scope === "selected_barangays") && formData.selectedEntityIds.length === 0) {
+      toast({ title: "Error", description: "Please select at least one entity", variant: "destructive" });
+      return;
+    }
+
     const submitData = {
-      ...formData,
+      name: formData.name,
+      description: formData.description,
+      timeframe: formData.timeframe,
+      inputType: formData.inputType,
+      year: formData.year,
       quarter: formData.timeframe === "quarterly" || formData.timeframe === "both" ? formData.quarter : null,
-      targetValue: formData.inputType === "numeric" ? formData.targetValue : null
+      targetValue: formData.inputType === "numeric" ? formData.targetValue : null,
+      isActive: formData.isActive,
+      scope: formData.scope,
+      selectedEntityIds: formData.selectedEntityIds
     };
 
     if (editingId) {
       updateMutation.mutate({ id: editingId, data: submitData });
     } else {
       createMutation.mutate(submitData);
+    }
+  };
+
+  const handleEntityToggle = (entityId: string) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedEntityIds: prev.selectedEntityIds.includes(entityId)
+        ? prev.selectedEntityIds.filter(id => id !== entityId)
+        : [...prev.selectedEntityIds, entityId]
+    }));
+  };
+
+  const getScopeBadge = (scope: string | undefined) => {
+    switch (scope) {
+      case "all_chapters_and_barangays":
+        return <Badge variant="default">All</Badge>;
+      case "all_chapters":
+        return <Badge className="bg-blue-600">Chapters</Badge>;
+      case "all_barangays":
+        return <Badge className="bg-green-600">Barangays</Badge>;
+      case "selected_chapters":
+        return <Badge variant="outline"><Building2 className="h-3 w-3 mr-1" />Selected Chapters</Badge>;
+      case "selected_barangays":
+        return <Badge variant="outline"><MapPin className="h-3 w-3 mr-1" />Selected Barangays</Badge>;
+      default:
+        return null;
     }
   };
 
@@ -311,6 +393,77 @@ export default function KpiManager() {
                     data-testid="input-kpi-description"
                   />
                 </div>
+
+                <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                  <div className="space-y-2">
+                    <Label htmlFor="scope">Assign To *</Label>
+                    <Select 
+                      value={formData.scope} 
+                      onValueChange={(v) => setFormData({ ...formData, scope: v, selectedEntityIds: [] })}
+                    >
+                      <SelectTrigger data-testid="select-scope">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SCOPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {formData.scope === "selected_chapters" && (
+                    <div className="space-y-2">
+                      <Label>Select Chapters</Label>
+                      <div className="max-h-48 overflow-y-auto border rounded-md p-2 space-y-2">
+                        {chapters.map((chapter) => (
+                          <div key={chapter.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`chapter-${chapter.id}`}
+                              checked={formData.selectedEntityIds.includes(chapter.id)}
+                              onCheckedChange={() => handleEntityToggle(chapter.id)}
+                              data-testid={`checkbox-chapter-${chapter.id}`}
+                            />
+                            <label htmlFor={`chapter-${chapter.id}`} className="text-sm cursor-pointer">
+                              {chapter.name}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formData.selectedEntityIds.length} chapter(s) selected
+                      </p>
+                    </div>
+                  )}
+
+                  {formData.scope === "selected_barangays" && (
+                    <div className="space-y-2">
+                      <Label>Select Barangays</Label>
+                      <div className="max-h-48 overflow-y-auto border rounded-md p-2 space-y-2">
+                        {barangayUsers.map((barangay) => {
+                          const chapter = chapters.find(c => c.id === barangay.chapterId);
+                          return (
+                            <div key={barangay.id} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`barangay-${barangay.id}`}
+                                checked={formData.selectedEntityIds.includes(barangay.id)}
+                                onCheckedChange={() => handleEntityToggle(barangay.id)}
+                                data-testid={`checkbox-barangay-${barangay.id}`}
+                              />
+                              <label htmlFor={`barangay-${barangay.id}`} className="text-sm cursor-pointer">
+                                {barangay.barangayName} {chapter && <span className="text-muted-foreground">({chapter.name})</span>}
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formData.selectedEntityIds.length} barangay(s) selected
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex items-center gap-2">
                   <Switch
                     id="isActive"
