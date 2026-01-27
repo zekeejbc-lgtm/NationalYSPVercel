@@ -67,7 +67,7 @@ export default function Membership() {
   const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [selectedChapterId, setSelectedChapterId] = useState<string>("");
+  const [selectedChapterId, setSelectedChapterId] = useState<string | undefined>(undefined);
 
   const { data: chapters = [] } = useQuery<Chapter[]>({ 
     queryKey: ["/api/chapters"] 
@@ -90,7 +90,7 @@ export default function Membership() {
       age: 18,
       birthdate: "",
       chapterId: "",
-      barangayId: "",
+      barangayId: undefined,
       contactNumber: "",
       facebookLink: "",
       registeredVoter: false,
@@ -120,7 +120,7 @@ export default function Membership() {
     onSuccess: () => {
       setShowSuccess(true);
       form.reset();
-      setSelectedChapterId("");
+      setSelectedChapterId(undefined);
     },
     onError: (error: any) => {
       toast({ 
@@ -253,7 +253,7 @@ export default function Membership() {
                               onValueChange={(value) => {
                                 field.onChange(value);
                                 setSelectedChapterId(value);
-                                form.setValue("barangayId", "");
+                                form.setValue("barangayId", undefined);
                               }} 
                               value={field.value}
                             >
@@ -263,7 +263,7 @@ export default function Membership() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {chapters.map((chapter) => (
+                                {chapters.filter(chapter => chapter.id).map((chapter) => (
                                   <SelectItem key={chapter.id} value={chapter.id}>
                                     {chapter.name} - {chapter.location}
                                   </SelectItem>
@@ -282,15 +282,18 @@ export default function Membership() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Barangay (optional)</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value || ""}>
+                              <Select 
+                                onValueChange={(value) => field.onChange(value === "none" ? undefined : value)} 
+                                value={field.value || "none"}
+                              >
                                 <FormControl>
                                   <SelectTrigger data-testid="select-public-barangay">
                                     <SelectValue placeholder="Select your barangay (if applicable)" />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  <SelectItem value="">None / Not Applicable</SelectItem>
-                                  {barangays.map((barangay) => (
+                                  <SelectItem value="none">None / Not Applicable</SelectItem>
+                                  {barangays.filter(barangay => barangay.id).map((barangay) => (
                                     <SelectItem key={barangay.id} value={barangay.id}>
                                       {barangay.barangayName}
                                     </SelectItem>

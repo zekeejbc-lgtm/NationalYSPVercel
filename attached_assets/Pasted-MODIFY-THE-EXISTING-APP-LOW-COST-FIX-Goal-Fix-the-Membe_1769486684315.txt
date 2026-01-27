@@ -1,0 +1,56 @@
+MODIFY THE EXISTING APP (LOW-COST FIX)
+Goal: Fix the Membership Form runtime error:
+[plugin:runtime-error-plugin] A <Select.Item /> must have a value prop that is not an empty string.
+
+STRICT COST RULES
+- Do NOT add new libraries.
+- Do NOT add complex state managers.
+- Fix with minimal UI changes + safe defaults.
+- Keep dropdown rendering simple and deterministic.
+
+--------------------------------
+A. MEMBERSHIP FORM: CHAPTER SELECT ERROR FIX
+--------------------------------
+
+CAUSE (LIKELY):
+A Select.Item is being rendered with value="" (empty string) OR value is undefined/null.
+Some UI libraries (e.g., Radix/shadcn Select) forbid empty string values for Select.Item.
+
+REQUIRED FIX:
+1) Ensure EVERY <Select.Item /> has a NON-EMPTY string value.
+   - Convert numeric IDs to strings: value={String(item.id)}
+   - Never use value="" for any Select.Item
+
+2) Do NOT create a placeholder item with value="".
+   - Use <SelectValue placeholder="Select a Chapter" /> for placeholder display.
+   - If you need a "Clear" action, use a separate button:
+     - "Clear selection" sets selectedChapterId = undefined (or null), NOT "".
+
+3) Sanitize incoming data before mapping:
+   - Filter out any chapter records with missing/empty IDs.
+   - Example rule: only render items where chapter.id is not null/undefined.
+
+4) Keep Select state values consistent:
+   - selectedChapterId should be:
+     - undefined (no selection), OR
+     - a valid string ID (e.g., "12")
+   - Never store "" as the selected value.
+
+5) When chapter changes, reset barangay selection safely:
+   - setSelectedBarangayId(undefined) (NOT "")
+   - then load barangays for the selected chapter
+
+IMPLEMENTATION CHECKLIST (MINIMAL CHANGES):
+- In the chapters map:
+  - value must be String(chapter.id) and never ""
+  - key should also be chapter.id
+- Remove any Select.Item that uses "" for placeholder or "Select..." option.
+- Ensure onValueChange handler receives non-empty value and sets state to that string.
+
+ACCEPTANCE TESTS
+- Opening the Membership Form does NOT throw the runtime error.
+- Selecting a chapter works with no crashes.
+- Clearing selection (if supported) does not use "" and does not crash.
+- Barangay dropdown (if dependent) resets cleanly when chapter changes.
+
+END OF FIX
