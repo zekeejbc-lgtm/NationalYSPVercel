@@ -130,6 +130,7 @@ export interface IStorage {
   updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined>;
 
   getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]>;
+  getBarangayLeaderboard(chapterId: string): Promise<{ barangayId: string; barangayName: string; memberCount: number; rank: number }[]>;
 
   getMembers(): Promise<Member[]>;
   getMembersByChapter(chapterId: string): Promise<Member[]>;
@@ -147,6 +148,7 @@ export interface IStorage {
   deleteChapterOfficer(id: string): Promise<boolean>;
 
   getKpiTemplates(year?: number, quarter?: number): Promise<KpiTemplate[]>;
+  getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string): Promise<KpiTemplate[]>;
   getKpiTemplate(id: string): Promise<KpiTemplate | undefined>;
   createKpiTemplate(template: InsertKpiTemplate): Promise<KpiTemplate>;
   updateKpiTemplate(id: string, template: Partial<InsertKpiTemplate>): Promise<KpiTemplate | undefined>;
@@ -554,6 +556,30 @@ export class DbStorage implements IStorage {
     }));
   }
 
+  async getBarangayLeaderboard(chapterId: string): Promise<{ barangayId: string; barangayName: string; memberCount: number; rank: number }[]> {
+    const query = sql`
+      SELECT 
+        bu.id as barangay_id,
+        bu.barangay_name,
+        COUNT(m.id)::int as member_count,
+        ROW_NUMBER() OVER (ORDER BY COUNT(m.id) DESC, bu.barangay_name ASC)::int as rank
+      FROM barangay_users bu
+      LEFT JOIN members m ON m.barangay_id = bu.id
+      WHERE bu.chapter_id = ${chapterId} AND bu.is_active = true
+      GROUP BY bu.id, bu.barangay_name
+      ORDER BY member_count DESC, bu.barangay_name ASC
+      LIMIT 20
+    `;
+    
+    const result = await db.execute(query);
+    return (result.rows as any[]).map(row => ({
+      barangayId: row.barangay_id,
+      barangayName: row.barangay_name,
+      memberCount: row.member_count || 0,
+      rank: row.rank
+    }));
+  }
+
   async getMembers(): Promise<Member[]> {
     return db.select().from(members).orderBy(desc(members.createdAt));
   }
@@ -630,6 +656,46 @@ export class DbStorage implements IStorage {
       return db.select().from(kpiTemplates).where(eq(kpiTemplates.year, year)).orderBy(kpiTemplates.name);
     }
     return db.select().from(kpiTemplates).orderBy(desc(kpiTemplates.year), kpiTemplates.name);
+  }
+
+  async getKpiTemplatesForBarangay(year?: number, barangayId?: string, chapterId?: string): Promise<KpiTemplate[]> {
+    const conditions: any[] = [];
+    
+    conditions.push(sql`scope = 'all_barangays'`);
+    
+    if (barangayId) {
+      conditions.push(sql`(scope = 'barangay' AND linked_entity_id = ${barangayId})`);
+    }
+    if (chapterId) {
+      conditions.push(sql`(scope = 'chapter_barangays' AND linked_entity_id = ${chapterId})`);
+    }
+
+    const scopeCondition = conditions.length > 0 
+      ? sql.join(conditions, sql` OR `)
+      : sql`1=0`;
+
+    const query = sql`
+      SELECT * FROM kpi_templates
+      WHERE is_active = true
+      ${year ? sql`AND year = ${year}` : sql``}
+      AND (${scopeCondition})
+      ORDER BY name ASC
+    `;
+    const result = await db.execute(query);
+    return (result.rows as any[]).map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      timeframe: row.timeframe,
+      inputType: row.input_type,
+      year: row.year,
+      quarter: row.quarter,
+      targetValue: row.target_value,
+      scope: row.scope,
+      linkedEntityId: row.linked_entity_id,
+      isActive: row.is_active,
+      createdAt: row.created_at
+    }));
   }
 
   async getKpiTemplate(id: string): Promise<KpiTemplate | undefined> {

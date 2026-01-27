@@ -13,11 +13,15 @@ import {
   LogOut,
   Users,
   UserCheck,
-  MapPin
+  MapPin,
+  Target,
+  Trophy
 } from "lucide-react";
 import type { Chapter, Member, ChapterOfficer } from "@shared/schema";
 import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
 import OfficersPanel from "@/components/chapter/OfficersPanel";
+import BarangayKpiPanel from "@/components/chapter/BarangayKpiPanel";
+import BarangayLeaderboard from "@/components/chapter/BarangayLeaderboard";
 
 interface AuthUser {
   id: string;
@@ -219,6 +223,14 @@ export default function BarangayDashboard() {
               <UserCheck className="h-4 w-4" />
               Officers
             </TabsTrigger>
+            <TabsTrigger value="kpis" className="gap-2" data-testid="tab-kpis">
+              <Target className="h-4 w-4" />
+              KPIs
+            </TabsTrigger>
+            <TabsTrigger value="leaderboard" className="gap-2" data-testid="tab-leaderboard">
+              <Trophy className="h-4 w-4" />
+              Leaderboard
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="members">
@@ -254,6 +266,24 @@ export default function BarangayDashboard() {
                 />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="kpis">
+            {authUser?.chapterId && authUser?.barangayId && (
+              <BarangayKpiPanel 
+                chapterId={authUser.chapterId} 
+                barangayId={authUser.barangayId}
+              />
+            )}
+          </TabsContent>
+
+          <TabsContent value="leaderboard">
+            {authUser?.chapterId && authUser?.barangayId && (
+              <BarangayLeaderboard 
+                chapterId={authUser.chapterId} 
+                currentBarangayId={authUser.barangayId}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </main>

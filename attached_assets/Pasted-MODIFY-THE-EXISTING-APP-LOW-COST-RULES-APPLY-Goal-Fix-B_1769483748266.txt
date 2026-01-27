@@ -1,0 +1,90 @@
+MODIFY THE EXISTING APP (LOW-COST RULES APPLY)
+Goal: Fix Barangay password change error + add KPIs + add Barangay leaderboard.
+Keep implementation CHEAP: reuse existing tables/components, minimal queries, no background jobs, no analytics libraries.
+
+GLOBAL COST RULES
+- Reuse existing auth + dashboard components; do NOT create duplicate pages if not needed.
+- Use simple CRUD + indexed filters only.
+- No cron jobs, no background workers, no AI processing.
+- Prefer single COUNT / GROUP BY queries; avoid multi-join chains.
+
+--------------------------------
+A. BARANGAY CHAPTER FIX + FEATURES
+--------------------------------
+
+1) BUG FIX: Barangay Change Password returns 401 "Chapter access required"
+Problem:
+- Barangay accounts trying to change password are blocked by a middleware/guard that only allows Chapter role.
+
+Required Fix (LOW-COST):
+- Update the password-change endpoint authorization to allow BOTH:
+  - role = "chapter"
+  - role = "barangay"
+- Remove any hard-coded "chapter-only" checks for password change.
+- Ensure Barangay can only change THEIR OWN password:
+  - user_id in token/session must match the account being updated
+  - never allow Barangay to change another user’s password
+- Return a clear error only if:
+  - not authenticated, or
+  - attempting to change a different user’s password
+
+Implementation Notes:
+- If there is an "ensureChapterAccess" middleware, replace it with "ensureRoleAccess(['chapter','barangay'])" for password-change route only.
+- Keep admin password reset separate (admin-only).
+
+2) KPIs on Barangay Dashboard
+Requirement:
+- Add KPIs panel to Barangay Dashboard.
+
+LOW-COST KPI SCOPE RULES:
+- Show only KPIs applicable to this Barangay:
+  - KPIs where scope_type = "barangay" AND scope_id = this_barangay_id
+  - PLUS KPIs where scope_type = "all_barangays"
+  - PLUS KPIs where scope_type = "chapter_barangays" AND scope_id = this_barangay’s chapter_id (if this scope exists)
+- No progress calculations, no charts.
+- Display fields:
+  - KPI Name
+  - Target Number
+  - Scope label
+  - Created date
+
+Database Requirement (reuse existing KPI table if present):
+- kpis table should support:
+  - kpi_name (text)
+  - target_number (number)
+  - scope_type (enum: barangay, all_barangays, chapter_barangays, chapter, all_chapters, all)
+  - scope_id (nullable)
+  - created_at (datetime)
+
+3) Barangay Leaderboard (within same Chapter)
+Requirement:
+- Show leaderboard of other Barangays in the SAME Chapter as the logged-in Barangay.
+
+LOW-COST LEADERBOARD RULES:
+- Leaderboard should be based on an existing simple metric already in the app (pick ONE):
+  Option A (preferred): count of submitted project reports by barangay
+  Option B: count of registered members for the barangay
+- Use ONE query with GROUP BY:
+  - Filter barangays where chapter_id = logged_in_barangay.chapter_id
+  - Aggregate chosen metric
+  - Order DESC
+  - Limit to top 10
+- Display:
+  - Rank
+  - Barangay name
+  - Metric value
+- No trend lines, no time-series, no charts.
+- Include the logged-in barangay even if not top 10 by adding a small "Your rank" section (optional, but keep it low-cost: one extra query max).
+
+Data model reuse:
+- Use existing tables:
+  - barangays (id, name, chapter_id, city_id, etc.)
+  - reports OR members (depending on chosen metric), with barangay_id column
+- Do NOT create a new leaderboard table.
+
+ACCEPTANCE TESTS
+- Barangay user can change password successfully (no 401) and only for their own account.
+- Barangay Dashboard shows KPIs relevant to their barangay/chapter/all_barangays.
+- Barangay Leaderboard displays top barangays within the same chapter using one aggregated metric.
+
+END OF MODIFICATION

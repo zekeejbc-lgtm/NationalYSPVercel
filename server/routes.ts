@@ -315,7 +315,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ authenticated: false });
   });
 
-  app.post("/api/auth/change-password", requireChapterAuth, async (req, res) => {
+  app.post("/api/auth/change-password", requireChapterOrBarangayAuth, async (req, res) => {
     const { newPassword } = req.body;
     
     if (!newPassword || newPassword.length < 6) {
@@ -323,10 +323,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const updated = await storage.updateChapterUser(req.session.userId!, {
-      password: hashedPassword,
-      mustChangePassword: false
-    });
+    
+    let updated;
+    if (req.session.role === "barangay") {
+      updated = await storage.updateBarangayUser(req.session.userId!, {
+        password: hashedPassword,
+        mustChangePassword: false
+      });
+    } else {
+      updated = await storage.updateChapterUser(req.session.userId!, {
+        password: hashedPassword,
+        mustChangePassword: false
+      });
+    }
 
     if (!updated) {
       return res.status(500).json({ error: "Failed to update password" });
@@ -787,6 +796,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(leaderboard);
   });
 
+  app.get("/api/barangay-leaderboard", requireChapterOrBarangayAuth, async (req, res) => {
+    const userChapterId = req.session.chapterId;
+    if (!userChapterId) {
+      return res.status(400).json({ error: "Chapter ID not found in session" });
+    }
+    const leaderboard = await storage.getBarangayLeaderboard(userChapterId);
+    res.json(leaderboard);
+  });
+
   app.get("/api/members", requireAuth, async (req, res) => {
     const chapterId = req.query.chapterId as string | undefined;
     const barangayId = req.query.barangayId as string | undefined;
@@ -931,8 +949,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/kpi-templates", requireAuth, async (req, res) => {
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
     const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
-    const templates = await storage.getKpiTemplates(year, quarter);
-    res.json(templates);
+    const barangayScope = req.query.barangayScope === "true";
+    const barangayId = req.query.barangayId as string | undefined;
+    const chapterId = req.query.chapterId as string | undefined;
+    
+    if (barangayScope && barangayId) {
+      const templates = await storage.getKpiTemplatesForBarangay(year, barangayId, chapterId);
+      res.json(templates);
+    } else {
+      const templates = await storage.getKpiTemplates(year, quarter);
+      res.json(templates);
+    }
   });
 
   app.get("/api/kpi-templates/:id", requireAuth, async (req, res) => {
