@@ -14,6 +14,7 @@ export default function ChaptersManager() {
   const { toast } = useToast();
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [deletingChapterId, setDeletingChapterId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     location: "",
@@ -75,10 +76,11 @@ export default function ChaptersManager() {
       });
       setIsDialogOpen(false);
     },
-    onError: () => {
+    onError: (error: any) => {
+      const message = error?.message || "Failed to create chapter";
       toast({
         title: "Error",
-        description: "Failed to create chapter",
+        description: message,
         variant: "destructive",
       });
     }
@@ -95,10 +97,11 @@ export default function ChaptersManager() {
       });
       setIsDialogOpen(false);
     },
-    onError: () => {
+    onError: (error: any) => {
+      const message = error?.message || "Failed to update chapter";
       toast({
         title: "Error",
-        description: "Failed to update chapter",
+        description: message,
         variant: "destructive",
       });
     }
@@ -107,16 +110,19 @@ export default function ChaptersManager() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/chapters/${id}`),
     onSuccess: () => {
+      setDeletingChapterId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/chapters"] });
       toast({
         title: "Success",
         description: "Chapter deleted successfully",
       });
     },
-    onError: () => {
+    onError: (error: any) => {
+      setDeletingChapterId(null);
+      const message = error?.message || "Failed to delete chapter";
       toast({
         title: "Error",
-        description: "Failed to delete chapter",
+        description: message,
         variant: "destructive",
       });
     }
@@ -146,6 +152,7 @@ export default function ChaptersManager() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Are you sure you want to delete this chapter?")) return;
+    setDeletingChapterId(id);
     deleteMutation.mutate(id);
   };
 
@@ -194,6 +201,7 @@ export default function ChaptersManager() {
                           variant="ghost" 
                           size="icon"
                           onClick={() => handleDelete(chapter.id)}
+                          disabled={deletingChapterId === chapter.id}
                           data-testid={`button-delete-chapter-${chapter.id}`}
                         >
                           <Trash2 className="h-4 w-4" />

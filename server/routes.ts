@@ -439,11 +439,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/chapters/:id", requireAdminAuth, async (req, res) => {
-    const deleted = await storage.deleteChapter(req.params.id);
-    if (!deleted) {
-      return res.status(404).json({ error: "Chapter not found" });
+    try {
+      // Check for dependent records before attempting delete
+      const members = await storage.getMembersByChapter(req.params.id);
+      const officers = await storage.getChapterOfficers(req.params.id);
+      const chapterUsers = await storage.getChapterUsersByChapterId(req.params.id);
+      const barangayUsers = await storage.getBarangayUsersByChapterId(req.params.id);
+      
+      const dependentCounts = [];
+      if (members.length > 0) dependentCounts.push(`${members.length} member(s)`);
+      if (officers.length > 0) dependentCounts.push(`${officers.length} officer(s)`);
+      if (chapterUsers.length > 0) dependentCounts.push(`${chapterUsers.length} chapter account(s)`);
+      if (barangayUsers.length > 0) dependentCounts.push(`${barangayUsers.length} barangay account(s)`);
+      
+      if (dependentCounts.length > 0) {
+        return res.status(400).json({ 
+          error: `Cannot delete chapter: has ${dependentCounts.join(", ")}. Please remove these records first.` 
+        });
+      }
+      
+      const deleted = await storage.deleteChapter(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Chapter not found" });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Delete chapter error:", error);
+      if (error.code === '23503') {
+        return res.status(400).json({ error: "Cannot delete chapter: it has dependent records. Please remove related data first." });
+      }
+      res.status(500).json({ error: "Failed to delete chapter" });
     }
-    res.json({ success: true });
   });
 
   app.get("/api/chapters/:id/users", requireAdminAuth, async (req, res) => {
