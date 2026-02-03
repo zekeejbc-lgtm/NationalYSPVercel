@@ -21,7 +21,8 @@ import {
   insertKpiCompletionSchema,
   insertImportantDocumentSchema,
   insertMouSubmissionSchema,
-  insertChapterRequestSchema
+  insertChapterRequestSchema,
+  insertNationalRequestSchema
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 
@@ -1272,6 +1273,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/chapter-requests/:id", requireAdminAuth, async (req, res) => {
     try {
       const request = await storage.updateChapterRequest(req.params.id, req.body);
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+      res.json(request);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // National Request routes (messaging system)
+  app.get("/api/national-requests", requireAdminAuth, async (req, res) => {
+    const requests = await storage.getNationalRequests();
+    res.json(requests);
+  });
+
+  app.get("/api/national-requests/my-requests", async (req, res) => {
+    let senderType: string;
+    let senderId: string;
+    
+    if (req.session.chapterId) {
+      senderType = "chapter";
+      senderId = req.session.chapterId;
+    } else if (req.session.barangayId) {
+      senderType = "barangay";
+      senderId = req.session.barangayId;
+    } else {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    
+    const requests = await storage.getNationalRequestsBySender(senderType, senderId);
+    res.json(requests);
+  });
+
+  app.post("/api/national-requests", async (req, res) => {
+    try {
+      let senderType: string;
+      let senderId: string;
+      
+      if (req.session.chapterId) {
+        senderType = "chapter";
+        senderId = req.session.chapterId;
+      } else if (req.session.barangayId) {
+        senderType = "barangay";
+        senderId = req.session.barangayId;
+      } else {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      const validated = insertNationalRequestSchema.parse({
+        ...req.body,
+        senderType,
+        senderId,
+        dateNeeded: new Date(req.body.dateNeeded),
+        status: "NEW"
+      });
+      const request = await storage.createNationalRequest(validated);
+      res.json(request);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/national-requests/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const updateData: any = { ...req.body };
+      if (req.body.adminReply) {
+        updateData.repliedAt = new Date();
+        updateData.processedByAdminId = req.session.userId;
+      }
+      const request = await storage.updateNationalRequest(req.params.id, updateData);
       if (!request) {
         return res.status(404).json({ error: "Request not found" });
       }

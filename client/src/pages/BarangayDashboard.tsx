@@ -15,13 +15,15 @@ import {
   UserCheck,
   MapPin,
   Target,
-  Trophy
+  Trophy,
+  MessageSquare
 } from "lucide-react";
 import type { Chapter, Member, ChapterOfficer } from "@shared/schema";
 import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
 import OfficersPanel from "@/components/chapter/OfficersPanel";
 import BarangayKpiPanel from "@/components/chapter/BarangayKpiPanel";
 import BarangayLeaderboard from "@/components/chapter/BarangayLeaderboard";
+import NationalRequestPanel from "@/components/chapter/NationalRequestPanel";
 
 interface AuthUser {
   id: string;
@@ -231,6 +233,10 @@ export default function BarangayDashboard() {
               <Trophy className="h-4 w-4" />
               Leaderboard
             </TabsTrigger>
+            <TabsTrigger value="national" className="gap-2" data-testid="tab-national">
+              <MessageSquare className="h-4 w-4" />
+              Message National
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="members">
@@ -284,6 +290,10 @@ export default function BarangayDashboard() {
                 currentBarangayId={authUser.barangayId}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="national">
+            <NationalRequestPanel senderType="barangay" />
           </TabsContent>
         </Tabs>
       </main>

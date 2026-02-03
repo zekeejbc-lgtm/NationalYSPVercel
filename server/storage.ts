@@ -39,6 +39,8 @@ import {
   type InsertChapterRequest,
   type KpiScope,
   type InsertKpiScope,
+  type NationalRequest,
+  type InsertNationalRequest,
   adminUsers,
   chapterUsers,
   barangayUsers,
@@ -58,7 +60,8 @@ import {
   importantDocuments,
   chapterDocumentAck,
   mouSubmissions,
-  chapterRequests
+  chapterRequests,
+  nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, asc } from "drizzle-orm";
@@ -192,6 +195,12 @@ export interface IStorage {
   getChapterRequest(id: string): Promise<ChapterRequest | undefined>;
   createChapterRequest(request: InsertChapterRequest): Promise<ChapterRequest>;
   updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined>;
+
+  getNationalRequests(): Promise<NationalRequest[]>;
+  getNationalRequestsBySender(senderType: string, senderId: string): Promise<NationalRequest[]>;
+  getNationalRequest(id: string): Promise<NationalRequest | undefined>;
+  createNationalRequest(request: InsertNationalRequest): Promise<NationalRequest>;
+  updateNationalRequest(id: string, request: Partial<InsertNationalRequest>): Promise<NationalRequest | undefined>;
 
   initializeDefaultData(): Promise<void>;
 }
@@ -908,6 +917,34 @@ export class DbStorage implements IStorage {
 
   async updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined> {
     const result = await db.update(chapterRequests).set(request).where(eq(chapterRequests.id, id)).returning();
+    return result[0];
+  }
+
+  async getNationalRequests(): Promise<NationalRequest[]> {
+    return db.select().from(nationalRequests).orderBy(desc(nationalRequests.createdAt));
+  }
+
+  async getNationalRequestsBySender(senderType: string, senderId: string): Promise<NationalRequest[]> {
+    return db.select().from(nationalRequests)
+      .where(and(eq(nationalRequests.senderType, senderType), eq(nationalRequests.senderId, senderId)))
+      .orderBy(desc(nationalRequests.createdAt));
+  }
+
+  async getNationalRequest(id: string): Promise<NationalRequest | undefined> {
+    const result = await db.select().from(nationalRequests).where(eq(nationalRequests.id, id));
+    return result[0];
+  }
+
+  async createNationalRequest(request: InsertNationalRequest): Promise<NationalRequest> {
+    const result = await db.insert(nationalRequests).values(request).returning();
+    return result[0];
+  }
+
+  async updateNationalRequest(id: string, request: Partial<InsertNationalRequest>): Promise<NationalRequest | undefined> {
+    const result = await db.update(nationalRequests).set({
+      ...request,
+      updatedAt: new Date()
+    }).where(eq(nationalRequests.id, id)).returning();
     return result[0];
   }
 

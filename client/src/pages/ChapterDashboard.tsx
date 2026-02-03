@@ -30,7 +30,8 @@ import {
   HandHeart,
   Users,
   ClipboardList,
-  Send
+  Send,
+  MessageSquare
 } from "lucide-react";
 import type { Chapter, Publication } from "@shared/schema";
 import OfficersPanel from "@/components/chapter/OfficersPanel";
@@ -41,6 +42,7 @@ import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
 import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
 import ImportantDocumentsPanel from "@/components/chapter/ImportantDocumentsPanel";
 import FundingRequestPanel from "@/components/chapter/FundingRequestPanel";
+import NationalRequestPanel from "@/components/chapter/NationalRequestPanel";
 
 interface AuthUser {
   id: string;
@@ -68,6 +70,8 @@ export default function ChapterDashboard() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [facebookLink, setFacebookLink] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [collaborationType, setCollaborationType] = useState<"NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL">("NONE");
+  const [collaboratingChapterId, setCollaboratingChapterId] = useState<string | null>(null);
   
   const [publicationFilter, setPublicationFilter] = useState<"all" | "mine">("all");
   const [chapterSearch, setChapterSearch] = useState("");
@@ -137,6 +141,8 @@ export default function ChapterDashboard() {
       setProjectWriteup("");
       setPhotoUrl("");
       setFacebookLink("");
+      setCollaborationType("NONE");
+      setCollaboratingChapterId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
     },
@@ -195,11 +201,17 @@ export default function ChapterDashboard() {
       toast({ title: "Error", description: "Please fill all required fields", variant: "destructive" });
       return;
     }
+    if (collaborationType === "ANOTHER_CHAPTER" && !collaboratingChapterId) {
+      toast({ title: "Error", description: "Please select the collaborating chapter", variant: "destructive" });
+      return;
+    }
     submitReportMutation.mutate({
       projectName,
       projectWriteup,
       photoUrl: photoUrl || null,
-      facebookPostLink: facebookLink
+      facebookPostLink: facebookLink,
+      collaborationType,
+      collaboratingChapterId: collaborationType === "ANOTHER_CHAPTER" ? collaboratingChapterId : null
     });
   };
 
@@ -308,6 +320,10 @@ export default function ChapterDashboard() {
               <Trophy className="h-4 w-4" />
               Leaderboard
             </TabsTrigger>
+            <TabsTrigger value="national" className="gap-2" data-testid="tab-national">
+              <MessageSquare className="h-4 w-4" />
+              Message National
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="reports">
@@ -372,6 +388,48 @@ export default function ChapterDashboard() {
                       data-testid="input-facebook-link"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Collaboration (Optional)</Label>
+                    <Select
+                      value={collaborationType}
+                      onValueChange={(value: "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL") => {
+                        setCollaborationType(value);
+                        if (value !== "ANOTHER_CHAPTER") {
+                          setCollaboratingChapterId(null);
+                        }
+                      }}
+                    >
+                      <SelectTrigger data-testid="select-collaboration-type">
+                        <SelectValue placeholder="Select collaboration type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NONE">None</SelectItem>
+                        <SelectItem value="ANOTHER_CHAPTER">Another Chapter</SelectItem>
+                        <SelectItem value="YSP_NATIONAL">YSP National</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {collaborationType === "ANOTHER_CHAPTER" && (
+                    <div className="space-y-2">
+                      <Label>Collaborating Chapter *</Label>
+                      <Select
+                        value={collaboratingChapterId || "none"}
+                        onValueChange={(value) => setCollaboratingChapterId(value === "none" ? null : value)}
+                      >
+                        <SelectTrigger data-testid="select-collaborating-chapter">
+                          <SelectValue placeholder="Select chapter" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Select a chapter</SelectItem>
+                          {chapters
+                            .filter(ch => ch.id !== authUser?.chapterId)
+                            .map(ch => (
+                              <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <Button 
                     type="submit" 
                     disabled={submitReportMutation.isPending}
@@ -553,6 +611,10 @@ export default function ChapterDashboard() {
 
           <TabsContent value="leaderboard">
             <EnhancedLeaderboard currentChapterId={authUser?.chapterId} />
+          </TabsContent>
+
+          <TabsContent value="national">
+            <NationalRequestPanel senderType="chapter" />
           </TabsContent>
         </Tabs>
       </main>
