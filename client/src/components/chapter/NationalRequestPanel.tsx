@@ -106,10 +106,15 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
           ) : (
             <div className="space-y-4">
               {requests.map((request) => (
-                <Card key={request.id} className="hover-elevate cursor-pointer" onClick={() => {
-                  setSelectedRequest(request);
-                  setShowViewDialog(true);
-                }}>
+                <Card 
+                  key={request.id} 
+                  className="hover-elevate cursor-pointer" 
+                  onClick={() => {
+                    setSelectedRequest(request);
+                    setShowViewDialog(true);
+                  }}
+                  data-testid={`card-request-${request.id}`}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex-1 min-w-0">
@@ -190,7 +195,7 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
               />
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowNewDialog(false)}>
+              <Button type="button" variant="outline" onClick={() => setShowNewDialog(false)} data-testid="button-cancel-new-message">
                 Cancel
               </Button>
               <Button type="submit" disabled={createMutation.isPending} data-testid="button-send-message">

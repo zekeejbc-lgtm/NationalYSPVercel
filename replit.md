@@ -48,7 +48,7 @@ Preferred communication style: Simple, everyday language.
   - Documents: CRUD management for Important Documents (4 default documents seeded: MOU, 3 Code of Conduct documents)
   - Requests: View and manage chapter funding requests with status tracking (new/in_review/approved/rejected)
 - Chapter Dashboard: Role-based dashboard for chapter accounts with panels for:
-  - Project Reports: Submit project reports (auto-published to Publications)
+  - Project Reports: Submit project reports (auto-published to Publications) with optional collaboration tracking (None, Another Chapter, or YSP National)
   - Officers: Manage 6 required officer positions (President, Program Dev, Finance, Secretary, Partnership, Communications) with birthdate field
   - KPIs: View assigned KPI templates with progress tracking and completion marking
   - Volunteer Opportunities: Create volunteer events with safety disclaimers for age requirements
@@ -59,7 +59,8 @@ Preferred communication style: Simple, everyday language.
   - Members: View and manage chapter-scoped members with Add Member modal (includes birthdate field) and toggle buttons for isActive/registeredVoter
   - Documents: View Important Documents with read acknowledgement confirmation dialogs and MOU submission to hardcoded Drive folder
   - Requests: Submit funding requests to YSP National with activity details, rationale, and requested support
-- Barangay Dashboard: Simplified dashboard for barangay chapter accounts that reuses Chapter Dashboard components with barangay-specific filtering. Supports member management and officer management scoped to the barangay level.
+  - Message to National: Send requests/messages to YSP National office with subject, message, and date needed; view status and admin replies
+- Barangay Dashboard: Simplified dashboard for barangay chapter accounts that reuses Chapter Dashboard components with barangay-specific filtering. Supports member management and officer management scoped to the barangay level. Includes Message to National panel for sending requests to YSP National.
 - Login Page: Three-way role selector supporting Admin, Chapter, and Barangay Chapter login with dedicated icons (Shield, Building2, MapPin)
 
 ### Backend Architecture
@@ -95,6 +96,8 @@ Preferred communication style: Simple, everyday language.
 - Volunteer Opportunities table: Event details, date, chapter affiliation, SDG alignment, contact information
 - Stats table: Global metrics (projects completed, active chapters, total members)
 - Contact Info table: Organization-wide contact details (email, phone, Facebook)
+- ProjectReports table: Project submissions with collaboration tracking (barangayId, collaborationType: NONE/ANOTHER_CHAPTER/YSP_NATIONAL, collaboratingChapterId)
+- NationalRequests table: Chapter/Barangay messages to YSP National (senderType, senderId, subject, message, dateNeeded, status: NEW/IN_REVIEW/COMPLETED, adminReply, repliedAt)
 
 **Storage Strategy:**
 - Database storage interface (IStorage) with implementation (DbStorage) using PostgreSQL for permanent data persistence

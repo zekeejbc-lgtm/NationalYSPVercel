@@ -20,6 +20,7 @@ import MemberListManager from "@/components/admin/MemberListManager";
 import OfficerListManager from "@/components/admin/OfficerListManager";
 import ImportantDocumentsManager from "@/components/admin/ImportantDocumentsManager";
 import ChapterRequestsPanel from "@/components/admin/ChapterRequestsPanel";
+import NationalRequestsManager from "@/components/admin/NationalRequestsManager";
 
 interface HouseholdSummary {
   totalSubmissions: number;
@@ -158,7 +159,8 @@ export default function Admin() {
             <TabsTrigger value="kpis" data-testid="tab-kpis">KPIs</TabsTrigger>
             <TabsTrigger value="volunteer" data-testid="tab-volunteer">Volunteer</TabsTrigger>
             <TabsTrigger value="documents" data-testid="tab-documents">Documents</TabsTrigger>
-            <TabsTrigger value="requests" data-testid="tab-requests">Requests</TabsTrigger>
+            <TabsTrigger value="requests" data-testid="tab-requests">Funding</TabsTrigger>
+            <TabsTrigger value="inbox" data-testid="tab-inbox">National Inbox</TabsTrigger>
             <TabsTrigger value="contact" data-testid="tab-contact">Contact</TabsTrigger>
           </TabsList>
 
@@ -266,6 +268,10 @@ export default function Admin() {
 
           <TabsContent value="requests">
             <ChapterRequestsPanel />
+          </TabsContent>
+
+          <TabsContent value="inbox">
+            <NationalRequestsManager />
           </TabsContent>
 
           <TabsContent value="contact">
