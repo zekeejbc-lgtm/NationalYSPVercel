@@ -119,11 +119,29 @@ export const barangayUsers = pgTable("barangay_users", {
 export const projectReports = pgTable("project_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  barangayId: varchar("barangay_id").references(() => barangayUsers.id),
   projectName: text("project_name").notNull(),
   projectWriteup: text("project_writeup").notNull(),
   photoUrl: text("photo_url"),
   facebookPostLink: text("facebook_post_link").notNull(),
+  collaborationType: varchar("collaboration_type").default("NONE").notNull(),
+  collaboratingChapterId: varchar("collaborating_chapter_id").references(() => chapters.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const nationalRequests = pgTable("national_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  senderType: varchar("sender_type").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  dateNeeded: timestamp("date_needed").notNull(),
+  status: varchar("status").default("NEW").notNull(),
+  adminReply: text("admin_reply"),
+  repliedAt: timestamp("replied_at"),
+  processedByAdminId: varchar("processed_by_admin_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const publications = pgTable("publications", {
@@ -254,6 +272,12 @@ export const insertProjectReportSchema = createInsertSchema(projectReports).omit
   createdAt: true,
 });
 
+export const insertNationalRequestSchema = createInsertSchema(nationalRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertPublicationSchema = createInsertSchema(publications).omit({
   id: true,
   publishedAt: true,
@@ -365,6 +389,9 @@ export type InsertBarangayUser = z.infer<typeof insertBarangayUserSchema>;
 
 export type ProjectReport = typeof projectReports.$inferSelect;
 export type InsertProjectReport = z.infer<typeof insertProjectReportSchema>;
+
+export type NationalRequest = typeof nationalRequests.$inferSelect;
+export type InsertNationalRequest = z.infer<typeof insertNationalRequestSchema>;
 
 export type Publication = typeof publications.$inferSelect;
 export type InsertPublication = z.infer<typeof insertPublicationSchema>;

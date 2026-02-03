@@ -1,0 +1,172 @@
+REPLIT AGENT PROMPT (LOW-COST, EASY)
+
+PROJECT: YSP Dashboard System
+GOAL: Add “Collaboration” fields to Project Reports + Add a simple “Message/Request to National” feature for Chapter/Barangay, with an Admin inbox.
+
+NON-NEGOTIABLES (keep cost low)
+- Do NOT add new third-party services (no Twilio, no email APIs, no paid chat tools).
+- Use existing stack and database (same auth, same UI library).
+- Keep it as simple CRUD: forms + tables + status updates.
+- Minimal schema changes, minimal UI screens (prefer panels/sections inside existing dashboards).
+
+==================================================
+A) CHAPTER DASHBOARD UPDATES
+==================================================
+
+A1. Project Report: Collaboration field
+When a Chapter submits a Project Report, add a section:
+
+Field: Collaboration Partner Type (dropdown)
+Options:
+1) None
+2) Another Chapter
+3) YSP National
+
+If “Another Chapter” is selected:
+- Show a second dropdown: Select Collaborating Chapter
+- Options should be the list of chapter accounts already in the system (active chapters)
+- Store the selected chapter_id
+
+If “YSP National” is selected:
+- Store a fixed value (e.g., partner_type="NATIONAL") and partner_id can be null
+
+Data to store in project report:
+- collaboration_type: ENUM("NONE","CHAPTER","NATIONAL")
+- collaborating_chapter_id: nullable (only used if type="CHAPTER")
+
+A2. Message/Request to YSP National panel
+Add a panel/section in Chapter Dashboard titled:
+“Message/Request to YSP National”
+
+Form fields:
+- subject (short text)
+- message (long text)
+- date_needed (date picker)
+- optional_attachment (optional) ONLY if current system already supports file upload; otherwise skip attachments to keep low-cost.
+
+On submit:
+- Create a request record tied to the sender (chapter) and sender_type="CHAPTER"
+- Default status: "NEW"
+
+Also show below the form:
+- A table/list of the Chapter’s submitted requests with columns:
+  Date Submitted | Subject | Date Needed | Status | Admin Reply (if any)
+
+==================================================
+B) BARANGAY DASHBOARD UPDATES
+==================================================
+
+B1. Project Report: Collaboration field
+Same behavior as Chapter dashboard.
+
+Field: Collaboration Partner Type (dropdown)
+Options:
+1) None
+2) Another Chapter
+3) YSP National
+
+If “Another Chapter” selected:
+- dropdown list of chapter accounts in the system
+- store chapter_id
+
+Store in barangay project report:
+- collaboration_type: ENUM("NONE","CHAPTER","NATIONAL")
+- collaborating_chapter_id: nullable
+
+B2. Message/Request to YSP National panel
+Same feature as Chapter dashboard but sender_type="BARANGAY"
+Form fields:
+- subject
+- message
+- date_needed
+
+Show list of Barangay’s requests with:
+Date Submitted | Subject | Date Needed | Status | Admin Reply
+
+==================================================
+C) ADMIN DASHBOARD UPDATES
+==================================================
+
+C1. Admin Inbox Panel: “Messages/Requests to YSP National”
+Create an Admin panel listing all requests from Chapters + Barangays.
+
+Table columns:
+- Date Submitted
+- Sender Type (CHAPTER/BARANGAY)
+- Sender Name (chapter_name or barangay_name)
+- Subject
+- Date Needed
+- Status (NEW / IN_PROGRESS / PROCESSED / CLOSED)
+- Actions: View / Reply / Mark Status
+
+Admin actions:
+1) View request details page/modal:
+   - show full message, sender info, date needed, submitted date
+2) Reply box:
+   - admin_reply (long text)
+   - when admin replies, save admin_reply + replied_at timestamp
+3) Status update:
+   - allow dropdown to set: NEW, IN_PROGRESS, PROCESSED, CLOSED
+   - also store processed_by_admin_id
+
+Low-cost implementation:
+- No real-time chat. Replies appear when sender refreshes/views their request list.
+
+==================================================
+D) DATABASE (MINIMAL SCHEMA)
+==================================================
+
+1) Project Reports table changes (apply to both chapter and barangay project reports depending on current schema):
+- collaboration_type VARCHAR/ENUM default "NONE"
+- collaborating_chapter_id nullable FK -> chapters.id
+
+2) New table: national_requests (or ysp_requests)
+Fields:
+- id (PK)
+- sender_type ENUM("CHAPTER","BARANGAY")
+- sender_id (FK to chapters or barangays, store as integer with sender_type)
+- subject (text/varchar)
+- message (text)
+- date_needed (date)
+- status ENUM("NEW","IN_PROGRESS","PROCESSED","CLOSED") default "NEW"
+- admin_reply (text nullable)
+- replied_at (datetime nullable)
+- created_at (datetime)
+- updated_at (datetime)
+- processed_by_admin_id (nullable FK to admins/users)
+
+Indexes:
+- status
+- sender_type + sender_id
+- created_at
+
+==================================================
+E) PERMISSIONS / SECURITY
+==================================================
+
+- Chapters can only view/create their own requests.
+- Barangays can only view/create their own requests.
+- Admin can view/update all requests.
+- Validate that collaborating_chapter_id is a real chapter if collaboration_type="CHAPTER".
+- Date Needed must not be empty.
+
+==================================================
+F) UI/UX NOTES (KEEP IT SIMPLE)
+==================================================
+
+- Reuse existing components/styles.
+- Add these as new sections inside existing dashboards (avoid creating many new pages).
+- For collaboration: show/hide the “Select Collaborating Chapter” dropdown only when needed.
+- Provide small helper text:
+  “Choose ‘YSP National’ only if National directly co-implemented the project.”
+
+==================================================
+G) ACCEPTANCE CHECKLIST
+==================================================
+
+1) Chapter project report can save collaboration as NONE/CHAPTER/NATIONAL.
+2) Barangay project report can save collaboration as NONE/CHAPTER/NATIONAL.
+3) Chapter can submit requests to National with date needed; sees own request history and admin replies.
+4) Barangay can submit requests to National with date needed; sees own request history and admin replies.
+5) Admin can view all requests, reply, and update status.
+6) No external paid services added; simple CRUD only.
