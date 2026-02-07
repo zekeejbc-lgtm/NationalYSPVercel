@@ -10,11 +10,13 @@ import type { Chapter, ChapterOfficer } from "@shared/schema";
 
 const OFFICER_POSITIONS = [
   "City/Municipality President",
+  "Barangay President",
   "Program Development Officer",
   "Finance and Treasury Officer",
   "Secretary and Documentation Officer",
   "Partnership and Fundraising Officer",
-  "Communications and Marketing Officer"
+  "Communications and Marketing Officer",
+  "Membership and Internal Affairs Officer"
 ];
 
 export default function OfficerListManager() {
@@ -190,7 +192,7 @@ export default function OfficerListManager() {
               {chapters.map((chapter) => {
                 const chapterOfficers = groupedByChapter[chapter.id] || [];
                 const filledPositions = chapterOfficers.length;
-                const totalPositions = OFFICER_POSITIONS.length;
+                const totalPositions = 7;
                 
                 return (
                   <Card key={chapter.id} className="p-4">

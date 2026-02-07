@@ -17,7 +17,8 @@ const OFFICER_POSITIONS = [
   "Finance and Treasury Officer",
   "Secretary and Documentation Officer",
   "Partnership and Fundraising Officer",
-  "Communications and Marketing Officer"
+  "Communications and Marketing Officer",
+  "Membership and Internal Affairs Officer"
 ];
 
 export interface OfficersPanelProps {
@@ -32,7 +33,8 @@ const BARANGAY_OFFICER_POSITIONS = [
   "Finance and Treasury Officer",
   "Secretary and Documentation Officer",
   "Partnership and Fundraising Officer",
-  "Communications and Marketing Officer"
+  "Communications and Marketing Officer",
+  "Membership and Internal Affairs Officer"
 ];
 
 export default function OfficersPanel({ chapterId, level = "chapter", barangayId }: OfficersPanelProps) {
@@ -119,10 +121,14 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
 
   const handleEdit = (officer: ChapterOfficer) => {
     setEditingId(officer.id);
+    let position = officer.position;
+    if (level === "barangay" && position === "City/Municipality President") {
+      position = "Barangay President";
+    }
     setFormData({
-      position: officer.position,
+      position,
       fullName: officer.fullName,
-      birthdate: officer.birthdate || "",
+      birthdate: (officer.birthdate as string) || "",
       contactNumber: officer.contactNumber,
       chapterEmail: officer.chapterEmail
     });
@@ -143,8 +149,12 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     }
   };
 
-  const filledPositions = officers.map(o => o.position);
-  const availablePositions = OFFICER_POSITIONS.filter(p => !filledPositions.includes(p) || (editingId && officers.find(o => o.id === editingId)?.position === p));
+  const positions = level === "barangay" ? BARANGAY_OFFICER_POSITIONS : OFFICER_POSITIONS;
+  const filledPositions = officers.map(o => {
+    if (level === "barangay" && o.position === "City/Municipality President") return "Barangay President";
+    return o.position;
+  });
+  const availablePositions = positions.filter(p => !filledPositions.includes(p) || (editingId && officers.find(o => o.id === editingId)?.position === p));
 
   return (
     <Card>
@@ -159,10 +169,10 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between">
-          <Badge variant={officers.length === OFFICER_POSITIONS.length ? "default" : "outline"}>
-            {officers.length} / {OFFICER_POSITIONS.length} positions filled
+          <Badge variant={officers.length === positions.length ? "default" : "outline"}>
+            {officers.length} / {positions.length} positions filled
           </Badge>
-          {!isAdding && officers.length < OFFICER_POSITIONS.length && (
+          {!isAdding && officers.length < positions.length && (
             <Button onClick={() => setIsAdding(true)} data-testid="button-add-officer">
               <Plus className="h-4 w-4 mr-2" />
               Add Officer
@@ -253,7 +263,9 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-medium">{officer.fullName}</span>
-                    <Badge variant="secondary">{officer.position}</Badge>
+                    <Badge variant="secondary">
+                      {level === "barangay" && officer.position === "City/Municipality President" ? "Barangay President" : officer.position}
+                    </Badge>
                   </div>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1">
@@ -267,7 +279,7 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
                     {officer.birthdate && (
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {officer.birthdate}
+                        {String(officer.birthdate)}
                       </span>
                     )}
                   </div>
@@ -295,11 +307,11 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
           </div>
         )}
 
-        {officers.length < OFFICER_POSITIONS.length && officers.length > 0 && (
+        {officers.length < positions.length && officers.length > 0 && (
           <div className="mt-4 p-4 bg-muted/50 rounded-lg">
             <h4 className="font-medium text-sm mb-2">Missing Positions:</h4>
             <div className="flex flex-wrap gap-2">
-              {OFFICER_POSITIONS.filter(p => !filledPositions.includes(p)).map((position) => (
+              {positions.filter(p => !filledPositions.includes(p)).map((position) => (
                 <Badge key={position} variant="outline">{position}</Badge>
               ))}
             </div>
