@@ -1,0 +1,42 @@
+Modify the existing app (do NOT rebuild). Keep it low-cost and minimal changes.
+
+BUG TO FIX:
+- When I (Admin) create Barangay accounts, they can sign in initially.
+- After they change their password, they cannot sign in again.
+
+GOAL:
+Fix the password change + login flow so Barangay users can still sign in after updating their password.
+
+REQUIREMENTS (keep it simple):
+1) Ensure passwords are ALWAYS stored hashed (bcrypt or equivalent). Never store plain text.
+2) Ensure login ALWAYS compares using the same hashing method (bcrypt.compare).
+3) Ensure “change password” replaces the stored password with a NEW hash, not the raw password.
+4) Ensure the password update actually commits/saves to the database.
+5) Ensure the login query always finds the same user record (case-insensitive email/username normalization).
+   - On both create, login, and change password, normalize identifier: trim spaces + lowercase email/username.
+6) Ensure no double-hashing bug:
+   - If the system already hashes on “save” hooks/middleware, do not hash again in route logic.
+   - Add a clear single source of truth: either hash ONLY in the route OR ONLY in the model hook.
+7) Add minimal logs (server-side only) for troubleshooting:
+   - On change password: log user id + “password updated = true”
+   - On login failure: log “user found?” and “password compare result”
+   - Do not log the password or hash.
+
+DELIVERABLES:
+- Patch only the needed files.
+- Provide the exact code diff or the updated code for:
+  a) create Barangay user endpoint
+  b) login endpoint
+  c) change password endpoint
+  d) user model (only if needed)
+
+TESTS (must add and run):
+- Create Barangay account → login success
+- Change password → logout → login with old password fails
+- Login with new password succeeds
+- Repeat change password twice → latest password works
+- Email/username with trailing spaces or different casing still works
+
+IMPORTANT:
+Keep dependencies minimal. If bcrypt already exists, reuse it. If not, add bcrypt (or bcryptjs if needed for compatibility).
+Avoid refactors. Fix the bug directly.

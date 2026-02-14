@@ -205,14 +205,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Username and password required" });
     }
 
-    const user = await storage.getBarangayUserByUsername(username);
+    const normalizedUsername = username.trim();
+    const user = await storage.getBarangayUserByUsername(normalizedUsername);
     
     if (!user) {
+      console.log("[Auth] Barangay login: user not found for username:", normalizedUsername);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
+      console.log("[Auth] Barangay login: password mismatch for user:", user.id);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
@@ -339,9 +342,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     if (!updated) {
+      console.log("[Auth] Change password failed for user:", req.session.userId);
       return res.status(500).json({ error: "Failed to update password" });
     }
 
+    console.log("[Auth] Password updated for user:", req.session.userId, "role:", req.session.role);
     res.json({ success: true });
   });
 
@@ -553,6 +558,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/barangay-users/:id", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertBarangayUserSchema.partial().parse(req.body);
+      if (validated.password) {
+        validated.password = await bcrypt.hash(validated.password, 10);
+      }
       const user = await storage.updateBarangayUser(req.params.id, validated);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
