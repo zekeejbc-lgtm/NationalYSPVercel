@@ -74,6 +74,7 @@ export interface IStorage {
 
   getChapterUser(id: string): Promise<ChapterUser | undefined>;
   getChapterUserByUsername(username: string): Promise<ChapterUser | undefined>;
+  getAllChapterUsers(): Promise<ChapterUser[]>;
   getChapterUsersByChapterId(chapterId: string): Promise<ChapterUser[]>;
   createChapterUser(user: InsertChapterUser): Promise<ChapterUser>;
   updateChapterUser(id: string, user: Partial<InsertChapterUser>): Promise<ChapterUser | undefined>;
@@ -229,6 +230,10 @@ export class DbStorage implements IStorage {
   async getChapterUserByUsername(username: string): Promise<ChapterUser | undefined> {
     const result = await db.select().from(chapterUsers).where(eq(chapterUsers.username, username));
     return result[0];
+  }
+
+  async getAllChapterUsers(): Promise<ChapterUser[]> {
+    return db.select().from(chapterUsers).orderBy(desc(chapterUsers.createdAt));
   }
 
   async getChapterUsersByChapterId(chapterId: string): Promise<ChapterUser[]> {

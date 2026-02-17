@@ -158,20 +158,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "Username and password required" });
     }
 
-    const user = await storage.getChapterUserByUsername(username);
+    const normalizedUsername = username.trim();
+    const user = await storage.getChapterUserByUsername(normalizedUsername);
     
     if (!user) {
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     if (!user.isActive) {
       return res.status(401).json({ error: "Account is disabled" });
     }
+
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 60000);
+      return res.status(423).json({ error: `Account is locked. Try again in ${minutesLeft} minute(s).` });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      const attempts = (user.failedLoginAttempts || 0) + 1;
+      const updateData: any = { failedLoginAttempts: attempts };
+      if (attempts >= 3) {
+        updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
+        console.log("[Auth] Chapter account locked due to 3 failed attempts:", user.username);
+      }
+      await storage.updateChapterUser(user.id, updateData);
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    await storage.updateChapterUser(user.id, { failedLoginAttempts: 0, lockedUntil: null } as any);
 
     const chapter = await storage.getChapter(user.chapterId);
 
@@ -209,19 +224,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const user = await storage.getBarangayUserByUsername(normalizedUsername);
     
     if (!user) {
-      console.log("[Auth] Barangay login: user not found for username:", normalizedUsername);
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-      console.log("[Auth] Barangay login: password mismatch for user:", user.id);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
     if (!user.isActive) {
       return res.status(401).json({ error: "Account is inactive" });
     }
+
+    if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(user.lockedUntil).getTime() - Date.now()) / 60000);
+      return res.status(423).json({ error: `Account is locked. Try again in ${minutesLeft} minute(s).` });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) {
+      const attempts = (user.failedLoginAttempts || 0) + 1;
+      const updateData: any = { failedLoginAttempts: attempts };
+      if (attempts >= 3) {
+        updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
+        console.log("[Auth] Barangay account locked due to 3 failed attempts:", user.username);
+      }
+      await storage.updateBarangayUser(user.id, updateData);
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    await storage.updateBarangayUser(user.id, { failedLoginAttempts: 0, lockedUntil: null } as any);
 
     const chapter = await storage.getChapter(user.chapterId);
 
@@ -322,23 +349,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/change-password", requireChapterOrBarangayAuth, async (req, res) => {
     const { newPassword } = req.body;
     
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const now = new Date();
     
     let updated;
     if (req.session.role === "barangay") {
       updated = await storage.updateBarangayUser(req.session.userId!, {
         password: hashedPassword,
-        mustChangePassword: false
-      });
+        mustChangePassword: false,
+        passwordChangedAt: now
+      } as any);
     } else {
       updated = await storage.updateChapterUser(req.session.userId!, {
         password: hashedPassword,
-        mustChangePassword: false
-      });
+        mustChangePassword: false,
+        passwordChangedAt: now
+      } as any);
     }
 
     if (!updated) {
@@ -347,7 +377,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     console.log("[Auth] Password updated for user:", req.session.userId, "role:", req.session.role);
-    res.json({ success: true });
+    res.json({ success: true, message: "Password Updated Successfully." });
   });
 
   app.get("/api/programs", async (req, res) => {
@@ -480,6 +510,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/chapters/:id/users", requireAdminAuth, async (req, res) => {
     const users = await storage.getChapterUsersByChapterId(req.params.id);
     res.json(users.map(u => ({ ...u, password: undefined })));
+  });
+
+  app.get("/api/all-accounts", requireAdminAuth, async (req, res) => {
+    const allChapterUsers = await storage.getAllChapterUsers();
+    const allBarangayUsers = await storage.getBarangayUsers();
+    const chapters = await storage.getChapters();
+    const chapterMap = new Map(chapters.map(c => [c.id, c.name]));
+
+    const accounts = [
+      ...allChapterUsers.map(u => ({
+        id: u.id,
+        accountName: chapterMap.get(u.chapterId) || "Unknown Chapter",
+        accountType: "Chapter" as const,
+        username: u.username,
+        isActive: u.isActive,
+        mustChangePassword: u.mustChangePassword,
+        failedLoginAttempts: u.failedLoginAttempts || 0,
+        lockedUntil: u.lockedUntil,
+        passwordChangedAt: u.passwordChangedAt,
+        createdAt: u.createdAt,
+      })),
+      ...allBarangayUsers.map(u => ({
+        id: u.id,
+        accountName: `${u.barangayName} (${chapterMap.get(u.chapterId) || "Unknown"})`,
+        accountType: "Barangay" as const,
+        username: u.username,
+        isActive: u.isActive,
+        mustChangePassword: u.mustChangePassword,
+        failedLoginAttempts: u.failedLoginAttempts || 0,
+        lockedUntil: u.lockedUntil,
+        passwordChangedAt: u.passwordChangedAt,
+        createdAt: u.createdAt,
+      })),
+    ];
+
+    res.json(accounts);
+  });
+
+  app.post("/api/reset-password/:accountType/:id", requireAdminAuth, async (req, res) => {
+    const { accountType, id } = req.params;
+    const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 4).toUpperCase();
+    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+    let updated;
+    if (accountType === "chapter") {
+      updated = await storage.updateChapterUser(id, {
+        password: hashedPassword,
+        mustChangePassword: true,
+        failedLoginAttempts: 0,
+        lockedUntil: null
+      } as any);
+    } else if (accountType === "barangay") {
+      updated = await storage.updateBarangayUser(id, {
+        password: hashedPassword,
+        mustChangePassword: true,
+        failedLoginAttempts: 0,
+        lockedUntil: null
+      } as any);
+    }
+
+    if (!updated) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    console.log("[Auth] Admin reset password for", accountType, "account:", id);
+    res.json({ success: true, temporaryPassword: tempPassword });
+  });
+
+  app.post("/api/unlock-account/:accountType/:id", requireAdminAuth, async (req, res) => {
+    const { accountType, id } = req.params;
+
+    let updated;
+    if (accountType === "chapter") {
+      updated = await storage.updateChapterUser(id, { failedLoginAttempts: 0, lockedUntil: null } as any);
+    } else if (accountType === "barangay") {
+      updated = await storage.updateBarangayUser(id, { failedLoginAttempts: 0, lockedUntil: null } as any);
+    }
+
+    if (!updated) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    res.json({ success: true });
   });
 
   app.post("/api/chapter-users", requireAdminAuth, async (req, res) => {

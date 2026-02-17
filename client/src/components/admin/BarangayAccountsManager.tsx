@@ -101,6 +101,18 @@ export default function BarangayAccountsManager() {
     });
   };
 
+  const handleResetPassword = (user: BarangayUser) => {
+    const tempPassword = Math.random().toString(36).slice(-8);
+    updateUserMutation.mutate({
+      id: user.id,
+      data: { password: tempPassword, mustChangePassword: true }
+    });
+    toast({
+      title: "Password Reset",
+      description: `New temporary password: ${tempPassword}`,
+    });
+  };
+
   const selectedChapter = chapters.find(c => c.id === selectedChapterId);
 
   return (
@@ -176,6 +188,14 @@ export default function BarangayAccountsManager() {
                           data-testid={`switch-barangay-user-active-${user.id}`}
                         />
                       </div>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => handleResetPassword(user)}
+                        data-testid={`button-reset-barangay-password-${user.id}`}
+                      >
+                        <Key className="h-4 w-4" />
+                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"

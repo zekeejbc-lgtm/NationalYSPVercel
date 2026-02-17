@@ -1,0 +1,109 @@
+Make the following improvements in the existing website. Keep everything LOW COST. Use the current database and stack. Do not add paid services or external APIs.
+
+OVERALL GOAL:
+Fix authentication bugs and improve Admin account control while keeping the system simple and secure.
+
+A. ADMIN IMPROVEMENTS
+
+Admin Account Management Panel
+
+Create an Account Management panel inside the Admin Dashboard where I can see:
+
+Account Name
+
+Account Type (Barangay or Chapter)
+
+Username
+
+Email
+
+Status (Active / Inactive)
+
+Button: Reset Password
+
+Button: Generate Temporary Password
+
+IMPORTANT:
+Do NOT store passwords in plain text.
+
+Instead:
+
+Continue using hashed passwords (bcrypt or equivalent).
+
+When Admin clicks “Reset Password”, the system should:
+
+Generate a temporary password.
+
+Hash it before saving to the database.
+
+Display the temporary password ONE TIME only to Admin.
+
+Automatically set “forceChangePassword = true”.
+
+When the user logs in using the temporary password:
+
+Force them to change password before accessing dashboard.
+
+Admin should NOT see raw stored passwords.
+Use secure reset logic instead.
+
+B. BARANGAY CHAPTER LOGIN BUG FIX
+
+Problem:
+After Barangay users change their password, they cannot log in again.
+
+Fix the following:
+
+When user changes password:
+
+Hash the new password before saving.
+
+Replace the old hashed password in the database.
+
+Do NOT create duplicate user entries.
+
+During login:
+
+Use bcrypt.compare() (or equivalent secure comparison).
+
+Compare entered password with stored hashed password properly.
+
+Ensure:
+
+Database password field updates correctly.
+
+Session/token refreshes after password change.
+
+No mismatch between plain text and hashed values.
+
+Add validation:
+
+Minimum 8 characters.
+
+Confirm password must match.
+
+Show success message: “Password Updated Successfully.”
+
+ADDITIONAL LOW-COST SECURITY FEATURES
+
+Add boolean field: forceChangePassword
+
+Add simple login protection:
+
+After 3 failed attempts, lock account for 5 minutes.
+
+Log password change timestamps (no need for full history).
+
+EXPECTED RESULT
+
+Admin can safely manage Barangay and Chapter accounts.
+
+Admin can reset passwords securely.
+
+Barangay Chapters can log in properly after changing password.
+
+No paid tools added.
+
+Keep UI simple.
+
+Keep infrastructure lightweight and low cost.

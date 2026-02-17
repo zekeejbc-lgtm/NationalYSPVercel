@@ -110,14 +110,14 @@ export default function BarangayDashboard() {
       return;
     }
     
-    if (newPassword.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (newPassword.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
 
     try {
       await apiRequest("POST", "/api/auth/change-password", { newPassword });
-      toast({ title: "Success", description: "Password changed successfully" });
+      toast({ title: "Success", description: "Password Updated Successfully." });
       setShowPasswordDialog(false);
       setNewPassword("");
       setConfirmPassword("");
@@ -169,8 +169,9 @@ export default function BarangayDashboard() {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password"
+                placeholder="Minimum 8 characters"
                 required
+                minLength={8}
                 data-testid="input-new-password"
               />
             </div>

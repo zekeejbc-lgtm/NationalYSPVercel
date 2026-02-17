@@ -102,6 +102,9 @@ export const chapterUsers = pgTable("chapter_users", {
   password: text("password").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   mustChangePassword: boolean("must_change_password").default(true).notNull(),
+  failedLoginAttempts: integer("failed_login_attempts").default(0).notNull(),
+  lockedUntil: timestamp("locked_until"),
+  passwordChangedAt: timestamp("password_changed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -113,6 +116,9 @@ export const barangayUsers = pgTable("barangay_users", {
   password: text("password").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   mustChangePassword: boolean("must_change_password").default(true).notNull(),
+  failedLoginAttempts: integer("failed_login_attempts").default(0).notNull(),
+  lockedUntil: timestamp("locked_until"),
+  passwordChangedAt: timestamp("password_changed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

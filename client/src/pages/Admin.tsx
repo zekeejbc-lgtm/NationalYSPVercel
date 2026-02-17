@@ -15,6 +15,7 @@ import ContactManager from "@/components/admin/ContactManager";
 import PublicationsManager from "@/components/admin/PublicationsManager";
 import ChapterAccountsManager from "@/components/admin/ChapterAccountsManager";
 import BarangayAccountsManager from "@/components/admin/BarangayAccountsManager";
+import AccountManagementPanel from "@/components/admin/AccountManagementPanel";
 import KpiManager from "@/components/admin/KpiManager";
 import MemberListManager from "@/components/admin/MemberListManager";
 import OfficerListManager from "@/components/admin/OfficerListManager";
@@ -152,6 +153,7 @@ export default function Admin() {
             <TabsTrigger value="programs" data-testid="tab-programs">Programs</TabsTrigger>
             <TabsTrigger value="publications" data-testid="tab-publications">Publications</TabsTrigger>
             <TabsTrigger value="chapters" data-testid="tab-chapters">Chapters</TabsTrigger>
+            <TabsTrigger value="account-management" data-testid="tab-account-management">Account Management</TabsTrigger>
             <TabsTrigger value="accounts" data-testid="tab-accounts">Chapter Accounts</TabsTrigger>
             <TabsTrigger value="barangay-accounts" data-testid="tab-barangay-accounts">Barangay Accounts</TabsTrigger>
             <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
@@ -204,6 +206,10 @@ export default function Admin() {
 
           <TabsContent value="chapters">
             <ChaptersManager />
+          </TabsContent>
+
+          <TabsContent value="account-management">
+            <AccountManagementPanel />
           </TabsContent>
 
           <TabsContent value="accounts">

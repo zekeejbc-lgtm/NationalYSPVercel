@@ -156,7 +156,7 @@ export default function ChapterDashboard() {
       return await apiRequest("POST", "/api/auth/change-password", { newPassword });
     },
     onSuccess: () => {
-      toast({ title: "Success", description: "Password changed successfully" });
+      toast({ title: "Success", description: "Password Updated Successfully." });
       setShowPasswordDialog(false);
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
     },
@@ -221,8 +221,8 @@ export default function ChapterDashboard() {
       toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
       return;
     }
-    if (newPassword.length < 6) {
-      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (newPassword.length < 8) {
+      toast({ title: "Error", description: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
     changePasswordMutation.mutate(newPassword);
@@ -640,7 +640,8 @@ export default function ChapterDashboard() {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
+                placeholder="Minimum 8 characters"
                 data-testid="input-new-password"
               />
             </div>

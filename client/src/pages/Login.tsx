@@ -124,7 +124,7 @@ export default function Login() {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || "Invalid credentials");
+        throw new Error(errorData.error || errorData.message || "Invalid credentials");
       }
       
       const data = await response.json();
