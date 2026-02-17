@@ -101,16 +101,24 @@ export default function BarangayAccountsManager() {
     });
   };
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("POST", `/api/reset-password/barangay/${id}`);
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: "Password Reset",
+        description: `New temporary password: ${data.temporaryPassword}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/barangay-users", { chapterId: selectedChapterId }] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
   const handleResetPassword = (user: BarangayUser) => {
-    const tempPassword = Math.random().toString(36).slice(-8);
-    updateUserMutation.mutate({
-      id: user.id,
-      data: { password: tempPassword, mustChangePassword: true }
-    });
-    toast({
-      title: "Password Reset",
-      description: `New temporary password: ${tempPassword}`,
-    });
+    resetPasswordMutation.mutate(user.id);
   };
 
   const selectedChapter = chapters.find(c => c.id === selectedChapterId);

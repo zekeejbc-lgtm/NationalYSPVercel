@@ -41,8 +41,7 @@ export default function AccountManagementPanel() {
 
   const resetPasswordMutation = useMutation({
     mutationFn: async ({ accountType, id }: { accountType: string; id: string }) => {
-      const res = await apiRequest("POST", `/api/reset-password/${accountType.toLowerCase()}/${id}`);
-      return res.json();
+      return await apiRequest("POST", `/api/reset-password/${accountType.toLowerCase()}/${id}`);
     },
     onSuccess: (data, variables) => {
       const account = accounts.find(a => a.id === variables.id);
