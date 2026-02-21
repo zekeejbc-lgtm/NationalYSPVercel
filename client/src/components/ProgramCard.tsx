@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, ImageOff } from "lucide-react";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
 
 interface ProgramCardProps {
   id: string;
@@ -11,18 +13,30 @@ interface ProgramCardProps {
 }
 
 export default function ProgramCard({ id, title, description, image, onClick }: ProgramCardProps) {
+  const [imgError, setImgError] = useState(false);
+  const displayUrl = getDisplayImageUrl(image);
+
   return (
     <Card 
       className="overflow-hidden hover-elevate transition-all group cursor-pointer h-full flex flex-col"
       onClick={onClick}
       data-testid={`card-program-${id}`}
     >
-      <div className="aspect-[4/3] overflow-hidden">
-        <img 
-          src={image} 
-          alt={title}
-          className="w-full h-full object-cover transition-transform group-hover:scale-105"
-        />
+      <div className="aspect-[4/3] overflow-hidden bg-muted flex items-center justify-center">
+        {displayUrl && !imgError ? (
+          <img 
+            src={displayUrl} 
+            alt={title}
+            className="w-full h-full object-contain"
+            onError={() => setImgError(true)}
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <ImageOff className="h-10 w-10" />
+            <span className="text-sm">No photo</span>
+          </div>
+        )}
       </div>
       <CardHeader>
         <h3 className="text-xl font-semibold">{title}</h3>

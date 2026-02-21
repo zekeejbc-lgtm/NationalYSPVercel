@@ -7,9 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Edit, Plus } from "lucide-react";
+import { Trash2, Edit, Plus, ImageOff } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Program } from "@shared/schema";
+import { getDisplayImageUrl, extractDriveFileId } from "@/lib/driveUtils";
 
 export default function ProgramsManager() {
   const { toast } = useToast();
@@ -21,6 +22,7 @@ export default function ProgramsManager() {
     fullDescription: "",
     image: "",
   });
+  const [linkError, setLinkError] = useState("");
 
   const { data: programs = [], isLoading } = useQuery<Program[]>({
     queryKey: ["/api/programs"]
@@ -34,6 +36,7 @@ export default function ProgramsManager() {
       fullDescription: "",
       image: "",
     });
+    setLinkError("");
     setIsDialogOpen(true);
   };
 
@@ -45,8 +48,27 @@ export default function ProgramsManager() {
       fullDescription: program.fullDescription,
       image: program.image,
     });
+    setLinkError("");
     setIsDialogOpen(true);
   };
+
+  const handleImageLinkChange = (value: string) => {
+    setFormData({ ...formData, image: value });
+    if (value && value.includes("drive.google.com")) {
+      const fileId = extractDriveFileId(value);
+      if (!fileId) {
+        setLinkError("Invalid Google Drive link format");
+      } else {
+        setLinkError("");
+      }
+    } else if (value) {
+      setLinkError("");
+    } else {
+      setLinkError("");
+    }
+  };
+
+  const previewUrl = getDisplayImageUrl(formData.image);
 
   const createMutation = useMutation({
     mutationFn: (data: typeof formData) => apiRequest("POST", "/api/programs", data),
@@ -127,7 +149,7 @@ export default function ProgramsManager() {
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <div>
               <CardTitle>Programs</CardTitle>
               <CardDescription>Manage your organization's programs</CardDescription>
@@ -143,43 +165,52 @@ export default function ProgramsManager() {
             <p className="text-muted-foreground">No programs yet. Add your first program!</p>
           ) : (
             <div className="space-y-4">
-              {programs.map((program) => (
-                <Card key={program.id} className="hover-elevate transition-all">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-4">
-                      <img 
-                        src={program.image} 
-                        alt={program.title} 
-                        className="w-24 h-24 object-cover rounded-md"
-                      />
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-lg">{program.title}</h3>
-                        <p className="text-sm text-muted-foreground line-clamp-2">
-                          {program.description}
-                        </p>
+              {programs.map((program) => {
+                const thumbUrl = getDisplayImageUrl(program.image);
+                return (
+                  <Card key={program.id} className="hover-elevate transition-all">
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-4">
+                        <div className="w-24 h-24 rounded-md overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
+                          {thumbUrl ? (
+                            <img 
+                              src={thumbUrl} 
+                              alt={program.title} 
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <ImageOff className="h-8 w-8 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-lg">{program.title}</h3>
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {program.description}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0">
+                          <Button 
+                            variant="outline" 
+                            size="icon"
+                            onClick={() => handleEdit(program)}
+                            data-testid={`button-edit-program-${program.id}`}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="icon"
+                            onClick={() => handleDelete(program.id)}
+                            data-testid={`button-delete-program-${program.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          size="icon"
-                          onClick={() => handleEdit(program)}
-                          data-testid={`button-edit-program-${program.id}`}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="icon"
-                          onClick={() => handleDelete(program.id)}
-                          data-testid={`button-delete-program-${program.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -226,24 +257,38 @@ export default function ProgramsManager() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="image">Image URL</Label>
+              <Label htmlFor="image">Google Drive Photo Link</Label>
               <Input
                 id="image"
-                type="url"
                 value={formData.image}
-                onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                required
-                placeholder="https://example.com/image.jpg"
+                onChange={(e) => handleImageLinkChange(e.target.value)}
+                placeholder="https://drive.google.com/file/d/FILE_ID/view"
                 data-testid="input-program-image"
               />
               <p className="text-xs text-muted-foreground">
-                Enter a direct URL to an image hosted online
+                Paste a Google Drive sharing link or any direct image URL
               </p>
+              {linkError && (
+                <p className="text-xs text-destructive" data-testid="text-link-error">{linkError}</p>
+              )}
+              {previewUrl && !linkError && (
+                <div className="mt-2 rounded-md overflow-hidden border bg-muted">
+                  <img
+                    src={previewUrl}
+                    alt="Preview"
+                    className="w-full max-h-[260px] object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                    data-testid="img-program-preview"
+                  />
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <Button 
                 type="submit" 
-                disabled={createMutation.isPending || updateMutation.isPending} 
+                disabled={createMutation.isPending || updateMutation.isPending || !!linkError} 
                 data-testid="button-save-program"
               >
                 {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save Program"}

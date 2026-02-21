@@ -26,6 +26,22 @@ import {
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 
+function normalizeDriveUrl(url: string): string {
+  if (!url || !url.includes("drive.google.com")) return url;
+  const patterns = [
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) {
+      return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+    }
+  }
+  return url;
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
@@ -396,6 +412,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/programs", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertProgramSchema.parse(req.body);
+      if (validated.image) {
+        validated.image = normalizeDriveUrl(validated.image);
+      }
       const program = await storage.createProgram(validated);
       res.json(program);
     } catch (error: any) {
@@ -407,6 +426,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/programs/:id", requireAdminAuth, async (req, res) => {
     try {
       const validated = insertProgramSchema.partial().parse(req.body);
+      if (validated.image) {
+        validated.image = normalizeDriveUrl(validated.image);
+      }
       const program = await storage.updateProgram(req.params.id, validated);
       if (!program) {
         return res.status(404).json({ error: "Program not found" });

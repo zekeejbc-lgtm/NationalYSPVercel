@@ -1,0 +1,113 @@
+REPLIT AGENT PROMPT (COPY-PASTE READY | LOW-COST | DIRECT)
+
+Modify my existing website (Programs page) and implement the following changes.
+Keep it LOW-COST: no paid APIs, no image uploads to the server, no cloud storage, minimal dependencies, simple UI.
+
+========================
+GOAL
+========================
+Fix the Programs page preview (photo not showing), and change Programs uploads so that photos are attached ONLY via a Google Drive link with a preview.
+Also enforce ONLY ONE FONT on the Programs page.
+Ensure storage usage is minimal (store ONLY text + links in SQLite; no file uploads).
+
+========================
+CHANGE #1: FIX PROGRAMS PAGE PHOTO PREVIEW (PHOTO CURRENTLY NOT VISIBLE)
+========================
+Problem:
+On the Programs page preview/list/cards, the photo cannot be seen.
+
+Required fix:
+- Ensure each Program shows a visible image preview if it has a Google Drive photo link.
+- If no link is provided, show a clean placeholder (e.g., “No photo”).
+
+Implementation:
+- Programs preview card must render an <img> tag (NOT a background-image).
+- Use responsive CSS so the image is visible and not collapsed:
+  - width: 100%;
+  - height: auto;
+  - display: block;
+  - object-fit: contain;
+- Ensure the container does NOT force a zero height or hide overflow incorrectly.
+- If you need a consistent card image area, use:
+  - max-height: 260px (or similar)
+  - object-fit: contain (NOT cover) so it won’t crop.
+
+========================
+CHANGE #2: PROGRAM UPLOADS MUST USE GOOGLE DRIVE PHOTO LINK + PREVIEW ONLY
+========================
+Required behavior:
+- When creating/editing a Program, DO NOT upload or store image files.
+- Admin/Manager (whoever can add programs) must provide:
+  - Program title
+  - Program description
+  - Google Drive photo link (required if program has a photo)
+- The form should show an instant preview of the linked image (low-cost, no uploads):
+  - As the user pastes the link, display an image preview below the input.
+  - Validate link format; if invalid, show “Invalid link” message and hide preview.
+
+Google Drive link handling (LOW COST, NO LIBS):
+- Accept these link types:
+  - https://drive.google.com/file/d/FILE_ID/view?...
+  - https://drive.google.com/open?id=FILE_ID
+  - https://drive.google.com/uc?id=FILE_ID
+- Convert to embeddable image src:
+  - https://drive.google.com/uc?export=view&id=FILE_ID
+- Implement a small function extractDriveFileId(url) and normalizeDriveImageUrl(url).
+
+Storage rule:
+- Save ONLY the normalized Google Drive image URL (and/or the FILE_ID) in the DB.
+- Never store images in the app, never upload, no cloud storage integration.
+
+========================
+CHANGE #3: USE ONLY ONE FONT ON THE PROGRAMS PAGE
+========================
+Requirement:
+- Programs page must use one font only (single font-family).
+- If the site already has a global font, reuse it and remove extra font imports for Programs page.
+- If multiple fonts are currently applied, unify them:
+  - Apply a single CSS rule on the Programs page root container:
+    - font-family: <existing-primary-font>, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+- Remove/disable any secondary font classes or per-component font overrides on Programs page.
+
+========================
+CHANGE #4: MINIMAL CLOUD STORAGE / MINIMAL STORAGE USE
+========================
+Requirement:
+- NO image uploads.
+- NO storing images in server filesystem.
+- DB stores only text + links.
+
+Implementation:
+- Ensure any “upload image” fields are removed/disabled.
+- Ensure API accepts only photo_link string, not multipart/form-data.
+- Keep DB small: store only:
+  - title, description, photo_link (google drive), created_at, updated_at (optional)
+
+========================
+DATABASE (IF NEEDED)
+========================
+If you already have a programs table, add/ensure:
+- photo_link TEXT (store normalized Google Drive image URL)
+Optional:
+- created_at TEXT, updated_at TEXT
+
+========================
+API (IF NEEDED)
+========================
+- POST /api/programs  -> accepts { title, description, photo_link }
+- PUT /api/programs/:id -> accepts { title, description, photo_link }
+- GET /api/programs -> returns programs including photo_link
+
+Backend validation:
+- If photo_link is provided, normalize it to the uc?export=view format.
+- Reject clearly invalid links (or allow saving but show “No preview” — choose simplest consistent behavior).
+
+========================
+ACCEPTANCE CHECKLIST
+========================
+- Programs list/cards show the image preview reliably (not invisible).
+- Program create/edit form uses Google Drive link only and shows preview immediately.
+- Programs page uses ONLY ONE font (no mixed typography).
+- App stores ONLY links (no uploads, no server/cloud storage).
+
+Implement these updates now in my existing codebase with minimal changes and consistent structure.
