@@ -1,5 +1,6 @@
 import "dotenv/config";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import * as appModule from "../server/app";
 
 let serverlessBootstrapPromise: Promise<void> | null = null;
 let appHandler: ((req: IncomingMessage, res: ServerResponse) => void) | null = null;
@@ -7,8 +8,6 @@ let appHandler: ((req: IncomingMessage, res: ServerResponse) => void) | null = n
 async function ensureServerlessBootstrap() {
   if (!serverlessBootstrapPromise) {
     serverlessBootstrapPromise = (async () => {
-      const appModule = await import("../server/app");
-
       await appModule.initializeRoutes();
       appModule.attachErrorHandler();
       appHandler = appModule.app as unknown as (req: IncomingMessage, res: ServerResponse) => void;
