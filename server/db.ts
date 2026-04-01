@@ -5,9 +5,13 @@ import * as schema from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
 
+let poolInitializationError: Error | null = null;
+
 const missingDatabaseUrlError = () =>
   new Error(
-    "DATABASE_URL must be set. Add it to your environment before using database-backed routes.",
+    poolInitializationError
+      ? `DATABASE_URL is invalid or unusable: ${poolInitializationError.message}`
+      : "DATABASE_URL must be set. Add it to your environment before using database-backed routes.",
   );
 
 const isDevelopment = process.env.NODE_ENV === "development";
@@ -20,9 +24,18 @@ if (!databaseUrl && !isDevelopment) {
   );
 }
 
-export const pool = databaseUrl
-  ? new Pool({ connectionString: databaseUrl })
-  : null;
+let initializedPool: Pool | null = null;
+
+if (databaseUrl) {
+  try {
+    initializedPool = new Pool({ connectionString: databaseUrl });
+  } catch (error: any) {
+    poolInitializationError = error instanceof Error ? error : new Error(String(error));
+    console.error("[startup] Failed to initialize database pool", poolInitializationError);
+  }
+}
+
+export const pool = initializedPool;
 
 export const db = pool
   ? drizzle({ client: pool, schema })
