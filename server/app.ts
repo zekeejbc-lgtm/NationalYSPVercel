@@ -26,7 +26,17 @@ export function log(message: string, source = "express") {
 }
 
 export const app = express();
-const PgSessionStore = connectPgSimple(session);
+const connectPgSimpleFactory =
+  (connectPgSimple as unknown as { default?: typeof connectPgSimple }).default || connectPgSimple;
+
+let PgSessionStore: ReturnType<typeof connectPgSimple> | null = null;
+try {
+  if (typeof connectPgSimpleFactory === "function") {
+    PgSessionStore = connectPgSimpleFactory(session);
+  }
+} catch (error) {
+  console.error("[session] connect-pg-simple initialization failed; falling back to memory store", error);
+}
 
 let routeRegistrationPromise: Promise<Server> | null = null;
 let errorHandlerAttached = false;
@@ -57,6 +67,10 @@ const createSessionStore = () => {
     if (databaseUrl && !shouldUsePgSessionStore) {
       console.log("[session] using in-memory session store; set ENABLE_PG_SESSION_STORE=true to use postgres session store");
     }
+    return undefined;
+  }
+
+  if (!PgSessionStore) {
     return undefined;
   }
 
