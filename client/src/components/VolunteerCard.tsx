@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
 import { Calendar, MapPin, Phone, Mail } from "lucide-react";
 import { format } from "date-fns";
 
@@ -46,15 +47,17 @@ export default function VolunteerCard({
   contactEmail,
   photoUrl,
 }: VolunteerCardProps) {
+  const displayPhotoUrl = photoUrl ? getDisplayImageUrl(photoUrl) : "";
+
   return (
     <Card 
       className="hover-elevate transition-all overflow-hidden"
       data-testid={`card-volunteer-${id}`}
     >
-      {photoUrl && (
+      {displayPhotoUrl && (
         <div className="w-full h-48 overflow-hidden">
           <img 
-            src={photoUrl} 
+            src={displayPhotoUrl} 
             alt={eventName}
             className="w-full h-full object-cover"
           />

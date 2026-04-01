@@ -1,3 +1,5 @@
+export const IMAGE_DEBUG_ENABLED = import.meta.env.DEV && import.meta.env.VITE_IMAGE_DEBUG === "true";
+
 export function extractDriveFileId(url: string): string | null {
   if (!url) return null;
 
@@ -20,7 +22,19 @@ export function normalizeDriveImageUrl(url: string): string {
 
   const fileId = extractDriveFileId(url);
   if (fileId) {
-    return `https://drive.google.com/uc?export=view&id=${fileId}`;
+    const normalizedUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+    if (IMAGE_DEBUG_ENABLED) {
+      console.log("[Image Debug] Normalized Drive URL", {
+        originalUrl: url,
+        normalizedUrl,
+        fileId,
+      });
+    }
+    return normalizedUrl;
+  }
+
+  if (IMAGE_DEBUG_ENABLED && url.includes("drive.google.com")) {
+    console.error("[Image Debug] Could not extract Drive file ID", { originalUrl: url });
   }
 
   return url;
@@ -30,10 +44,39 @@ export function isDriveUrl(url: string): boolean {
   return url.includes("drive.google.com");
 }
 
+function getHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isIbbPageUrl(url: string): boolean {
+  const hostname = getHostname(url);
+  return hostname === "ibb.co" || hostname === "www.ibb.co" || hostname === "imgbb.com" || hostname === "www.imgbb.com";
+}
+
+function getImageProxyUrl(imageUrl: string): string {
+  return `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+}
+
 export function getDisplayImageUrl(imageUrl: string): string {
-  if (!imageUrl) return "";
+  if (!imageUrl) {
+    return "";
+  }
+
   if (isDriveUrl(imageUrl)) {
     return normalizeDriveImageUrl(imageUrl);
   }
+
+  if (isIbbPageUrl(imageUrl)) {
+    const proxyUrl = getImageProxyUrl(imageUrl);
+    if (IMAGE_DEBUG_ENABLED) {
+      console.log("[Image Debug] Using image proxy URL", { imageUrl, proxyUrl });
+    }
+    return proxyUrl;
+  }
+
   return imageUrl;
 }

@@ -1,14 +1,47 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, Facebook, ExternalLink, Image } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Calendar, Facebook, ExternalLink, Image, ImageOff } from "lucide-react";
 import { format } from "date-fns";
 import type { Publication } from "@shared/schema";
+import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
+
+const PUBLICATIONS_BATCH_SIZE = 3;
 
 export default function Publications() {
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PUBLICATIONS_BATCH_SIZE);
   const { data: publications = [], isLoading, isError } = useQuery<Publication[]>({
     queryKey: ["/api/publications"]
   });
+
+  const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
+    const raw = publication.photoUrl || publication.imageUrl || "";
+    return getDisplayImageUrl(raw.trim());
+  };
+
+  const truncateText = (value: string, maxLength: number) => {
+    const cleaned = value.replace(/\s+/g, " ").trim();
+    if (cleaned.length <= maxLength) {
+      return cleaned;
+    }
+    return `${cleaned.slice(0, maxLength).trimEnd()}...`;
+  };
+
+  const visiblePublications = publications.slice(0, visibleCount);
+  const canShowMore = visibleCount < publications.length;
+  const canHide = publications.length > PUBLICATIONS_BATCH_SIZE && visibleCount > PUBLICATIONS_BATCH_SIZE;
+
+  const handleShowMore = () => {
+    setVisibleCount((current) => Math.min(current + PUBLICATIONS_BATCH_SIZE, publications.length));
+  };
+
+  const handleHide = () => {
+    setVisibleCount(PUBLICATIONS_BATCH_SIZE);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -28,11 +61,10 @@ export default function Publications() {
       <section className="py-12 md:py-20 flex-1">
         <div className="max-w-4xl mx-auto px-4 md:px-8">
           {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="animate-pulse space-y-4">
-                <div className="h-4 bg-muted rounded w-48 mx-auto" />
-                <div className="h-4 bg-muted rounded w-32 mx-auto" />
-              </div>
+            <div className="space-y-8 py-8" role="status" aria-label="Loading publications">
+              <div className="h-8 w-56 rounded-md bg-muted skeleton-shimmer mx-auto" />
+              <div className="h-56 w-full rounded-xl bg-muted skeleton-shimmer" />
+              <div className="h-56 w-full rounded-xl bg-muted skeleton-shimmer" />
             </div>
           ) : isError ? (
             <div className="text-center py-16">
@@ -48,21 +80,51 @@ export default function Publications() {
             </div>
           ) : (
             <div className="space-y-8">
-              {publications.map((publication, index) => (
+              {visiblePublications.map((publication, index) => {
+                const photoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
+                const hasImageError = Boolean(failedImages[publication.id]);
+
+                return (
                 <Card 
                   key={publication.id} 
-                  className="overflow-hidden hover-elevate transition-all"
+                  className="overflow-hidden hover-elevate transition-all cursor-pointer focus-within:ring-2 focus-within:ring-ring"
                   data-testid={`card-publication-${publication.id}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedPublication(publication)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedPublication(publication);
+                    }
+                  }}
                 >
-                  {publication.imageUrl && (
+                  {photoUrl && !hasImageError ? (
                     <div className="relative w-full aspect-video">
                       <img
-                        src={publication.imageUrl}
+                        src={photoUrl}
                         alt={publication.title}
                         className="w-full h-full object-cover"
+                        onError={() => {
+                          setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
+                          if (IMAGE_DEBUG_ENABLED) {
+                            console.error("[Image Debug] Publication image failed", {
+                              publicationId: publication.id,
+                              title: publication.title,
+                              photoUrl,
+                            });
+                          }
+                        }}
                       />
                     </div>
-                  )}
+                  ) : photoUrl ? (
+                    <div className="relative w-full aspect-video bg-muted flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <ImageOff className="h-8 w-8" />
+                        <span className="text-sm">Image unavailable</span>
+                      </div>
+                    </div>
+                  ) : null}
                   <CardContent className="p-6 md:p-8">
                     <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4 flex-wrap">
                       <span className="flex items-center gap-1.5">
@@ -80,13 +142,9 @@ export default function Publications() {
                       {publication.title}
                     </h2>
                     
-                    <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none mb-6">
-                      {publication.content.split('\n').map((paragraph, i) => (
-                        <p key={i} className="text-muted-foreground leading-relaxed">
-                          {paragraph}
-                        </p>
-                      ))}
-                    </div>
+                    <p className="text-muted-foreground leading-relaxed mb-6 break-words">
+                      {truncateText(publication.content, 260)}
+                    </p>
                     
                     {publication.facebookLink && (
                       <div className="pt-4 border-t">
@@ -99,6 +157,7 @@ export default function Publications() {
                             href={publication.facebookLink}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(event) => event.stopPropagation()}
                             data-testid={`link-facebook-${publication.id}`}
                           >
                             <Facebook className="h-4 w-4" />
@@ -110,11 +169,106 @@ export default function Publications() {
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
+
+              {(canShowMore || canHide) && (
+                <div className="pt-1 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={canShowMore ? handleShowMore : handleHide}
+                    className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline"
+                    data-testid="button-publications-toggle"
+                  >
+                    {canShowMore ? "Show more" : "Hide"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
       </section>
+
+      <Dialog
+        open={Boolean(selectedPublication)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedPublication(null);
+          }
+        }}
+      >
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-3xl max-h-[90vh] overflow-hidden rounded-2xl border p-0 gap-0 flex flex-col sm:w-full">
+          <DialogHeader className="flex-none z-10 border-b bg-background/95 px-4 py-3 pr-14 backdrop-blur-sm md:px-6">
+            <DialogTitle className="text-left text-lg leading-tight md:text-2xl">
+              {selectedPublication?.title}
+            </DialogTitle>
+            <DialogDescription className="flex items-center gap-3 text-sm text-muted-foreground">
+              {selectedPublication ? format(new Date(selectedPublication.publishedAt), "MMMM d, yyyy 'at' h:mm a") : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPublication && (
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-4 px-4 py-4 md:px-6 md:py-5">
+              {(() => {
+                const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
+                const selectedImageError = Boolean(failedImages[selectedPublication.id]);
+
+                if (selectedPhotoUrl && !selectedImageError) {
+                  return (
+                    <img
+                      src={selectedPhotoUrl}
+                      alt={selectedPublication.title}
+                      className="w-full max-h-[420px] object-contain rounded-xl bg-muted"
+                      loading="lazy"
+                      decoding="async"
+                      onError={() => {
+                        setFailedImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
+                      }}
+                    />
+                  );
+                }
+
+                return (
+                  <div className="w-full h-48 bg-muted rounded-xl flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <ImageOff className="h-10 w-10" />
+                      <span className="text-sm">No image available</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-3">
+                {selectedPublication.content.split("\n").filter(Boolean).map((paragraph, i) => (
+                  <p key={i} className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+
+              {selectedPublication.facebookLink && (
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    asChild
+                    className="gap-2"
+                  >
+                    <a
+                      href={selectedPublication.facebookLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Facebook className="h-4 w-4" />
+                      View on Facebook
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

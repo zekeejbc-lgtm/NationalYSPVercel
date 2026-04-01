@@ -5,10 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Building2, Shield, MapPin } from "lucide-react";
-
-type LoginRole = "chapter" | "admin" | "barangay" | null;
+import { queryClient } from "@/lib/queryClient";
+import { Eye, EyeOff } from "lucide-react";
 
 interface AuthResponse {
   authenticated: boolean;
@@ -26,9 +24,9 @@ interface AuthResponse {
 export default function Login() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
-  const [role, setRole] = useState<LoginRole>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [debugInfo, setDebugInfo] = useState<{ hasSession: boolean; role: string; path: string } | null>(null);
@@ -108,12 +106,8 @@ export default function Login() {
     console.log("[Login] LOGIN_STARTED");
 
     try {
-      const endpoint = role === "admin" 
-        ? "/api/auth/login/admin" 
-        : role === "barangay" 
-          ? "/api/auth/login/barangay" 
-          : "/api/auth/login/chapter";
-      console.log("[Login] Attempting login as:", role, "endpoint:", endpoint);
+      const endpoint = "/api/auth/login";
+      console.log("[Login] Attempting unified login");
       
       const response = await fetch(endpoint, {
         method: "POST",
@@ -137,12 +131,18 @@ export default function Login() {
       
       console.log("[Login] TOKEN_SAVED: true");
       console.log("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
-      
-      const targetPath = role === "admin" 
-        ? "/admin" 
-        : role === "barangay" 
-          ? "/barangay-dashboard" 
-          : "/chapter-dashboard";
+
+      const userRole = data?.user?.role;
+      if (!userRole) {
+        throw new Error("Role not found. Please contact admin.");
+      }
+
+      const targetPath =
+        userRole === "admin"
+          ? "/admin"
+          : userRole === "barangay"
+            ? "/barangay-dashboard"
+            : "/chapter-dashboard";
       console.log("[Login] REDIRECT_TO:", targetPath);
       
       toast({
@@ -154,9 +154,9 @@ export default function Login() {
       
       hasRedirected.current = true;
       
-      if (role === "admin") {
+      if (userRole === "admin") {
         setLocation("/admin");
-      } else if (role === "barangay") {
+      } else if (userRole === "barangay") {
         if (data?.user?.mustChangePassword) {
           setLocation("/barangay-dashboard?changePassword=true");
         } else {
@@ -181,6 +181,10 @@ export default function Login() {
     }
   };
 
+  const handleBack = () => {
+    setLocation("/");
+  };
+
   const DebugBanner = () => {
     if (!showDebug || !debugInfo) return null;
     return (
@@ -196,60 +200,11 @@ export default function Login() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-muted/30">
         <DebugBanner />
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
-
-  if (!role) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">
-        <DebugBanner />
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <img 
-              src="/images/ysp-logo.png" 
-              alt="YSP Logo" 
-              className="h-16 w-auto mx-auto mb-4"
-            />
-            <CardTitle className="text-2xl">Sign In</CardTitle>
-            <CardDescription>
-              Select your account type to continue
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Button 
-              variant="outline" 
-              className="w-full h-24 flex-col gap-2"
-              onClick={() => setRole("chapter")}
-              data-testid="button-login-chapter"
-            >
-              <Building2 className="h-8 w-8 text-primary" />
-              <span className="font-medium">Sign in as Chapter</span>
-              <span className="text-xs text-muted-foreground">For chapter representatives</span>
-            </Button>
-            <Button 
-              variant="outline" 
-              className="w-full h-24 flex-col gap-2"
-              onClick={() => setRole("barangay")}
-              data-testid="button-login-barangay"
-            >
-              <MapPin className="h-8 w-8 text-primary" />
-              <span className="font-medium">Sign in as Barangay Chapter</span>
-              <span className="text-xs text-muted-foreground">For barangay representatives</span>
-            </Button>
-            <Button 
-              variant="outline" 
-              className="w-full h-24 flex-col gap-2"
-              onClick={() => setRole("admin")}
-              data-testid="button-login-admin"
-            >
-              <Shield className="h-8 w-8 text-primary" />
-              <span className="font-medium">Sign in as Admin</span>
-              <span className="text-xs text-muted-foreground">For website administrators</span>
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="w-full max-w-md space-y-4 px-4" role="status" aria-label="Loading login">
+          <div className="h-8 w-40 rounded-md bg-muted skeleton-shimmer mx-auto" />
+          <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+          <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+        </div>
       </div>
     );
   }
@@ -264,15 +219,9 @@ export default function Login() {
             alt="YSP Logo" 
             className="h-16 w-auto mx-auto mb-4"
           />
-          <CardTitle className="text-2xl">
-            {role === "admin" ? "Admin Login" : role === "barangay" ? "Barangay Chapter Login" : "Chapter Login"}
-          </CardTitle>
+          <CardTitle className="text-2xl">Sign In</CardTitle>
           <CardDescription>
-            {role === "admin" 
-              ? "Sign in to manage website content" 
-              : role === "barangay"
-                ? "Sign in to manage barangay chapter"
-                : "Sign in to submit project reports"}
+            Use your username and password to continue
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -290,14 +239,26 @@ export default function Login() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                data-testid="input-password"
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="pr-10"
+                  data-testid="input-password"
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-password"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <Button 
               type="submit" 
@@ -307,14 +268,15 @@ export default function Login() {
             >
               {loading ? "Signing in..." : "Sign In"}
             </Button>
-            <Button 
-              type="button" 
-              variant="ghost" 
+            <Button
+              type="button"
+              variant="ghost"
               className="w-full"
-              onClick={() => setRole(null)}
-              data-testid="button-back"
+              onClick={handleBack}
+              disabled={loading}
+              data-testid="button-login-back"
             >
-              Back to role selection
+              Back
             </Button>
           </form>
         </CardContent>

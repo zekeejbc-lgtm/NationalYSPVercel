@@ -95,7 +95,10 @@ export default function NationalRequestsManager() {
     return (
       <Card>
         <CardContent className="p-6">
-          <p className="text-muted-foreground">Loading requests...</p>
+          <div className="space-y-3" role="status" aria-label="Loading requests">
+            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
+            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+          </div>
         </CardContent>
       </Card>
     );
@@ -150,7 +153,7 @@ export default function NationalRequestsManager() {
                           </span>
                         </div>
                         <h4 className="font-medium">{request.subject}</h4>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{request.message}</p>
+                        <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">{request.message}</p>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
@@ -164,7 +167,7 @@ export default function NationalRequestsManager() {
                         {request.adminReply && (
                           <div className="mt-3 p-3 bg-muted rounded-md">
                             <p className="text-sm font-medium">Your Reply:</p>
-                            <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{request.adminReply}</p>
+                            <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">{request.adminReply}</p>
                           </div>
                         )}
                       </div>

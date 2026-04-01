@@ -162,7 +162,10 @@ export default function BarangayAccountsManager() {
         {selectedChapterId && (
           <div className="space-y-4 mt-4">
             {usersLoading ? (
-              <p className="text-muted-foreground">Loading barangay accounts...</p>
+              <div className="space-y-3" role="status" aria-label="Loading barangay accounts">
+                <div className="h-5 w-56 rounded-md bg-muted skeleton-shimmer" />
+                <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+              </div>
             ) : barangayUsers.length === 0 ? (
               <p className="text-muted-foreground">No barangay accounts for this chapter yet.</p>
             ) : (

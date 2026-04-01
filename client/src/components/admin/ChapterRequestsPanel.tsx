@@ -59,7 +59,13 @@ export default function ChapterRequestsPanel() {
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-3" role="status" aria-label="Loading chapter requests">
+        <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-20 w-full rounded-lg bg-muted skeleton-shimmer" />
+        <div className="h-20 w-full rounded-lg bg-muted skeleton-shimmer" />
+      </div>
+    );
   }
 
   return (

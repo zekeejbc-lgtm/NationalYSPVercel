@@ -1,6 +1,15 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { MapPin, Phone, Mail, User } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
+
+const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+
+function isUnsupportedPhotoUrl(photoUrl: string): boolean {
+  const normalized = photoUrl.toLowerCase();
+  return normalized.includes("facebook.com/") || normalized.includes("fb.com/");
+}
 
 interface ChapterCardProps {
   id: string;
@@ -21,6 +30,16 @@ export default function ChapterCard({
   photo,
   representative 
 }: ChapterCardProps) {
+  const normalizedPhoto = photo?.trim() || "";
+  const displayPhotoUrl = normalizedPhoto && !isUnsupportedPhotoUrl(normalizedPhoto)
+    ? getDisplayImageUrl(normalizedPhoto)
+    : undefined;
+  const [avatarSrc, setAvatarSrc] = useState(displayPhotoUrl || WEBSITE_LOGO_SRC);
+
+  useEffect(() => {
+    setAvatarSrc(displayPhotoUrl || WEBSITE_LOGO_SRC);
+  }, [displayPhotoUrl]);
+
   return (
     <Card 
       className="hover-elevate transition-all h-full"
@@ -29,9 +48,21 @@ export default function ChapterCard({
       <CardHeader className="pb-3">
         <div className="flex items-start gap-3">
           <Avatar className="h-12 w-12">
-            <AvatarImage src={photo || undefined} alt={name} />
+            <AvatarImage
+              src={avatarSrc}
+              alt={`${name} logo`}
+              onError={() => {
+                setAvatarSrc((currentSrc) =>
+                  currentSrc === WEBSITE_LOGO_SRC ? currentSrc : WEBSITE_LOGO_SRC,
+                );
+              }}
+            />
             <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-              {name.substring(0, 2).toUpperCase()}
+              <img
+                src={WEBSITE_LOGO_SRC}
+                alt="YSP logo fallback"
+                className="h-full w-full rounded-full object-cover"
+              />
             </AvatarFallback>
           </Avatar>
           <div className="flex-1">

@@ -9,6 +9,9 @@ import { FileText, ExternalLink, CheckCircle, AlertTriangle, Upload } from "luci
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
+import { usePagination } from "@/hooks/use-pagination";
 import type { ImportantDocument, ChapterDocumentAck, MouSubmission } from "@shared/schema";
 
 interface ImportantDocumentsPanelProps {
@@ -103,8 +106,19 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
     submitMouMutation.mutate({ driveFileLink: mouFileLink });
   };
 
+  const documentsPagination = usePagination(documents, {
+    pageSize: 5,
+    resetKey: documents.length,
+  });
+
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <LoadingState label="Loading important documents..." rows={3} compact />
+        </CardContent>
+      </Card>
+    );
   }
 
   const mouDocument = documents.find(doc => doc.title.toLowerCase().includes("mou"));
@@ -126,7 +140,7 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
             <p className="text-muted-foreground">No documents available.</p>
           ) : (
             <>
-              {documents.map((document) => {
+              {documentsPagination.paginatedItems.map((document) => {
                 const acknowledged = isAcknowledged(document.id);
                 const isMou = document.title.toLowerCase().includes("mou");
                 
@@ -184,6 +198,18 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
                   </Card>
                 );
               })}
+
+              <PaginationControls
+                currentPage={documentsPagination.currentPage}
+                totalPages={documentsPagination.totalPages}
+                itemsPerPage={documentsPagination.itemsPerPage}
+                totalItems={documentsPagination.totalItems}
+                startItem={documentsPagination.startItem}
+                endItem={documentsPagination.endItem}
+                onPageChange={documentsPagination.setCurrentPage}
+                onItemsPerPageChange={documentsPagination.setItemsPerPage}
+                itemLabel="documents"
+              />
 
               {mouDocument && (
                 <Card className="border-primary/50">

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
 import { Trash2, Edit, Plus, Image } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
@@ -192,7 +193,13 @@ export default function VolunteerManager() {
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-3" role="status" aria-label="Loading volunteer opportunities">
+        <div className="h-5 w-64 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+      </div>
+    );
   }
 
   return (
@@ -215,13 +222,16 @@ export default function VolunteerManager() {
             <p className="text-muted-foreground">No volunteer opportunities yet. Add your first one!</p>
           ) : (
             <div className="space-y-4">
-              {opportunities.map((opportunity) => (
+              {opportunities.map((opportunity) => {
+                const displayPhotoUrl = opportunity.photoUrl ? getDisplayImageUrl(opportunity.photoUrl) : "";
+
+                return (
                 <Card key={opportunity.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4">
-                      {opportunity.photoUrl && (
+                      {displayPhotoUrl && (
                         <img 
-                          src={opportunity.photoUrl} 
+                          src={displayPhotoUrl} 
                           alt={opportunity.eventName}
                           className="w-20 h-20 object-cover rounded-md flex-shrink-0"
                           data-testid={`img-volunteer-${opportunity.id}`}
@@ -260,7 +270,8 @@ export default function VolunteerManager() {
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

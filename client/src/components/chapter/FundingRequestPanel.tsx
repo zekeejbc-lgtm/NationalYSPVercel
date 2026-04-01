@@ -10,6 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
+import { usePagination } from "@/hooks/use-pagination";
 import { Calendar, Clock, Plus, CheckCircle, XCircle, AlertCircle, Send } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -92,6 +95,11 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
     createMutation.mutate(data);
   };
 
+  const requestsPagination = usePagination(requests, {
+    pageSize: 5,
+    resetKey: requests.length,
+  });
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "new":
@@ -108,7 +116,13 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <LoadingState label="Loading funding requests..." rows={3} compact />
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
@@ -141,7 +155,7 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
             </div>
           ) : (
             <div className="space-y-4">
-              {requests.map((request) => (
+              {requestsPagination.paginatedItems.map((request) => (
                 <Card key={request.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -160,7 +174,7 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
                         {request.rationale && (
                           <div className="mt-3">
                             <p className="text-sm font-medium">Rationale:</p>
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-3">{request.rationale}</p>
+                            <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">{request.rationale}</p>
                           </div>
                         )}
                         <p className="text-xs text-muted-foreground mt-3">
@@ -171,6 +185,18 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
                   </CardContent>
                 </Card>
               ))}
+
+              <PaginationControls
+                currentPage={requestsPagination.currentPage}
+                totalPages={requestsPagination.totalPages}
+                itemsPerPage={requestsPagination.itemsPerPage}
+                totalItems={requestsPagination.totalItems}
+                startItem={requestsPagination.startItem}
+                endItem={requestsPagination.endItem}
+                onPageChange={requestsPagination.setCurrentPage}
+                onItemsPerPageChange={requestsPagination.setItemsPerPage}
+                itemLabel="requests"
+              />
             </div>
           )}
         </CardContent>

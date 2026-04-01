@@ -1,25 +1,34 @@
 import { useState } from "react";
 import ProgramCard from "@/components/ProgramCard";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import ProgramDetailsDialog from "@/components/ProgramDetailsDialog";
 import { useQuery } from "@tanstack/react-query";
 import type { Program } from "@shared/schema";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
-import { ImageOff } from "lucide-react";
+
+const PROGRAMS_BATCH_SIZE = 6;
 
 export default function Programs() {
   const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
-  const [dialogImgError, setDialogImgError] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PROGRAMS_BATCH_SIZE);
 
   const { data: programs = [] } = useQuery<Program[]>({ 
     queryKey: ["/api/programs"] 
   });
 
   const handleOpen = (program: Program) => {
-    setDialogImgError(false);
     setSelectedProgram(program);
   };
 
-  const dialogImageUrl = selectedProgram ? getDisplayImageUrl(selectedProgram.image) : "";
+  const visiblePrograms = programs.slice(0, visibleCount);
+  const canShowMore = visibleCount < programs.length;
+  const canHide = programs.length > PROGRAMS_BATCH_SIZE && visibleCount > PROGRAMS_BATCH_SIZE;
+
+  const handleShowMore = () => {
+    setVisibleCount((current) => Math.min(current + PROGRAMS_BATCH_SIZE, programs.length));
+  };
+
+  const handleHide = () => {
+    setVisibleCount(PROGRAMS_BATCH_SIZE);
+  };
 
   return (
     <div className="min-h-screen">
@@ -35,7 +44,7 @@ export default function Programs() {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {programs.map((program) => (
+            {visiblePrograms.map((program) => (
               <ProgramCard
                 key={program.id}
                 id={program.id}
@@ -46,38 +55,29 @@ export default function Programs() {
               />
             ))}
           </div>
+
+          {(canShowMore || canHide) && (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={canShowMore ? handleShowMore : handleHide}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline"
+                data-testid="button-programs-toggle"
+              >
+                {canShowMore ? "Show more" : "Hide"}
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
-      <Dialog open={!!selectedProgram} onOpenChange={() => setSelectedProgram(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">{selectedProgram?.title}</DialogTitle>
-          </DialogHeader>
-          {selectedProgram && (
-            <div className="space-y-4">
-              {dialogImageUrl && !dialogImgError ? (
-                <img 
-                  src={dialogImageUrl} 
-                  alt={selectedProgram.title}
-                  className="w-full max-h-[400px] object-contain rounded-lg bg-muted"
-                  onError={() => setDialogImgError(true)}
-                />
-              ) : (
-                <div className="w-full h-48 bg-muted rounded-lg flex items-center justify-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <ImageOff className="h-10 w-10" />
-                    <span className="text-sm">No photo available</span>
-                  </div>
-                </div>
-              )}
-              <p className="text-muted-foreground leading-relaxed">
-                {selectedProgram.fullDescription}
-              </p>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ProgramDetailsDialog
+        program={selectedProgram}
+        open={!!selectedProgram}
+        onOpenChange={(open) => {
+          if (!open) setSelectedProgram(null);
+        }}
+      />
     </div>
   );
 }

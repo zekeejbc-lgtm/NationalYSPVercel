@@ -156,7 +156,10 @@ export default function ChapterAccountsManager() {
               Users for {selectedChapter?.name}
             </h3>
             {usersLoading ? (
-              <p className="text-muted-foreground">Loading...</p>
+              <div className="space-y-3" role="status" aria-label="Loading chapter users">
+                <div className="h-5 w-40 rounded-md bg-muted skeleton-shimmer" />
+                <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+              </div>
             ) : chapterUsers.length === 0 ? (
               <p className="text-muted-foreground">No users created for this chapter yet.</p>
             ) : (

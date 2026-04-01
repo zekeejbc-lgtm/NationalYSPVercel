@@ -629,7 +629,10 @@ export class DbStorage implements IStorage {
   async getHouseholdSummary(): Promise<{ totalSubmissions: number; totalHouseholdSize: number; averageHouseholdSize: number }> {
     const allMembers = await db.select({ householdSize: members.householdSize }).from(members);
     const totalSubmissions = allMembers.length;
-    const totalHouseholdSize = allMembers.reduce((sum, m) => sum + (m.householdSize || 1), 0);
+    const totalHouseholdSize = allMembers.reduce(
+      (sum: number, member: { householdSize: number | null }) => sum + (member.householdSize || 1),
+      0,
+    );
     const averageHouseholdSize = totalSubmissions > 0 ? totalHouseholdSize / totalSubmissions : 0;
     return { totalSubmissions, totalHouseholdSize, averageHouseholdSize: Math.round(averageHouseholdSize * 100) / 100 };
   }

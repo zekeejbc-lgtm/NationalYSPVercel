@@ -39,8 +39,12 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="py-8 text-center text-muted-foreground">
-          Loading KPIs...
+        <CardContent className="py-6">
+          <div className="space-y-3" role="status" aria-label="Loading KPIs">
+            <div className="h-5 w-36 rounded-md bg-muted skeleton-shimmer" />
+            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+          </div>
         </CardContent>
       </Card>
     );

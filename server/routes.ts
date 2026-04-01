@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import multer from "multer";
+import fs from "node:fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { 
@@ -36,16 +37,70 @@ function normalizeDriveUrl(url: string): string {
   for (const pattern of patterns) {
     const match = url.match(pattern);
     if (match) {
-      return `https://drive.google.com/uc?export=view&id=${match[1]}`;
+      const normalized = `https://drive.google.com/uc?export=view&id=${match[1]}`;
+      console.log("[image] normalized drive url", {
+        originalUrl: url,
+        normalizedUrl: normalized,
+      });
+      return normalized;
     }
   }
+  console.error("[image] failed to normalize drive url", { url });
   return url;
+}
+
+const imageProxyAllowedHosts = new Set([
+  "ibb.co",
+  "www.ibb.co",
+  "imgbb.com",
+  "www.imgbb.com",
+  "i.ibb.co",
+]);
+
+function extractOgImageFromHtml(html: string): string | null {
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
+  const parsed = new URL(rawUrl);
+  const host = parsed.hostname.toLowerCase();
+
+  if (host === "ibb.co" || host === "www.ibb.co" || host === "imgbb.com" || host === "www.imgbb.com") {
+    const pageResponse = await fetch(rawUrl, { redirect: "follow" });
+    if (!pageResponse.ok) {
+      throw new Error(`Image page request failed with status ${pageResponse.status}`);
+    }
+
+    const pageHtml = await pageResponse.text();
+    const ogImage = extractOgImageFromHtml(pageHtml);
+    if (!ogImage) {
+      throw new Error("Could not find og:image on the image page");
+    }
+
+    return ogImage;
+  }
+
+  return rawUrl;
 }
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      cb(null, "client/public/uploads");
+      const uploadDir = path.resolve("client/public/uploads");
+      fs.mkdirSync(uploadDir, { recursive: true });
+      cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
       const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -59,8 +114,18 @@ const upload = multer({
     const mimetype = allowedTypes.test(file.mimetype);
     
     if (mimetype && extname) {
+      console.log("[image-upload] accepted file", {
+        route: req.originalUrl,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      });
       return cb(null, true);
     } else {
+      console.error("[image-upload] rejected file", {
+        route: req.originalUrl,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      });
       cb(new Error("Only image files are allowed"));
     }
   },
@@ -69,7 +134,9 @@ const upload = multer({
 const volunteerUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      cb(null, "client/public/uploads");
+      const uploadDir = path.resolve("client/public/uploads");
+      fs.mkdirSync(uploadDir, { recursive: true });
+      cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
       const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
@@ -83,8 +150,18 @@ const volunteerUpload = multer({
     const mimetype = allowedTypes.test(file.mimetype);
     
     if (mimetype && extname) {
+      console.log("[volunteer-image-upload] accepted file", {
+        route: req.originalUrl,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      });
       return cb(null, true);
     } else {
+      console.error("[volunteer-image-upload] rejected file", {
+        route: req.originalUrl,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      });
       cb(new Error("Only jpg, png, or webp images under 2MB are allowed"));
     }
   },
@@ -135,7 +212,152 @@ function requireChapterOrBarangayAuth(req: Request, res: Response, next: Functio
   next();
 }
 
+const PUBLIC_SITE_PATHS = [
+  "/",
+  "/programs",
+  "/publications",
+  "/membership",
+  "/volunteer",
+  "/contact",
+];
+
+const NATIONAL_SITE_ORIGIN = (process.env.PUBLIC_SITE_URL || "https://youthserviceph.org").replace(/\/+$/, "");
+const NATIONAL_SITE_HOSTNAME = new URL(NATIONAL_SITE_ORIGIN).hostname.toLowerCase();
+const INDEXABLE_HOSTS = new Set([
+  NATIONAL_SITE_HOSTNAME,
+  `www.${NATIONAL_SITE_HOSTNAME}`,
+  "localhost",
+  "127.0.0.1",
+]);
+
+function getRequestHostname(req: Request) {
+  return (req.get("host") || "").split(":")[0].toLowerCase();
+}
+
+function shouldAllowIndexing(req: Request) {
+  return INDEXABLE_HOSTS.has(getRequestHostname(req));
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api") && !shouldAllowIndexing(req)) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    }
+    next();
+  });
+
+  app.get("/robots.txt", (req, res) => {
+    const origin = NATIONAL_SITE_ORIGIN;
+
+    if (!shouldAllowIndexing(req)) {
+      const robots = [
+        "User-agent: *",
+        "Disallow: /",
+        `Sitemap: ${origin}/sitemap.xml`,
+        "",
+      ].join("\n");
+
+      return res
+        .type("text/plain")
+        .set("Cache-Control", "public, max-age=3600")
+        .send(robots);
+    }
+
+    const robots = [
+      "User-agent: *",
+      "Allow: /",
+      "Disallow: /admin",
+      "Disallow: /chapter-dashboard",
+      "Disallow: /barangay-dashboard",
+      "Disallow: /login",
+      `Sitemap: ${origin}/sitemap.xml`,
+      "",
+    ].join("\n");
+
+    res
+      .type("text/plain")
+      .set("Cache-Control", "public, max-age=3600")
+      .send(robots);
+  });
+
+  app.get("/sitemap.xml", (req, res) => {
+    const origin = NATIONAL_SITE_ORIGIN;
+    const lastModified = new Date().toISOString();
+    const urlEntries = PUBLIC_SITE_PATHS.map((sitePath) => {
+      const loc = `${origin}${sitePath}`;
+      return [
+        "  <url>",
+        `    <loc>${loc}</loc>`,
+        `    <lastmod>${lastModified}</lastmod>`,
+        "    <changefreq>weekly</changefreq>",
+        "    <priority>0.8</priority>",
+        "  </url>",
+      ].join("\n");
+    }).join("\n");
+
+    const sitemap = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      urlEntries,
+      "</urlset>",
+      "",
+    ].join("\n");
+
+    res
+      .type("application/xml")
+      .set("Cache-Control", "public, max-age=3600")
+      .send(sitemap);
+  });
+
+  app.get("/api/image-proxy", async (req, res) => {
+    try {
+      const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
+      if (!rawUrl) {
+        return res.status(400).json({ error: "url query parameter is required" });
+      }
+
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return res.status(400).json({ error: "Only http/https URLs are supported" });
+      }
+
+      const host = parsed.hostname.toLowerCase();
+      if (!imageProxyAllowedHosts.has(host)) {
+        return res.status(403).json({ error: "Host is not allowed for image proxy" });
+      }
+
+      const resolvedUrl = await resolveImageProxyTarget(rawUrl);
+      console.log("[image-proxy] resolved", { rawUrl, resolvedUrl });
+
+      const imageResponse = await fetch(resolvedUrl, { redirect: "follow" });
+      if (!imageResponse.ok) {
+        return res.status(imageResponse.status).json({ error: "Failed to fetch image" });
+      }
+
+      const contentType = imageResponse.headers.get("content-type") || "application/octet-stream";
+      if (!contentType.startsWith("image/")) {
+        console.error("[image-proxy] resolved URL did not return an image", {
+          rawUrl,
+          resolvedUrl,
+          contentType,
+        });
+        return res.status(502).json({ error: "Resolved URL did not return an image" });
+      }
+
+      const cacheHeader = imageResponse.headers.get("cache-control") || "public, max-age=3600";
+      const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", cacheHeader);
+      res.send(imageBuffer);
+    } catch (error: any) {
+      console.error("[image-proxy] request failed", {
+        url: req.query.url,
+        message: error?.message,
+      });
+      res.status(502).json({ error: "Failed to resolve image URL" });
+    }
+  });
   
   app.post("/api/auth/login/admin", async (req, res) => {
     const { username, password } = req.body;
@@ -165,6 +387,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ success: true, user: { id: user.id, username: user.username, role: "admin" } });
     });
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password required" });
+    }
+
+    const normalizedUsername = username.trim();
+
+    const admin = await storage.getAdminUserByUsername(normalizedUsername);
+    if (admin) {
+      const adminPasswordMatch = await bcrypt.compare(password, admin.password);
+      if (adminPasswordMatch) {
+        req.session.userId = admin.id;
+        req.session.role = "admin";
+        req.session.chapterId = undefined;
+        req.session.barangayId = undefined;
+        req.session.barangayName = undefined;
+
+        return req.session.save((err) => {
+          if (err) {
+            console.error("[Auth] Session save error:", err);
+            return res.status(500).json({ error: "Failed to save session" });
+          }
+          res.json({ success: true, user: { id: admin.id, username: admin.username, role: "admin" } });
+        });
+      }
+    }
+
+    const chapterUser = await storage.getChapterUserByUsername(normalizedUsername);
+    if (chapterUser) {
+      if (!chapterUser.isActive) {
+        return res.status(401).json({ error: "Account is disabled" });
+      }
+
+      if (chapterUser.lockedUntil && new Date(chapterUser.lockedUntil) > new Date()) {
+        const minutesLeft = Math.ceil((new Date(chapterUser.lockedUntil).getTime() - Date.now()) / 60000);
+        return res.status(423).json({ error: `Account is locked. Try again in ${minutesLeft} minute(s).` });
+      }
+
+      const chapterPasswordMatch = await bcrypt.compare(password, chapterUser.password);
+      if (!chapterPasswordMatch) {
+        const attempts = (chapterUser.failedLoginAttempts || 0) + 1;
+        const updateData: any = { failedLoginAttempts: attempts };
+        if (attempts >= 3) {
+          updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
+          console.log("[Auth] Chapter account locked due to 3 failed attempts:", chapterUser.username);
+        }
+        await storage.updateChapterUser(chapterUser.id, updateData);
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      await storage.updateChapterUser(chapterUser.id, { failedLoginAttempts: 0, lockedUntil: null } as any);
+      const chapter = await storage.getChapter(chapterUser.chapterId);
+
+      req.session.userId = chapterUser.id;
+      req.session.role = "chapter";
+      req.session.chapterId = chapterUser.chapterId;
+      req.session.barangayId = undefined;
+      req.session.barangayName = undefined;
+
+      return req.session.save((err) => {
+        if (err) {
+          console.error("[Auth] Session save error:", err);
+          return res.status(500).json({ error: "Failed to save session" });
+        }
+        res.json({
+          success: true,
+          user: {
+            id: chapterUser.id,
+            username: chapterUser.username,
+            role: "chapter",
+            chapterId: chapterUser.chapterId,
+            chapterName: chapter?.name || "",
+            mustChangePassword: chapterUser.mustChangePassword,
+          },
+        });
+      });
+    }
+
+    const barangayUser = await storage.getBarangayUserByUsername(normalizedUsername);
+    if (barangayUser) {
+      if (!barangayUser.isActive) {
+        return res.status(401).json({ error: "Account is inactive" });
+      }
+
+      if (barangayUser.lockedUntil && new Date(barangayUser.lockedUntil) > new Date()) {
+        const minutesLeft = Math.ceil((new Date(barangayUser.lockedUntil).getTime() - Date.now()) / 60000);
+        return res.status(423).json({ error: `Account is locked. Try again in ${minutesLeft} minute(s).` });
+      }
+
+      const barangayPasswordMatch = await bcrypt.compare(password, barangayUser.password);
+      if (!barangayPasswordMatch) {
+        const attempts = (barangayUser.failedLoginAttempts || 0) + 1;
+        const updateData: any = { failedLoginAttempts: attempts };
+        if (attempts >= 3) {
+          updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
+          console.log("[Auth] Barangay account locked due to 3 failed attempts:", barangayUser.username);
+        }
+        await storage.updateBarangayUser(barangayUser.id, updateData);
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      await storage.updateBarangayUser(barangayUser.id, { failedLoginAttempts: 0, lockedUntil: null } as any);
+      const chapter = await storage.getChapter(barangayUser.chapterId);
+
+      req.session.userId = barangayUser.id;
+      req.session.role = "barangay";
+      req.session.chapterId = barangayUser.chapterId;
+      req.session.barangayId = barangayUser.id;
+      req.session.barangayName = barangayUser.barangayName;
+
+      return req.session.save((err) => {
+        if (err) {
+          console.error("[Auth] Session save error:", err);
+          return res.status(500).json({ error: "Failed to save session" });
+        }
+        res.json({
+          success: true,
+          user: {
+            id: barangayUser.id,
+            username: barangayUser.username,
+            role: "barangay",
+            chapterId: barangayUser.chapterId,
+            chapterName: chapter?.name || "",
+            barangayName: barangayUser.barangayName,
+            mustChangePassword: barangayUser.mustChangePassword,
+          },
+        });
+      });
+    }
+
+    return res.status(401).json({ error: "Invalid credentials" });
   });
 
   app.post("/api/auth/login/chapter", async (req, res) => {
@@ -746,6 +1103,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/volunteer-opportunities", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      console.log("[volunteer-image-upload] admin create", {
+        route: req.originalUrl,
+        hasFile: Boolean(req.file),
+        photoUrl,
+      });
       const validated = insertVolunteerOpportunitySchema.parse({
         ...req.body,
         photoUrl
@@ -753,6 +1115,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);
     } catch (error: any) {
+      console.error("[volunteer-image-upload] admin create failed", {
+        route: req.originalUrl,
+        message: error?.message,
+      });
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
@@ -761,6 +1127,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/volunteer-opportunities/:id", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      console.log("[volunteer-image-upload] admin update", {
+        route: req.originalUrl,
+        hasFile: Boolean(req.file),
+        photoUrl,
+      });
       const updateData = { ...req.body };
       if (photoUrl) {
         updateData.photoUrl = photoUrl;
@@ -772,6 +1143,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json(opportunity);
     } catch (error: any) {
+      console.error("[volunteer-image-upload] admin update failed", {
+        route: req.originalUrl,
+        message: error?.message,
+      });
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
@@ -819,10 +1194,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/upload", requireAuth, upload.single("image"), (req, res) => {
     if (!req.file) {
+      console.error("[image-upload] no file received", { route: req.originalUrl });
       return res.status(400).json({ error: "No file uploaded" });
     }
     
     const imageUrl = `/uploads/${req.file.filename}`;
+    console.log("[image-upload] upload success", {
+      route: req.originalUrl,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      imageUrl,
+    });
     res.json({ url: imageUrl });
   });
 
@@ -844,7 +1227,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/publications", requireAdminAuth, async (req, res) => {
     try {
-      const validated = insertPublicationSchema.parse(req.body);
+      const payload: Record<string, unknown> = { ...req.body };
+      const incomingPhotoUrl =
+        typeof payload.photoUrl === "string"
+          ? payload.photoUrl
+          : typeof payload.imageUrl === "string"
+            ? payload.imageUrl
+            : undefined;
+
+      if (incomingPhotoUrl !== undefined) {
+        const trimmed = incomingPhotoUrl.trim();
+        payload.photoUrl = trimmed ? normalizeDriveUrl(trimmed) : null;
+      }
+
+      delete payload.imageUrl;
+
+      const validated = insertPublicationSchema.parse(payload);
       const publication = await storage.createPublication(validated);
       res.json(publication);
     } catch (error: any) {
@@ -855,7 +1253,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/publications/:id", requireAdminAuth, async (req, res) => {
     try {
-      const validated = insertPublicationSchema.partial().parse(req.body);
+      const payload: Record<string, unknown> = { ...req.body };
+      const incomingPhotoUrl =
+        typeof payload.photoUrl === "string"
+          ? payload.photoUrl
+          : typeof payload.imageUrl === "string"
+            ? payload.imageUrl
+            : undefined;
+
+      if (incomingPhotoUrl !== undefined) {
+        const trimmed = incomingPhotoUrl.trim();
+        payload.photoUrl = trimmed ? normalizeDriveUrl(trimmed) : null;
+      }
+
+      delete payload.imageUrl;
+
+      const validated = insertPublicationSchema.partial().parse(payload);
       const publication = await storage.updatePublication(req.params.id, validated);
       if (!publication) {
         return res.status(404).json({ error: "Publication not found" });
@@ -1299,6 +1712,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chapterId = req.session.chapterId!;
       const chapter = await storage.getChapter(chapterId);
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      console.log("[volunteer-image-upload] chapter create", {
+        route: req.originalUrl,
+        chapterId,
+        hasFile: Boolean(req.file),
+        photoUrl,
+      });
       
       const validated = insertVolunteerOpportunitySchema.parse({
         ...req.body,
@@ -1310,6 +1729,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const opportunity = await storage.createVolunteerOpportunity(validated);
       res.json(opportunity);
     } catch (error: any) {
+      console.error("[volunteer-image-upload] chapter create failed", {
+        route: req.originalUrl,
+        message: error?.message,
+      });
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
@@ -1522,7 +1945,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  await storage.initializeDefaultData();
+  if (process.env.DATABASE_URL) {
+    await storage.initializeDefaultData();
+  } else if (process.env.NODE_ENV === "development") {
+    console.warn(
+      "[startup] DATABASE_URL is not set; skipping database initialization in development.",
+    );
+  }
 
   const httpServer = createServer(app);
 

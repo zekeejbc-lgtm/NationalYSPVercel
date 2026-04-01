@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
+import ViewModeToggle, { type ViewMode } from "@/components/ui/view-mode-toggle";
 import { useToast } from "@/hooks/use-toast";
+import { usePagination } from "@/hooks/use-pagination";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Users, Search, Trash2, Phone, Calendar, Download, Plus, Check, X } from "lucide-react";
 import { format } from "date-fns";
@@ -28,10 +33,18 @@ interface AddMemberFormData {
 
 export default function MemberListManager() {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [filterChapter, setFilterChapter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isMobile) {
+      setViewMode((current) => (current === "table" ? "tile" : current));
+    }
+  }, [isMobile]);
 
   const form = useForm<AddMemberFormData>({
     defaultValues: {
@@ -112,6 +125,11 @@ export default function MemberListManager() {
       member.fullName.toLowerCase().includes(search) ||
       member.contactNumber?.toLowerCase().includes(search)
     );
+  });
+
+  const membersPagination = usePagination(filteredMembers, {
+    pageSize: 10,
+    resetKey: `${searchTerm}|${filterChapter}|${filteredMembers.length}`,
   });
 
   const getChapterName = (chapterId: string | null) => {
@@ -379,107 +397,222 @@ export default function MemberListManager() {
               </SelectContent>
             </Select>
           </div>
+          <div className="w-full sm:w-auto">
+            <Label>View</Label>
+            <ViewModeToggle
+              value={viewMode}
+              onChange={setViewMode}
+              className="mt-2"
+              testIdPrefix="members-view-mode"
+            />
+          </div>
         </div>
 
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-muted/50">
-                <th className="text-left p-4 font-medium text-sm">Name</th>
-                <th className="text-left p-4 font-medium text-sm">Age</th>
-                <th className="text-left p-4 font-medium text-sm">Chapter</th>
-                <th className="text-left p-4 font-medium text-sm">Contact</th>
-                <th className="text-center p-4 font-medium text-sm">Registered Voter</th>
-                <th className="text-center p-4 font-medium text-sm">Active</th>
-                <th className="text-left p-4 font-medium text-sm">Date Added</th>
-                <th className="text-center p-4 font-medium text-sm">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">Loading members...</td>
+        {viewMode === "table" ? (
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full min-w-[980px] table-auto [&_td]:[overflow-wrap:normal] [&_td]:[word-break:normal] [&_th]:whitespace-nowrap [&_th]:[overflow-wrap:normal] [&_th]:[word-break:normal]">
+              <thead>
+                <tr className="bg-muted/50">
+                  <th className="text-left p-4 font-medium text-sm">Name</th>
+                  <th className="text-left p-4 font-medium text-sm">Age</th>
+                  <th className="text-left p-4 font-medium text-sm">Chapter</th>
+                  <th className="text-left p-4 font-medium text-sm">Contact</th>
+                  <th className="text-center p-4 font-medium text-sm">Registered Voter</th>
+                  <th className="text-center p-4 font-medium text-sm">Active</th>
+                  <th className="text-left p-4 font-medium text-sm">Date Added</th>
+                  <th className="text-center p-4 font-medium text-sm">Actions</th>
                 </tr>
-              ) : filteredMembers.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                    No members found. {searchTerm && "Try adjusting your search."}
-                  </td>
-                </tr>
-              ) : (
-                filteredMembers.map((member) => (
-                  <tr key={member.id} className="border-t hover-elevate">
-                    <td className="p-4">
-                      <div className="font-medium">{member.fullName}</div>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={8} className="p-6">
+                      <LoadingState label="Loading members..." rows={3} compact />
+                    </td>
+                  </tr>
+                ) : filteredMembers.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                      No members found. {searchTerm && "Try adjusting your search."}
+                    </td>
+                  </tr>
+                ) : (
+                  membersPagination.paginatedItems.map((member) => (
+                    <tr key={member.id} className="border-t hover-elevate">
+                      <td className="p-4">
+                        <div className="font-medium">{member.fullName}</div>
+                        {member.facebookLink && (
+                          <a
+                            href={member.facebookLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Facebook Profile
+                          </a>
+                        )}
+                      </td>
+                      <td className="p-4">{member.age}</td>
+                      <td className="p-4">
+                        <Badge variant="secondary">
+                          {getChapterName(member.chapterId)}
+                        </Badge>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-1 text-sm">
+                          <Phone className="h-3 w-3 text-muted-foreground" />
+                          <span>{member.contactNumber}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-center">
+                        <Button
+                          size="sm"
+                          variant={member.registeredVoter ? "default" : "outline"}
+                          onClick={() => updateMutation.mutate({
+                            id: member.id,
+                            data: { registeredVoter: !member.registeredVoter }
+                          })}
+                          disabled={updatingMemberId === member.id}
+                          data-testid={`button-toggle-voter-${member.id}`}
+                        >
+                          {member.registeredVoter ? (
+                            <><Check className="h-3 w-3 mr-1" /> Yes</>
+                          ) : (
+                            <><X className="h-3 w-3 mr-1" /> No</>
+                          )}
+                        </Button>
+                      </td>
+                      <td className="p-4 text-center">
+                        <Button
+                          size="sm"
+                          variant={member.isActive ? "default" : "outline"}
+                          onClick={() => updateMutation.mutate({
+                            id: member.id,
+                            data: { isActive: !member.isActive }
+                          })}
+                          disabled={updatingMemberId === member.id}
+                          data-testid={`button-toggle-active-${member.id}`}
+                        >
+                          {member.isActive ? (
+                            <><Check className="h-3 w-3 mr-1" /> Yes</>
+                          ) : (
+                            <><X className="h-3 w-3 mr-1" /> No</>
+                          )}
+                        </Button>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <Calendar className="h-3 w-3" />
+                          {format(new Date(member.createdAt), "MMM d, yyyy")}
+                        </div>
+                      </td>
+                      <td className="p-4 text-center">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => {
+                            if (confirm("Are you sure you want to delete this member?")) {
+                              deleteMutation.mutate(member.id);
+                            }
+                          }}
+                          disabled={deleteMutation.isPending}
+                          data-testid={`button-delete-member-${member.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {isLoading ? (
+              <Card className="sm:col-span-2">
+                <CardContent className="p-4">
+                  <LoadingState label="Loading members..." rows={3} compact />
+                </CardContent>
+              </Card>
+            ) : filteredMembers.length === 0 ? (
+              <Card className="sm:col-span-2">
+                <CardContent className="p-6 text-center text-muted-foreground">
+                  No members found. {searchTerm && "Try adjusting your search."}
+                </CardContent>
+              </Card>
+            ) : (
+              membersPagination.paginatedItems.map((member) => (
+                <Card key={member.id} className="overflow-hidden" data-testid={`member-tile-${member.id}`}>
+                  <CardContent className="space-y-3 p-4">
+                    <div className="space-y-1">
+                      <div className="font-semibold">{member.fullName}</div>
                       {member.facebookLink && (
-                        <a 
-                          href={member.facebookLink} 
-                          target="_blank" 
+                        <a
+                          href={member.facebookLink}
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-primary hover:underline"
                         >
                           Facebook Profile
                         </a>
                       )}
-                    </td>
-                    <td className="p-4">{member.age}</td>
-                    <td className="p-4">
-                      <Badge variant="secondary">
-                        {getChapterName(member.chapterId)}
-                      </Badge>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-sm">
-                        <Phone className="h-3 w-3 text-muted-foreground" />
-                        <span>{member.contactNumber}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-center">
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant="secondary">{getChapterName(member.chapterId)}</Badge>
+                      <span className="text-muted-foreground">Age: {member.age}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Phone className="h-3.5 w-3.5" />
+                      <span>{member.contactNumber}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Calendar className="h-3.5 w-3.5" />
+                      <span>{format(new Date(member.createdAt), "MMM d, yyyy")}</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
                       <Button
                         size="sm"
                         variant={member.registeredVoter ? "default" : "outline"}
-                        onClick={() => updateMutation.mutate({ 
-                          id: member.id, 
-                          data: { registeredVoter: !member.registeredVoter } 
+                        onClick={() => updateMutation.mutate({
+                          id: member.id,
+                          data: { registeredVoter: !member.registeredVoter }
                         })}
                         disabled={updatingMemberId === member.id}
                         data-testid={`button-toggle-voter-${member.id}`}
                       >
                         {member.registeredVoter ? (
-                          <><Check className="h-3 w-3 mr-1" /> Yes</>
+                          <><Check className="h-3 w-3 mr-1" /> Voter</>
                         ) : (
-                          <><X className="h-3 w-3 mr-1" /> No</>
+                          <><X className="h-3 w-3 mr-1" /> Voter</>
                         )}
                       </Button>
-                    </td>
-                    <td className="p-4 text-center">
                       <Button
                         size="sm"
                         variant={member.isActive ? "default" : "outline"}
-                        onClick={() => updateMutation.mutate({ 
-                          id: member.id, 
-                          data: { isActive: !member.isActive } 
+                        onClick={() => updateMutation.mutate({
+                          id: member.id,
+                          data: { isActive: !member.isActive }
                         })}
                         disabled={updatingMemberId === member.id}
                         data-testid={`button-toggle-active-${member.id}`}
                       >
                         {member.isActive ? (
-                          <><Check className="h-3 w-3 mr-1" /> Yes</>
+                          <><Check className="h-3 w-3 mr-1" /> Active</>
                         ) : (
-                          <><X className="h-3 w-3 mr-1" /> No</>
+                          <><X className="h-3 w-3 mr-1" /> Active</>
                         )}
                       </Button>
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Calendar className="h-3 w-3" />
-                        {format(new Date(member.createdAt), "MMM d, yyyy")}
-                      </div>
-                    </td>
-                    <td className="p-4 text-center">
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        size="icon"
+                        variant="ghost"
                         onClick={() => {
                           if (confirm("Are you sure you want to delete this member?")) {
                             deleteMutation.mutate(member.id);
@@ -490,13 +623,25 @@ export default function MemberListManager() {
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+        )}
+
+        <PaginationControls
+          currentPage={membersPagination.currentPage}
+          totalPages={membersPagination.totalPages}
+          itemsPerPage={membersPagination.itemsPerPage}
+          totalItems={membersPagination.totalItems}
+          startItem={membersPagination.startItem}
+          endItem={membersPagination.endItem}
+          onPageChange={membersPagination.setCurrentPage}
+          onItemsPerPageChange={membersPagination.setItemsPerPage}
+          itemLabel="members"
+        />
       </CardContent>
     </Card>
   );

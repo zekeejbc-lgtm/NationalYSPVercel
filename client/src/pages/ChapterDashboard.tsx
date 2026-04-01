@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,12 +6,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
+import { usePagination } from "@/hooks/use-pagination";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
+import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import { 
   FileText, 
   Newspaper, 
@@ -31,18 +36,20 @@ import {
   Users,
   ClipboardList,
   Send,
-  MessageSquare
+  MessageSquare,
+  ImageOff
 } from "lucide-react";
 import type { Chapter, Publication } from "@shared/schema";
-import OfficersPanel from "@/components/chapter/OfficersPanel";
-import SocialMediaPanel from "@/components/chapter/SocialMediaPanel";
-import VolunteerOpportunityPanel from "@/components/chapter/VolunteerOpportunityPanel";
-import ChapterKpiPanel from "@/components/chapter/ChapterKpiPanel";
-import EnhancedLeaderboard from "@/components/chapter/EnhancedLeaderboard";
-import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
-import ImportantDocumentsPanel from "@/components/chapter/ImportantDocumentsPanel";
-import FundingRequestPanel from "@/components/chapter/FundingRequestPanel";
-import NationalRequestPanel from "@/components/chapter/NationalRequestPanel";
+
+const OfficersPanel = lazy(() => import("@/components/chapter/OfficersPanel"));
+const SocialMediaPanel = lazy(() => import("@/components/chapter/SocialMediaPanel"));
+const VolunteerOpportunityPanel = lazy(() => import("@/components/chapter/VolunteerOpportunityPanel"));
+const ChapterKpiPanel = lazy(() => import("@/components/chapter/ChapterKpiPanel"));
+const EnhancedLeaderboard = lazy(() => import("@/components/chapter/EnhancedLeaderboard"));
+const MemberDashboardPanel = lazy(() => import("@/components/chapter/MemberDashboardPanel"));
+const ImportantDocumentsPanel = lazy(() => import("@/components/chapter/ImportantDocumentsPanel"));
+const FundingRequestPanel = lazy(() => import("@/components/chapter/FundingRequestPanel"));
+const NationalRequestPanel = lazy(() => import("@/components/chapter/NationalRequestPanel"));
 
 interface AuthUser {
   id: string;
@@ -73,7 +80,10 @@ export default function ChapterDashboard() {
   const [collaborationType, setCollaborationType] = useState<"NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL">("NONE");
   const [collaboratingChapterId, setCollaboratingChapterId] = useState<string | null>(null);
   
-  const [publicationFilter, setPublicationFilter] = useState<"all" | "mine">("all");
+  const [publicationSearch, setPublicationSearch] = useState("");
+  const [publicationChapterFilter, setPublicationChapterFilter] = useState<string>("all");
+  const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
+  const [failedPublicationImages, setFailedPublicationImages] = useState<Record<string, boolean>>({});
   const [chapterSearch, setChapterSearch] = useState("");
   const [chapterSort, setChapterSort] = useState<"asc" | "desc">("asc");
 
@@ -228,16 +238,54 @@ export default function ChapterDashboard() {
     changePasswordMutation.mutate(newPassword);
   };
 
-  const filteredPublications = publications.filter(pub => {
-    if (publicationFilter === "mine") {
-      return pub.chapterId === authUser?.chapterId;
-    }
-    return true;
-  });
+  const chapterNameById = useMemo(() => {
+    return new Map(chapters.map((chapter) => [chapter.id, chapter.name]));
+  }, [chapters]);
+
+  const filteredPublications = useMemo(() => {
+    const normalizedQuery = publicationSearch.trim().toLowerCase();
+
+    return publications.filter((pub) => {
+      const matchesChapterFilter =
+        publicationChapterFilter === "all"
+          ? true
+          : publicationChapterFilter === "mine"
+            ? pub.chapterId === authUser?.chapterId
+            : pub.chapterId === publicationChapterFilter;
+
+      if (!matchesChapterFilter) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const chapterName = (pub.chapterId ? chapterNameById.get(pub.chapterId) : "") || "";
+      return (
+        pub.title.toLowerCase().includes(normalizedQuery) ||
+        pub.content.toLowerCase().includes(normalizedQuery) ||
+        chapterName.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [publications, publicationSearch, publicationChapterFilter, authUser?.chapterId, chapterNameById]);
+
+  const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
+    const raw = publication.photoUrl || publication.imageUrl || "";
+    return getDisplayImageUrl(raw.trim());
+  };
 
   const getChapterName = (chapterId: string | null) => {
     if (!chapterId) return "Unknown Chapter";
-    return chapters.find(c => c.id === chapterId)?.name || "Unknown Chapter";
+    return chapterNameById.get(chapterId) || "Unknown Chapter";
+  };
+
+  const truncateText = (value: string, maxLength: number) => {
+    const cleaned = value.replace(/\s+/g, " ").trim();
+    if (cleaned.length <= maxLength) {
+      return cleaned;
+    }
+    return `${cleaned.slice(0, maxLength).trimEnd()}...`;
   };
 
   const filteredChapters = chapters
@@ -251,9 +299,48 @@ export default function ChapterDashboard() {
         : b.name.localeCompare(a.name)
     );
 
+  const publicationsPagination = usePagination(filteredPublications, {
+    pageSize: 9,
+    resetKey: `${publicationChapterFilter}|${publicationSearch}|${filteredPublications.length}`,
+  });
+
+  const chaptersPagination = usePagination(filteredChapters, {
+    pageSize: 9,
+    resetKey: `${chapterSearch}|${chapterSort}|${filteredChapters.length}`,
+  });
+
+  const dashboardTabs: AdaptiveDashboardTab[] = [
+    { value: "reports", label: "Submit Report", icon: FileText, group: "Operations", dataTestId: "tab-reports", mobilePriority: true, desktopPriority: true },
+    { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
+    { value: "officers", label: "Officers", icon: UserCheck, group: "People", dataTestId: "tab-officers", desktopPriority: true },
+    { value: "kpis", label: "KPIs", icon: BarChart3, group: "Insights", dataTestId: "tab-kpis", mobilePriority: true, desktopPriority: true },
+    { value: "volunteer", label: "Volunteer", icon: HandHeart, group: "Operations", dataTestId: "tab-volunteer", desktopPriority: true },
+    { value: "documents", label: "Documents", icon: ClipboardList, group: "Operations", dataTestId: "tab-documents", desktopPriority: true },
+    { value: "requests", label: "Funding", icon: Send, group: "Communication & Growth", dataTestId: "tab-requests", mobilePriority: true },
+    { value: "social", label: "Social Media", icon: Share2, group: "Communication & Growth", dataTestId: "tab-social" },
+    { value: "publications", label: "Publications", icon: Newspaper, group: "Insights", dataTestId: "tab-publications" },
+    { value: "chapters", label: "Chapters", icon: Building2, group: "People", dataTestId: "tab-chapters" },
+    { value: "leaderboard", label: "Leaderboard", icon: Trophy, group: "Insights", dataTestId: "tab-leaderboard" },
+    { value: "national", label: "Message National", icon: MessageSquare, group: "Communication & Growth", dataTestId: "tab-national", desktopPriority: true },
+  ];
+
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading dashboard...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
+        <div className="w-full max-w-3xl">
+          <LoadingState label="Loading dashboard..." rows={4} />
+        </div>
+      </div>
+    );
   }
+
+  const renderTabFallback = (label: string) => (
+    <Card>
+      <CardContent className="p-6">
+        <LoadingState label={label} rows={3} compact />
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -273,58 +360,15 @@ export default function ChapterDashboard() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
+      <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 flex flex-wrap gap-1">
-            <TabsTrigger value="reports" className="gap-2" data-testid="tab-reports">
-              <FileText className="h-4 w-4" />
-              Submit Report
-            </TabsTrigger>
-            <TabsTrigger value="members" className="gap-2" data-testid="tab-members">
-              <Users className="h-4 w-4" />
-              Members
-            </TabsTrigger>
-            <TabsTrigger value="officers" className="gap-2" data-testid="tab-officers">
-              <UserCheck className="h-4 w-4" />
-              Officers
-            </TabsTrigger>
-            <TabsTrigger value="kpis" className="gap-2" data-testid="tab-kpis">
-              <BarChart3 className="h-4 w-4" />
-              KPIs
-            </TabsTrigger>
-            <TabsTrigger value="volunteer" className="gap-2" data-testid="tab-volunteer">
-              <HandHeart className="h-4 w-4" />
-              Volunteer
-            </TabsTrigger>
-            <TabsTrigger value="documents" className="gap-2" data-testid="tab-documents">
-              <ClipboardList className="h-4 w-4" />
-              Documents
-            </TabsTrigger>
-            <TabsTrigger value="requests" className="gap-2" data-testid="tab-requests">
-              <Send className="h-4 w-4" />
-              Funding
-            </TabsTrigger>
-            <TabsTrigger value="social" className="gap-2" data-testid="tab-social">
-              <Share2 className="h-4 w-4" />
-              Social Media
-            </TabsTrigger>
-            <TabsTrigger value="publications" className="gap-2" data-testid="tab-publications">
-              <Newspaper className="h-4 w-4" />
-              Publications
-            </TabsTrigger>
-            <TabsTrigger value="chapters" className="gap-2" data-testid="tab-chapters">
-              <Building2 className="h-4 w-4" />
-              Chapters
-            </TabsTrigger>
-            <TabsTrigger value="leaderboard" className="gap-2" data-testid="tab-leaderboard">
-              <Trophy className="h-4 w-4" />
-              Leaderboard
-            </TabsTrigger>
-            <TabsTrigger value="national" className="gap-2" data-testid="tab-national">
-              <MessageSquare className="h-4 w-4" />
-              Message National
-            </TabsTrigger>
-          </TabsList>
+          <AdaptiveDashboardNav
+            tabs={dashboardTabs}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            mobileTitle="Chapter Sections"
+            mobileDescription="Use quick tabs below or open More for all sections."
+          />
 
           <TabsContent value="reports">
             <Card>
@@ -372,7 +416,7 @@ export default function ChapterDashboard() {
                       />
                       {uploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
                       {photoUrl && (
-                        <img src={photoUrl} alt="Preview" className="h-20 w-20 object-cover rounded" />
+                        <img src={getDisplayImageUrl(photoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
                       )}
                     </div>
                   </div>
@@ -444,71 +488,149 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="members">
-            {authUser?.chapterId && authUser?.chapterName && (
-              <MemberDashboardPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading members...")}>
+              {authUser?.chapterId && authUser?.chapterName && (
+                <MemberDashboardPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="officers">
-            {authUser?.chapterId && (
-              <OfficersPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading officers...")}>
+              {authUser?.chapterId && (
+                <OfficersPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="kpis">
-            {authUser?.chapterId && (
-              <ChapterKpiPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+              {authUser?.chapterId && (
+                <ChapterKpiPanel chapterId={authUser.chapterId} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="volunteer">
-            {authUser?.chapterId && (
-              <VolunteerOpportunityPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+              {authUser?.chapterId && (
+                <VolunteerOpportunityPanel chapterId={authUser.chapterId} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="documents">
-            {authUser?.chapterId && (
-              <ImportantDocumentsPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading documents...")}>
+              {authUser?.chapterId && (
+                <ImportantDocumentsPanel chapterId={authUser.chapterId} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="requests">
-            {authUser?.chapterId && (
-              <FundingRequestPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading funding requests...")}>
+              {authUser?.chapterId && (
+                <FundingRequestPanel chapterId={authUser.chapterId} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="social">
-            {authUser?.chapterId && (
-              <SocialMediaPanel chapterId={authUser.chapterId} />
-            )}
+            <Suspense fallback={renderTabFallback("Loading social media panel...")}>
+              {authUser?.chapterId && (
+                <SocialMediaPanel chapterId={authUser.chapterId} />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="publications">
             <div className="space-y-4">
-              <div className="flex items-center gap-4">
-                <Select value={publicationFilter} onValueChange={(v: "all" | "mine") => setPublicationFilter(v)}>
-                  <SelectTrigger className="w-48" data-testid="select-publication-filter">
-                    <SelectValue placeholder="Filter" />
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="relative flex-1 min-w-[220px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search publications by title, chapter, or content..."
+                    value={publicationSearch}
+                    onChange={(e) => setPublicationSearch(e.target.value)}
+                    className="pl-9"
+                    data-testid="input-publication-search"
+                  />
+                </div>
+                <Select value={publicationChapterFilter} onValueChange={setPublicationChapterFilter}>
+                  <SelectTrigger className="w-[220px]" data-testid="select-publication-filter">
+                    <SelectValue placeholder="Filter chapters" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Chapters</SelectItem>
                     <SelectItem value="mine">My Chapter Only</SelectItem>
+                    {chapters.map((chapter) => (
+                      <SelectItem key={chapter.id} value={chapter.id}>
+                        {chapter.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredPublications.map((pub) => (
-                  <Card key={pub.id} data-testid={`card-publication-${pub.id}`}>
-                    {pub.photoUrl && (
+                {publicationsPagination.paginatedItems.map((pub) => {
+                  const photoUrl = getPublicationPhotoUrl(pub as Publication & { imageUrl?: string | null });
+                  const hasImageError = Boolean(failedPublicationImages[pub.id]);
+
+                  return (
+                  <Card
+                    key={pub.id}
+                    className="h-[440px] overflow-hidden cursor-pointer transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-ring"
+                    data-testid={`card-publication-${pub.id}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedPublication(pub)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedPublication(pub);
+                      }
+                    }}
+                  >
+                    {photoUrl && !hasImageError ? (
                       <div className="aspect-video w-full overflow-hidden rounded-t-lg">
-                        <img src={pub.photoUrl} alt={pub.title} className="w-full h-full object-cover" />
+                        <img
+                          src={photoUrl}
+                          alt={pub.title}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          onError={() => {
+                            setFailedPublicationImages((prev) => ({ ...prev, [pub.id]: true }));
+                            if (IMAGE_DEBUG_ENABLED) {
+                              console.error("[Image Debug] Chapter publication image failed", {
+                                publicationId: pub.id,
+                                title: pub.title,
+                                photoUrl,
+                              });
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : photoUrl ? (
+                      <div className="relative w-full aspect-video bg-muted flex items-center justify-center">
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageOff className="h-8 w-8" />
+                          <span className="text-sm">Image unavailable</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative w-full aspect-video bg-muted flex items-center justify-center">
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageOff className="h-8 w-8" />
+                          <span className="text-sm">No image provided</span>
+                        </div>
                       </div>
                     )}
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between gap-2">
-                        <CardTitle className="text-lg">{pub.title}</CardTitle>
+                        <CardTitle className="text-lg leading-tight">
+                          {truncateText(pub.title, 80)}
+                        </CardTitle>
                         <Badge variant="secondary" className="shrink-0">
                           {getChapterName(pub.chapterId)}
                         </Badge>
@@ -517,16 +639,17 @@ export default function ChapterDashboard() {
                         {new Date(pub.publishedAt).toLocaleDateString()}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground line-clamp-3 mb-3">
-                        {pub.content}
+                    <CardContent className="flex h-full flex-col">
+                      <p className="text-sm text-muted-foreground break-words mb-3 min-h-[4.5rem]">
+                        {truncateText(pub.content, 190)}
                       </p>
                       {pub.facebookLink && (
                         <a 
                           href={pub.facebookLink} 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-auto"
+                          onClick={(event) => event.stopPropagation()}
                         >
                           <Facebook className="h-4 w-4" />
                           View on Facebook
@@ -534,15 +657,96 @@ export default function ChapterDashboard() {
                       )}
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
                 {filteredPublications.length === 0 && (
                   <p className="col-span-full text-center text-muted-foreground py-8">
                     No publications found
                   </p>
                 )}
               </div>
+
+              <PaginationControls
+                currentPage={publicationsPagination.currentPage}
+                totalPages={publicationsPagination.totalPages}
+                itemsPerPage={publicationsPagination.itemsPerPage}
+                totalItems={publicationsPagination.totalItems}
+                startItem={publicationsPagination.startItem}
+                endItem={publicationsPagination.endItem}
+                onPageChange={publicationsPagination.setCurrentPage}
+                onItemsPerPageChange={publicationsPagination.setItemsPerPage}
+                itemLabel="publications"
+              />
             </div>
           </TabsContent>
+
+          <Dialog
+            open={Boolean(selectedPublication)}
+            onOpenChange={(open) => {
+              if (!open) {
+                setSelectedPublication(null);
+              }
+            }}
+          >
+            <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+              {selectedPublication && (
+                <div className="space-y-4">
+                  <DialogHeader>
+                    <DialogTitle>{selectedPublication.title}</DialogTitle>
+                    <DialogDescription className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="secondary">{getChapterName(selectedPublication.chapterId)}</Badge>
+                      <span>{new Date(selectedPublication.publishedAt).toLocaleString()}</span>
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  {(() => {
+                    const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
+                    const selectedImageError = Boolean(failedPublicationImages[selectedPublication.id]);
+
+                    if (selectedPhotoUrl && !selectedImageError) {
+                      return (
+                        <img
+                          src={selectedPhotoUrl}
+                          alt={selectedPublication.title}
+                          className="w-full max-h-[360px] object-cover rounded-md"
+                          loading="lazy"
+                          decoding="async"
+                          onError={() => {
+                            setFailedPublicationImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
+                          }}
+                        />
+                      );
+                    }
+
+                    return (
+                      <div className="relative w-full aspect-video bg-muted flex items-center justify-center rounded-md">
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageOff className="h-8 w-8" />
+                          <span className="text-sm">No image available</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                    {selectedPublication.content}
+                  </p>
+
+                  {selectedPublication.facebookLink && (
+                    <a
+                      href={selectedPublication.facebookLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                    >
+                      <Facebook className="h-4 w-4" />
+                      View on Facebook
+                    </a>
+                  )}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
 
           <TabsContent value="chapters">
             <div className="space-y-4">
@@ -567,7 +771,7 @@ export default function ChapterDashboard() {
                 </Button>
               </div>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredChapters.map((chapter) => (
+                {chaptersPagination.paginatedItems.map((chapter) => (
                   <Card key={chapter.id} data-testid={`card-chapter-${chapter.id}`}>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg">{chapter.name}</CardTitle>
@@ -606,15 +810,31 @@ export default function ChapterDashboard() {
                   </Card>
                 ))}
               </div>
+
+              <PaginationControls
+                currentPage={chaptersPagination.currentPage}
+                totalPages={chaptersPagination.totalPages}
+                itemsPerPage={chaptersPagination.itemsPerPage}
+                totalItems={chaptersPagination.totalItems}
+                startItem={chaptersPagination.startItem}
+                endItem={chaptersPagination.endItem}
+                onPageChange={chaptersPagination.setCurrentPage}
+                onItemsPerPageChange={chaptersPagination.setItemsPerPage}
+                itemLabel="chapters"
+              />
             </div>
           </TabsContent>
 
           <TabsContent value="leaderboard">
-            <EnhancedLeaderboard currentChapterId={authUser?.chapterId} />
+            <Suspense fallback={renderTabFallback("Loading leaderboard...")}>
+              <EnhancedLeaderboard currentChapterId={authUser?.chapterId} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="national">
-            <NationalRequestPanel senderType="chapter" />
+            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+              <NationalRequestPanel senderType="chapter" />
+            </Suspense>
           </TabsContent>
         </Tabs>
       </main>

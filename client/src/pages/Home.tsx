@@ -3,11 +3,10 @@ import HeroSection from "@/components/HeroSection";
 import StatsSection from "@/components/StatsSection";
 import ProgramCard from "@/components/ProgramCard";
 import ChapterCard from "@/components/ChapterCard";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import ProgramDetailsDialog from "@/components/ProgramDetailsDialog";
 import { useQuery } from "@tanstack/react-query";
 import type { Program, Chapter, Stats } from "@shared/schema";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
-import { ImageOff } from "lucide-react";
+import { Link } from "wouter";
 
 export default function Home() {
   const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
@@ -55,6 +54,16 @@ export default function Home() {
               />
             ))}
           </div>
+
+          {programs.length > 4 && (
+            <div className="mt-6 flex justify-center">
+              <Link href="/programs" data-testid="link-home-programs-show-more">
+                <a className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline">
+                  Show more
+                </a>
+              </Link>
+            </div>
+          )}
         </div>
       </section>
 
@@ -72,37 +81,24 @@ export default function Home() {
               <ChapterCard key={chapter.id} {...chapter} />
             ))}
           </div>
+
+          <div className="mt-6 flex justify-center">
+            <Link href="/membership" data-testid="link-home-chapters-show-more">
+              <a className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline">
+                Show more
+              </a>
+            </Link>
+          </div>
         </div>
       </section>
 
-      <Dialog open={!!selectedProgram} onOpenChange={() => setSelectedProgram(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">{selectedProgram?.title}</DialogTitle>
-          </DialogHeader>
-          {selectedProgram && (
-            <div className="space-y-4">
-              {getDisplayImageUrl(selectedProgram.image) ? (
-                <img 
-                  src={getDisplayImageUrl(selectedProgram.image)} 
-                  alt={selectedProgram.title}
-                  className="w-full max-h-[400px] object-contain rounded-lg bg-muted"
-                />
-              ) : (
-                <div className="w-full h-48 bg-muted rounded-lg flex items-center justify-center">
-                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <ImageOff className="h-10 w-10" />
-                    <span className="text-sm">No photo available</span>
-                  </div>
-                </div>
-              )}
-              <p className="text-muted-foreground leading-relaxed">
-                {selectedProgram.fullDescription}
-              </p>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ProgramDetailsDialog
+        program={selectedProgram}
+        open={!!selectedProgram}
+        onOpenChange={(open) => {
+          if (!open) setSelectedProgram(null);
+        }}
+      />
     </div>
   );
 }

@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import PaginationControls from "@/components/ui/pagination-controls";
+import { usePagination } from "@/hooks/use-pagination";
 import { MessageSquare, Plus, Calendar, Clock, Send, Eye } from "lucide-react";
 import { format } from "date-fns";
 import type { NationalRequest } from "@shared/schema";
@@ -57,6 +59,11 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
     createMutation.mutate({ subject, message, dateNeeded });
   };
 
+  const requestsPagination = usePagination(requests, {
+    pageSize: 5,
+    resetKey: requests.length,
+  });
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "NEW":
@@ -74,7 +81,10 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
     return (
       <Card>
         <CardContent className="p-6">
-          <p className="text-muted-foreground">Loading messages...</p>
+          <div className="space-y-3" role="status" aria-label="Loading messages">
+            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
+            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+          </div>
         </CardContent>
       </Card>
     );
@@ -105,7 +115,7 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
             <p className="text-muted-foreground text-center py-8">No messages yet. Click "New Message" to send a request to YSP National.</p>
           ) : (
             <div className="space-y-4">
-              {requests.map((request) => (
+              {requestsPagination.paginatedItems.map((request) => (
                 <Card 
                   key={request.id} 
                   className="hover-elevate cursor-pointer" 
@@ -118,7 +128,7 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex-1 min-w-0">
-                        <h4 className="font-medium truncate">{request.subject}</h4>
+                        <h4 className="font-medium break-words">{request.subject}</h4>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
@@ -146,6 +156,18 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
                   </CardContent>
                 </Card>
               ))}
+
+              <PaginationControls
+                currentPage={requestsPagination.currentPage}
+                totalPages={requestsPagination.totalPages}
+                itemsPerPage={requestsPagination.itemsPerPage}
+                totalItems={requestsPagination.totalItems}
+                startItem={requestsPagination.startItem}
+                endItem={requestsPagination.endItem}
+                onPageChange={requestsPagination.setCurrentPage}
+                onItemsPerPageChange={requestsPagination.setItemsPerPage}
+                itemLabel="messages"
+              />
             </div>
           )}
         </CardContent>

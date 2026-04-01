@@ -142,7 +142,13 @@ export default function ProgramsManager() {
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-3" role="status" aria-label="Loading programs">
+        <div className="h-5 w-40 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+      </div>
+    );
   }
 
   return (
@@ -184,7 +190,7 @@ export default function ProgramsManager() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-lg">{program.title}</h3>
-                          <p className="text-sm text-muted-foreground line-clamp-2">
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                             {program.description}
                           </p>
                         </div>

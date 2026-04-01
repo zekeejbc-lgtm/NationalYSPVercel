@@ -157,7 +157,13 @@ export default function ChaptersManager() {
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-3" role="status" aria-label="Loading chapters">
+        <div className="h-5 w-40 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+      </div>
+    );
   }
 
   return (

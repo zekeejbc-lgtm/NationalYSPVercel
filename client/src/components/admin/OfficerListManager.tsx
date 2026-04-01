@@ -5,6 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
+import { usePagination } from "@/hooks/use-pagination";
 import { UserCheck, Search, Phone, Mail, Building2 } from "lucide-react";
 import type { Chapter, ChapterOfficer } from "@shared/schema";
 
@@ -49,6 +52,11 @@ export default function OfficerListManager() {
       );
     }
     return true;
+  });
+
+  const officersPagination = usePagination(filteredOfficers, {
+    pageSize: 12,
+    resetKey: `${searchTerm}|${filterChapter}|${filterPosition}|${filteredOfficers.length}`,
   });
 
   const getChapterName = (chapterId: string) => {
@@ -148,14 +156,16 @@ export default function OfficerListManager() {
           </div>
           
           {isLoading ? (
-            <div className="p-8 text-center text-muted-foreground">Loading officers...</div>
+            <div className="p-6">
+              <LoadingState label="Loading officers..." rows={3} compact />
+            </div>
           ) : filteredOfficers.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
               No officers found. {searchTerm && "Try adjusting your search."}
             </div>
           ) : (
             <div className="divide-y">
-              {filteredOfficers.map((officer) => (
+              {officersPagination.paginatedItems.map((officer) => (
                 <div key={officer.id} className="grid grid-cols-12 gap-4 p-4 items-center hover-elevate">
                   <div className="col-span-3">
                     <div className="font-medium">{officer.fullName}</div>
@@ -176,7 +186,7 @@ export default function OfficerListManager() {
                     </div>
                     <div className="flex items-center gap-1">
                       <Mail className="h-3 w-3" />
-                      <span className="truncate">{officer.chapterEmail}</span>
+                      <span className="break-all">{officer.chapterEmail}</span>
                     </div>
                   </div>
                 </div>
@@ -184,6 +194,18 @@ export default function OfficerListManager() {
             </div>
           )}
         </div>
+
+        <PaginationControls
+          currentPage={officersPagination.currentPage}
+          totalPages={officersPagination.totalPages}
+          itemsPerPage={officersPagination.itemsPerPage}
+          totalItems={officersPagination.totalItems}
+          startItem={officersPagination.startItem}
+          endItem={officersPagination.endItem}
+          onPageChange={officersPagination.setCurrentPage}
+          onItemsPerPageChange={officersPagination.setItemsPerPage}
+          itemLabel="officers"
+        />
 
         {filterChapter === "all" && chapters.length > 0 && (
           <div className="mt-6">

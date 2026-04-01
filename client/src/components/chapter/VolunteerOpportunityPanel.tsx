@@ -9,6 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
+import LoadingState from "@/components/ui/loading-state";
+import PaginationControls from "@/components/ui/pagination-controls";
+import { usePagination } from "@/hooks/use-pagination";
 import { HandHeart, Plus, Calendar, MapPin, Clock, User, AlertTriangle, Image } from "lucide-react";
 import { format } from "date-fns";
 import type { VolunteerOpportunity } from "@shared/schema";
@@ -123,6 +127,16 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
 
   const upcomingOpportunities = opportunities.filter(o => new Date(o.date) >= new Date());
   const pastOpportunities = opportunities.filter(o => new Date(o.date) < new Date());
+
+  const upcomingPagination = usePagination(upcomingOpportunities, {
+    pageSize: 5,
+    resetKey: upcomingOpportunities.length,
+  });
+
+  const pastPagination = usePagination(pastOpportunities, {
+    pageSize: 5,
+    resetKey: pastOpportunities.length,
+  });
 
   return (
     <Card>
@@ -266,16 +280,23 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
         )}
 
         <div className="space-y-4">
-          {upcomingOpportunities.length > 0 && (
+          {isLoading && (
+            <LoadingState label="Loading volunteer opportunities..." rows={3} compact />
+          )}
+
+          {!isLoading && upcomingOpportunities.length > 0 && (
             <div>
               <h3 className="font-medium mb-3">Upcoming Activities ({upcomingOpportunities.length})</h3>
               <div className="space-y-3">
-                {upcomingOpportunities.map((opp) => (
+                {upcomingPagination.paginatedItems.map((opp) => {
+                  const displayPhotoUrl = opp.photoUrl ? getDisplayImageUrl(opp.photoUrl) : "";
+
+                  return (
                   <div key={opp.id} className="p-4 border rounded-lg hover-elevate">
                     <div className="flex items-start justify-between gap-4">
-                      {opp.photoUrl && (
+                      {displayPhotoUrl && (
                         <img 
-                          src={opp.photoUrl} 
+                          src={displayPhotoUrl} 
                           alt={opp.eventName}
                           className="w-16 h-16 object-cover rounded-md flex-shrink-0"
                         />
@@ -304,16 +325,29 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
                       <Badge>{opp.ageRequirement}</Badge>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
+
+                <PaginationControls
+                  currentPage={upcomingPagination.currentPage}
+                  totalPages={upcomingPagination.totalPages}
+                  itemsPerPage={upcomingPagination.itemsPerPage}
+                  totalItems={upcomingPagination.totalItems}
+                  startItem={upcomingPagination.startItem}
+                  endItem={upcomingPagination.endItem}
+                  onPageChange={upcomingPagination.setCurrentPage}
+                  onItemsPerPageChange={upcomingPagination.setItemsPerPage}
+                  itemLabel="upcoming activities"
+                />
               </div>
             </div>
           )}
 
-          {pastOpportunities.length > 0 && (
+          {!isLoading && pastOpportunities.length > 0 && (
             <div>
               <h3 className="font-medium mb-3 text-muted-foreground">Past Activities ({pastOpportunities.length})</h3>
               <div className="space-y-2">
-                {pastOpportunities.slice(0, 5).map((opp) => (
+                {pastPagination.paginatedItems.map((opp) => (
                   <div key={opp.id} className="p-3 border rounded-lg opacity-60">
                     <div className="flex items-center justify-between">
                       <span>{opp.eventName}</span>
@@ -323,6 +357,18 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
                     </div>
                   </div>
                 ))}
+
+                <PaginationControls
+                  currentPage={pastPagination.currentPage}
+                  totalPages={pastPagination.totalPages}
+                  itemsPerPage={pastPagination.itemsPerPage}
+                  totalItems={pastPagination.totalItems}
+                  startItem={pastPagination.startItem}
+                  endItem={pastPagination.endItem}
+                  onPageChange={pastPagination.setCurrentPage}
+                  onItemsPerPageChange={pastPagination.setItemsPerPage}
+                  itemLabel="past activities"
+                />
               </div>
             </div>
           )}

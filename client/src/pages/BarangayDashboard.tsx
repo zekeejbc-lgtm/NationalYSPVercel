@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import { 
   LogOut,
   Users,
@@ -18,12 +20,13 @@ import {
   Trophy,
   MessageSquare
 } from "lucide-react";
-import type { Chapter, Member, ChapterOfficer } from "@shared/schema";
-import MemberDashboardPanel from "@/components/chapter/MemberDashboardPanel";
-import OfficersPanel from "@/components/chapter/OfficersPanel";
-import BarangayKpiPanel from "@/components/chapter/BarangayKpiPanel";
-import BarangayLeaderboard from "@/components/chapter/BarangayLeaderboard";
-import NationalRequestPanel from "@/components/chapter/NationalRequestPanel";
+import type { Chapter } from "@shared/schema";
+
+const MemberDashboardPanel = lazy(() => import("@/components/chapter/MemberDashboardPanel"));
+const OfficersPanel = lazy(() => import("@/components/chapter/OfficersPanel"));
+const BarangayKpiPanel = lazy(() => import("@/components/chapter/BarangayKpiPanel"));
+const BarangayLeaderboard = lazy(() => import("@/components/chapter/BarangayLeaderboard"));
+const NationalRequestPanel = lazy(() => import("@/components/chapter/NationalRequestPanel"));
 
 interface AuthUser {
   id: string;
@@ -139,8 +142,10 @@ export default function BarangayDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
-        <p className="text-muted-foreground">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
+        <div className="w-full max-w-2xl">
+          <LoadingState label="Loading dashboard..." rows={3} compact />
+        </div>
       </div>
     );
   }
@@ -150,6 +155,22 @@ export default function BarangayDashboard() {
   }
 
   const parentChapter = chapters.find(c => c.id === authUser.chapterId);
+
+  const dashboardTabs: AdaptiveDashboardTab[] = [
+    { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
+    { value: "officers", label: "Officers", icon: UserCheck, group: "People", dataTestId: "tab-officers", mobilePriority: true, desktopPriority: true },
+    { value: "kpis", label: "KPIs", icon: Target, group: "Insights", dataTestId: "tab-kpis", mobilePriority: true, desktopPriority: true },
+    { value: "leaderboard", label: "Leaderboard", icon: Trophy, group: "Insights", dataTestId: "tab-leaderboard", mobilePriority: true, desktopPriority: true },
+    { value: "national", label: "Message National", icon: MessageSquare, group: "Communication", dataTestId: "tab-national", desktopPriority: true },
+  ];
+
+  const renderTabFallback = (label: string) => (
+    <Card>
+      <CardContent className="p-6">
+        <LoadingState label={label} rows={3} compact />
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -215,30 +236,16 @@ export default function BarangayDashboard() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
+      <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 flex flex-wrap gap-1">
-            <TabsTrigger value="members" className="gap-2" data-testid="tab-members">
-              <Users className="h-4 w-4" />
-              Members
-            </TabsTrigger>
-            <TabsTrigger value="officers" className="gap-2" data-testid="tab-officers">
-              <UserCheck className="h-4 w-4" />
-              Officers
-            </TabsTrigger>
-            <TabsTrigger value="kpis" className="gap-2" data-testid="tab-kpis">
-              <Target className="h-4 w-4" />
-              KPIs
-            </TabsTrigger>
-            <TabsTrigger value="leaderboard" className="gap-2" data-testid="tab-leaderboard">
-              <Trophy className="h-4 w-4" />
-              Leaderboard
-            </TabsTrigger>
-            <TabsTrigger value="national" className="gap-2" data-testid="tab-national">
-              <MessageSquare className="h-4 w-4" />
-              Message National
-            </TabsTrigger>
-          </TabsList>
+          <AdaptiveDashboardNav
+            tabs={dashboardTabs}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            mobileTitle="Barangay Sections"
+            mobileDescription="Use quick tabs below or open More for additional sections."
+            desktopVisibleCount={5}
+          />
 
           <TabsContent value="members">
             <Card>
@@ -249,10 +256,12 @@ export default function BarangayDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <MemberDashboardPanel 
-                  chapterId={authUser.chapterId || ""} 
-                  barangayId={authUser.barangayId}
-                />
+                <Suspense fallback={renderTabFallback("Loading members...")}>
+                  <MemberDashboardPanel 
+                    chapterId={authUser.chapterId || ""} 
+                    barangayId={authUser.barangayId}
+                  />
+                </Suspense>
               </CardContent>
             </Card>
           </TabsContent>
@@ -266,35 +275,43 @@ export default function BarangayDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <OfficersPanel 
-                  chapterId={authUser.chapterId || ""} 
-                  level="barangay"
-                  barangayId={authUser.barangayId}
-                />
+                <Suspense fallback={renderTabFallback("Loading officers...")}>
+                  <OfficersPanel 
+                    chapterId={authUser.chapterId || ""} 
+                    level="barangay"
+                    barangayId={authUser.barangayId}
+                  />
+                </Suspense>
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="kpis">
-            {authUser?.chapterId && authUser?.barangayId && (
-              <BarangayKpiPanel 
-                chapterId={authUser.chapterId} 
-                barangayId={authUser.barangayId}
-              />
-            )}
+            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+              {authUser?.chapterId && authUser?.barangayId && (
+                <BarangayKpiPanel 
+                  chapterId={authUser.chapterId} 
+                  barangayId={authUser.barangayId}
+                />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="leaderboard">
-            {authUser?.chapterId && authUser?.barangayId && (
-              <BarangayLeaderboard 
-                chapterId={authUser.chapterId} 
-                currentBarangayId={authUser.barangayId}
-              />
-            )}
+            <Suspense fallback={renderTabFallback("Loading leaderboard...")}>
+              {authUser?.chapterId && authUser?.barangayId && (
+                <BarangayLeaderboard 
+                  chapterId={authUser.chapterId} 
+                  currentBarangayId={authUser.barangayId}
+                />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="national">
-            <NationalRequestPanel senderType="barangay" />
+            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+              <NationalRequestPanel senderType="barangay" />
+            </Suspense>
           </TabsContent>
         </Tabs>
       </main>

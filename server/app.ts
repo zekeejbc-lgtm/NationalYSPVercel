@@ -1,4 +1,6 @@
 import { type Server } from "node:http";
+import net from "node:net";
+import path from "node:path";
 
 import express, {
   type Express,
@@ -36,6 +38,14 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+app.use(
+  "/uploads",
+  express.static(path.resolve(process.cwd(), "client/public/uploads")),
+);
+app.use("/uploads", (_req, res) => {
+  res.status(404).send("Upload not found");
+});
 
 app.use(
   session({
@@ -103,12 +113,55 @@ export default async function runApp(
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
+  const requestedPort = parseInt(process.env.PORT || "5000", 10);
+  const host = "0.0.0.0";
+  const canAutoPickPortInDev = process.env.NODE_ENV === "development" && !process.env.PORT;
+
+  const isPortAvailable = (port: number) =>
+    new Promise<boolean>((resolve) => {
+      const probe = net.createServer();
+
+      probe.once("error", () => resolve(false));
+      probe.once("listening", () => {
+        probe.close(() => resolve(true));
+      });
+
+      probe.listen(port, host);
+    });
+
+  let portToUse = requestedPort;
+
+  if (canAutoPickPortInDev) {
+    const maxAttempts = 20;
+    let foundPort = false;
+
+    for (let i = 0; i <= maxAttempts; i++) {
+      const candidate = requestedPort + i;
+      if (await isPortAvailable(candidate)) {
+        portToUse = candidate;
+        foundPort = true;
+        if (candidate !== requestedPort) {
+          log(`port ${requestedPort} is busy, using ${candidate}`);
+        }
+        break;
+      }
+    }
+
+    if (!foundPort) {
+      throw new Error(
+        `Could not find an open port from ${requestedPort} to ${requestedPort + maxAttempts}`,
+      );
+    }
+  }
+
+  server.listen(
+    {
+      port: portToUse,
+      host,
+      reusePort: process.platform !== "win32",
+    },
+    () => {
+      log(`serving on port ${portToUse}`);
+    },
+  );
 }

@@ -1,27 +1,30 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home, Cake } from "lucide-react";
-import ProgramsManager from "@/components/admin/ProgramsManager";
-import ChaptersManager from "@/components/admin/ChaptersManager";
-import VolunteerManager from "@/components/admin/VolunteerManager";
-import StatsManager from "@/components/admin/StatsManager";
-import ContactManager from "@/components/admin/ContactManager";
-import PublicationsManager from "@/components/admin/PublicationsManager";
-import ChapterAccountsManager from "@/components/admin/ChapterAccountsManager";
-import BarangayAccountsManager from "@/components/admin/BarangayAccountsManager";
-import AccountManagementPanel from "@/components/admin/AccountManagementPanel";
-import KpiManager from "@/components/admin/KpiManager";
-import MemberListManager from "@/components/admin/MemberListManager";
-import OfficerListManager from "@/components/admin/OfficerListManager";
-import ImportantDocumentsManager from "@/components/admin/ImportantDocumentsManager";
-import ChapterRequestsPanel from "@/components/admin/ChapterRequestsPanel";
-import NationalRequestsManager from "@/components/admin/NationalRequestsManager";
+import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, UserCheck, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3 } from "lucide-react";
+import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
+
+const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
+const ChaptersManager = lazy(() => import("@/components/admin/ChaptersManager"));
+const VolunteerManager = lazy(() => import("@/components/admin/VolunteerManager"));
+const StatsManager = lazy(() => import("@/components/admin/StatsManager"));
+const ContactManager = lazy(() => import("@/components/admin/ContactManager"));
+const PublicationsManager = lazy(() => import("@/components/admin/PublicationsManager"));
+const ChapterAccountsManager = lazy(() => import("@/components/admin/ChapterAccountsManager"));
+const BarangayAccountsManager = lazy(() => import("@/components/admin/BarangayAccountsManager"));
+const AccountManagementPanel = lazy(() => import("@/components/admin/AccountManagementPanel"));
+const KpiManager = lazy(() => import("@/components/admin/KpiManager"));
+const MemberListManager = lazy(() => import("@/components/admin/MemberListManager"));
+const OfficerListManager = lazy(() => import("@/components/admin/OfficerListManager"));
+const ImportantDocumentsManager = lazy(() => import("@/components/admin/ImportantDocumentsManager"));
+const ChapterRequestsPanel = lazy(() => import("@/components/admin/ChapterRequestsPanel"));
+const NationalRequestsManager = lazy(() => import("@/components/admin/NationalRequestsManager"));
 
 interface HouseholdSummary {
   totalSubmissions: number;
@@ -39,6 +42,7 @@ export default function Admin() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [activeTab, setActiveTab] = useState("stats");
 
   const { data: householdSummary } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
@@ -109,7 +113,9 @@ export default function Admin() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
+        <div className="w-full max-w-3xl px-4">
+          <LoadingState label="Loading dashboard..." rows={4} />
+        </div>
       </div>
     );
   }
@@ -117,6 +123,32 @@ export default function Admin() {
   if (!authenticated) {
     return null;
   }
+
+  const dashboardTabs: AdaptiveDashboardTab[] = [
+    { value: "stats", label: "Stats", icon: BarChart3, group: "Insights", dataTestId: "tab-stats", mobilePriority: true, desktopPriority: true },
+    { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
+    { value: "publications", label: "Publications", icon: Newspaper, group: "Content", dataTestId: "tab-publications", desktopPriority: true },
+    { value: "chapters", label: "Chapters", icon: Building2, group: "People", dataTestId: "tab-chapters", desktopPriority: true },
+    { value: "account-management", label: "Account Management", icon: Users, group: "Accounts", dataTestId: "tab-account-management", desktopPriority: true },
+    { value: "accounts", label: "Chapter Accounts", icon: Users, group: "Accounts", dataTestId: "tab-accounts" },
+    { value: "barangay-accounts", label: "Barangay Accounts", icon: Home, group: "Accounts", dataTestId: "tab-barangay-accounts" },
+    { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
+    { value: "officers", label: "Officers", icon: UserCheck, group: "People", dataTestId: "tab-officers" },
+    { value: "kpis", label: "KPIs", icon: Target, group: "Insights", dataTestId: "tab-kpis", mobilePriority: true, desktopPriority: true },
+    { value: "volunteer", label: "Volunteer", icon: HandHeart, group: "Operations", dataTestId: "tab-volunteer" },
+    { value: "documents", label: "Documents", icon: ClipboardList, group: "Operations", dataTestId: "tab-documents" },
+    { value: "requests", label: "Funding", icon: Send, group: "Operations", dataTestId: "tab-requests" },
+    { value: "inbox", label: "National Inbox", icon: MessageSquare, group: "Communication", dataTestId: "tab-inbox", mobilePriority: true, desktopPriority: true },
+    { value: "contact", label: "Contact", icon: Phone, group: "Communication", dataTestId: "tab-contact" },
+  ];
+
+  const renderTabFallback = (label: string) => (
+    <Card>
+      <CardContent className="p-6">
+        <LoadingState label={label} rows={3} compact />
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -146,25 +178,16 @@ export default function Admin() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
-        <Tabs defaultValue="stats" className="space-y-6">
-          <TabsList className="flex flex-wrap gap-1">
-            <TabsTrigger value="stats" data-testid="tab-stats">Stats</TabsTrigger>
-            <TabsTrigger value="programs" data-testid="tab-programs">Programs</TabsTrigger>
-            <TabsTrigger value="publications" data-testid="tab-publications">Publications</TabsTrigger>
-            <TabsTrigger value="chapters" data-testid="tab-chapters">Chapters</TabsTrigger>
-            <TabsTrigger value="account-management" data-testid="tab-account-management">Account Management</TabsTrigger>
-            <TabsTrigger value="accounts" data-testid="tab-accounts">Chapter Accounts</TabsTrigger>
-            <TabsTrigger value="barangay-accounts" data-testid="tab-barangay-accounts">Barangay Accounts</TabsTrigger>
-            <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
-            <TabsTrigger value="officers" data-testid="tab-officers">Officers</TabsTrigger>
-            <TabsTrigger value="kpis" data-testid="tab-kpis">KPIs</TabsTrigger>
-            <TabsTrigger value="volunteer" data-testid="tab-volunteer">Volunteer</TabsTrigger>
-            <TabsTrigger value="documents" data-testid="tab-documents">Documents</TabsTrigger>
-            <TabsTrigger value="requests" data-testid="tab-requests">Funding</TabsTrigger>
-            <TabsTrigger value="inbox" data-testid="tab-inbox">National Inbox</TabsTrigger>
-            <TabsTrigger value="contact" data-testid="tab-contact">Contact</TabsTrigger>
-          </TabsList>
+      <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-24 md:pb-8">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <AdaptiveDashboardNav
+            tabs={dashboardTabs}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            mobileTitle="Admin Sections"
+            mobileDescription="Use quick tabs below or open More for management sections."
+            desktopVisibleCount={8}
+          />
 
           <TabsContent value="stats">
             {birthdaysToday && (birthdaysToday.members.length > 0 || birthdaysToday.officers.length > 0) && (
@@ -193,31 +216,45 @@ export default function Admin() {
                 </CardContent>
               </Card>
             )}
-            <StatsManager />
+            <Suspense fallback={renderTabFallback("Loading stats...")}>
+              <StatsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="programs">
-            <ProgramsManager />
+            <Suspense fallback={renderTabFallback("Loading programs...")}>
+              <ProgramsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="publications">
-            <PublicationsManager />
+            <Suspense fallback={renderTabFallback("Loading publications...")}>
+              <PublicationsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="chapters">
-            <ChaptersManager />
+            <Suspense fallback={renderTabFallback("Loading chapters...")}>
+              <ChaptersManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="account-management">
-            <AccountManagementPanel />
+            <Suspense fallback={renderTabFallback("Loading account management...")}>
+              <AccountManagementPanel />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="accounts">
-            <ChapterAccountsManager />
+            <Suspense fallback={renderTabFallback("Loading chapter accounts...")}>
+              <ChapterAccountsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="barangay-accounts">
-            <BarangayAccountsManager />
+            <Suspense fallback={renderTabFallback("Loading barangay accounts...")}>
+              <BarangayAccountsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="members">
@@ -253,35 +290,51 @@ export default function Admin() {
                 </CardContent>
               </Card>
             )}
-            <MemberListManager />
+            <Suspense fallback={renderTabFallback("Loading members...")}>
+              <MemberListManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="officers">
-            <OfficerListManager />
+            <Suspense fallback={renderTabFallback("Loading officers...")}>
+              <OfficerListManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="kpis">
-            <KpiManager />
+            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+              <KpiManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="volunteer">
-            <VolunteerManager />
+            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+              <VolunteerManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="documents">
-            <ImportantDocumentsManager />
+            <Suspense fallback={renderTabFallback("Loading documents...")}>
+              <ImportantDocumentsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="requests">
-            <ChapterRequestsPanel />
+            <Suspense fallback={renderTabFallback("Loading funding requests...")}>
+              <ChapterRequestsPanel />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="inbox">
-            <NationalRequestsManager />
+            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+              <NationalRequestsManager />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="contact">
-            <ContactManager />
+            <Suspense fallback={renderTabFallback("Loading contact section...")}>
+              <ContactManager />
+            </Suspense>
           </TabsContent>
         </Tabs>
       </div>

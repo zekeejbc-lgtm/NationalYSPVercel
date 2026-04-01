@@ -11,6 +11,7 @@ import { Trash2, Edit, Plus, Calendar, Facebook, Image } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Publication } from "@shared/schema";
 import { format } from "date-fns";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
 
 export default function PublicationsManager() {
   const { toast } = useToast();
@@ -20,9 +21,16 @@ export default function PublicationsManager() {
   const [formData, setFormData] = useState({
     title: "",
     content: "",
-    imageUrl: "",
+    photoUrl: "",
     facebookLink: "",
   });
+
+  const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
+    const raw = publication.photoUrl || publication.imageUrl || "";
+    return getDisplayImageUrl(raw.trim());
+  };
+
+  const previewUrl = getDisplayImageUrl(formData.photoUrl.trim());
 
   const { data: publications = [], isLoading } = useQuery<Publication[]>({
     queryKey: ["/api/publications"]
@@ -33,7 +41,7 @@ export default function PublicationsManager() {
     setFormData({
       title: "",
       content: "",
-      imageUrl: "",
+      photoUrl: "",
       facebookLink: "",
     });
     setIsDialogOpen(true);
@@ -44,7 +52,7 @@ export default function PublicationsManager() {
     setFormData({
       title: publication.title,
       content: publication.content,
-      imageUrl: publication.imageUrl || "",
+      photoUrl: (publication.photoUrl || (publication as Publication & { imageUrl?: string | null }).imageUrl || "").trim(),
       facebookLink: publication.facebookLink || "",
     });
     setIsDialogOpen(true);
@@ -88,7 +96,7 @@ export default function PublicationsManager() {
       }
 
       const data = await response.json();
-      setFormData({ ...formData, imageUrl: data.url });
+      setFormData({ ...formData, photoUrl: data.url });
       toast({
         title: "Success",
         description: "Image uploaded successfully",
@@ -176,7 +184,13 @@ export default function PublicationsManager() {
   };
 
   if (isLoading) {
-    return <p className="text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-3" role="status" aria-label="Loading publications">
+        <div className="h-5 w-56 rounded-md bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
+      </div>
+    );
   }
 
   return (
@@ -203,9 +217,9 @@ export default function PublicationsManager() {
                 <Card key={publication.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-4 flex-wrap sm:flex-nowrap">
-                      {publication.imageUrl ? (
+                      {getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null }) ? (
                         <img 
-                          src={publication.imageUrl} 
+                          src={getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null })}
                           alt={publication.title} 
                           className="w-24 h-24 object-cover rounded-md flex-shrink-0"
                         />
@@ -215,8 +229,8 @@ export default function PublicationsManager() {
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-lg truncate">{publication.title}</h3>
-                        <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                        <h3 className="font-semibold text-lg break-words">{publication.title}</h3>
+                        <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">
                           {publication.content}
                         </p>
                         <div className="flex items-center gap-4 mt-2 flex-wrap">
@@ -311,18 +325,18 @@ export default function PublicationsManager() {
                 <div className="flex-1 min-w-[200px]">
                   <Input
                     type="url"
-                    value={formData.imageUrl}
-                    onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                    value={formData.photoUrl}
+                    onChange={(e) => setFormData({ ...formData, photoUrl: e.target.value })}
                     placeholder="Paste image URL"
                     data-testid="input-publication-image-url"
                   />
                 </div>
               </div>
               {isUploading && <p className="text-xs text-muted-foreground">Uploading...</p>}
-              {formData.imageUrl && (
+              {previewUrl && (
                 <div className="mt-2">
                   <img 
-                    src={formData.imageUrl} 
+                    src={previewUrl}
                     alt="Preview" 
                     className="max-w-xs h-32 object-cover rounded-md"
                   />

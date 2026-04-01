@@ -45,8 +45,12 @@ export default function BarangayLeaderboard({ chapterId, currentBarangayId }: Ba
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="py-8 text-center text-muted-foreground">
-          Loading leaderboard...
+        <CardContent className="py-6">
+          <div className="space-y-3" role="status" aria-label="Loading leaderboard">
+            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
+            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
+          </div>
         </CardContent>
       </Card>
     );

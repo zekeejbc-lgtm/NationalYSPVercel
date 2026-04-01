@@ -157,7 +157,11 @@ export default function AccountManagementPanel() {
         </div>
 
         {isLoading ? (
-          <p className="text-muted-foreground py-4">Loading accounts...</p>
+          <div className="space-y-3 py-2" role="status" aria-label="Loading accounts">
+            <div className="h-5 w-44 rounded-md bg-muted skeleton-shimmer" />
+            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
+          </div>
         ) : filteredAccounts.length === 0 ? (
           <p className="text-muted-foreground py-4">No accounts found.</p>
         ) : (
@@ -170,7 +174,7 @@ export default function AccountManagementPanel() {
               >
                 <div className="space-y-1 flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium truncate" data-testid={`text-account-name-${account.id}`}>
+                    <span className="font-medium break-words" data-testid={`text-account-name-${account.id}`}>
                       {account.accountName}
                     </span>
                     <Badge variant="outline" className="text-xs">

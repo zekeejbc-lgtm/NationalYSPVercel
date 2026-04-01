@@ -12,22 +12,33 @@ interface ProgramCardProps {
   onClick?: () => void;
 }
 
+const MAX_TITLE_LENGTH = 80;
+const MAX_DESCRIPTION_LENGTH = 170;
+
+function truncateText(text: string, maxLength: number) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 export default function ProgramCard({ id, title, description, image, onClick }: ProgramCardProps) {
   const [imgError, setImgError] = useState(false);
   const displayUrl = getDisplayImageUrl(image);
+  const displayTitle = truncateText(title, MAX_TITLE_LENGTH);
+  const displayDescription = truncateText(description, MAX_DESCRIPTION_LENGTH);
 
   return (
     <Card 
-      className="overflow-hidden hover-elevate transition-all group cursor-pointer h-full flex flex-col"
+      className="overflow-hidden hover-elevate transition-all group cursor-pointer h-[28rem] flex flex-col"
       onClick={onClick}
       data-testid={`card-program-${id}`}
     >
-      <div className="aspect-[4/3] overflow-hidden bg-muted flex items-center justify-center">
+      <div className="h-56 overflow-hidden bg-muted flex items-center justify-center">
         {displayUrl && !imgError ? (
           <img 
             src={displayUrl} 
             alt={title}
-            className="w-full h-full object-contain"
+            className="w-full h-full object-cover"
             onError={() => setImgError(true)}
             loading="lazy"
           />
@@ -38,13 +49,24 @@ export default function ProgramCard({ id, title, description, image, onClick }: 
           </div>
         )}
       </div>
-      <CardHeader>
-        <h3 className="text-xl font-semibold">{title}</h3>
+      <CardHeader className="pb-3">
+        <h3 className="text-xl font-semibold leading-tight overflow-hidden text-ellipsis whitespace-nowrap">
+          {displayTitle}
+        </h3>
       </CardHeader>
-      <CardContent className="flex-1">
-        <p className="text-muted-foreground line-clamp-3">{description}</p>
+      <CardContent className="flex-1 overflow-hidden pt-0">
+        <p
+          className="text-muted-foreground leading-relaxed overflow-hidden"
+          style={{
+            display: "-webkit-box",
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: "vertical",
+          }}
+        >
+          {displayDescription}
+        </p>
       </CardContent>
-      <CardFooter>
+      <CardFooter className="mt-auto pt-3">
         <Button 
           variant="ghost" 
           className="w-full group/btn"
