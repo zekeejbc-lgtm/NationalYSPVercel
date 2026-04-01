@@ -5,6 +5,7 @@ import multer from "multer";
 import fs from "node:fs";
 import path from "path";
 import bcrypt from "bcryptjs";
+import { ensureUploadsDir } from "./upload-path";
 import { 
   insertProgramSchema,
   insertChapterSchema,
@@ -98,8 +99,7 @@ async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      const uploadDir = path.resolve("client/public/uploads");
-      fs.mkdirSync(uploadDir, { recursive: true });
+      const uploadDir = ensureUploadsDir();
       cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
@@ -134,8 +134,7 @@ const upload = multer({
 const volunteerUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      const uploadDir = path.resolve("client/public/uploads");
-      fs.mkdirSync(uploadDir, { recursive: true });
+      const uploadDir = ensureUploadsDir();
       cb(null, uploadDir);
     },
     filename: (req, file, cb) => {

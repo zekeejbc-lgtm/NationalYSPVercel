@@ -167,3 +167,18 @@ Preferred communication style: Simple, everyday language.
 - **cmdk**: Command palette primitive for future search/navigation features
 - **connect-pg-simple**: PostgreSQL session store (prepared but not actively used with current session config)
 - **zod-validation-error**: Converts Zod errors into human-readable format for better UX
+
+## Deployment Notes (Replit + Vercel)
+
+- Replit runtime is unchanged: use the existing `.replit` configuration and run `npm run dev` for development or `npm run build` + `npm run start` for production-style startup.
+- Vercel is now supported with `vercel.json` and `api/index.ts`:
+  - Static frontend is served from `dist/public`.
+  - Backend routes are served by the Vercel function at `/api/*`.
+  - `robots.txt`, `sitemap.xml`, and `/uploads/*` are routed through the backend function.
+- Required Vercel environment variables:
+  - `DATABASE_URL`
+  - `SESSION_SECRET`
+  - `PUBLIC_SITE_URL` (recommended for sitemap/robots correctness)
+  - Optional: `SESSION_TABLE_NAME`, `UPLOADS_DIR`
+- Sessions now use PostgreSQL-backed storage when `DATABASE_URL` exists, so auth persists across serverless invocations.
+- Uploads on Vercel default to `/tmp/uploads`, which is ephemeral. For durable uploads in production, use external object storage (for example S3/Cloudinary/Vercel Blob) and store returned URLs in the database.

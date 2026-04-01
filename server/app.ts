@@ -1,6 +1,5 @@
 import { type Server } from "node:http";
 import net from "node:net";
-import path from "node:path";
 
 import express, {
   type Express,
@@ -9,8 +8,11 @@ import express, {
   NextFunction,
 } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 
+import { pool } from "./db";
 import { registerRoutes } from "./routes";
+import { ensureUploadsDir, getUploadsDir } from "./upload-path";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -24,6 +26,10 @@ export function log(message: string, source = "express") {
 }
 
 export const app = express();
+const PgSessionStore = connectPgSimple(session);
+
+let routeRegistrationPromise: Promise<Server> | null = null;
+let errorHandlerAttached = false;
 
 app.set("trust proxy", 1);
 
@@ -39,17 +45,23 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
-app.use(
-  "/uploads",
-  express.static(path.resolve(process.cwd(), "client/public/uploads")),
-);
+app.use("/uploads", express.static(getUploadsDir()));
 app.use("/uploads", (_req, res) => {
   res.status(404).send("Upload not found");
 });
 
+const sessionStore = pool
+  ? new PgSessionStore({
+      pool,
+      createTableIfMissing: true,
+      tableName: process.env.SESSION_TABLE_NAME || "session",
+    })
+  : undefined;
+
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
+    store: sessionStore,
     resave: false,
     saveUninitialized: false,
     proxy: true,
@@ -92,10 +104,19 @@ app.use((req, res, next) => {
   next();
 });
 
-export default async function runApp(
-  setup: (app: Express, server: Server) => Promise<void>,
-) {
-  const server = await registerRoutes(app);
+export async function initializeRoutes() {
+  if (!routeRegistrationPromise) {
+    ensureUploadsDir();
+    routeRegistrationPromise = registerRoutes(app);
+  }
+
+  return routeRegistrationPromise;
+}
+
+export function attachErrorHandler() {
+  if (errorHandlerAttached) {
+    return;
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -104,6 +125,15 @@ export default async function runApp(
     res.status(status).json({ message });
     throw err;
   });
+
+  errorHandlerAttached = true;
+}
+
+export default async function runApp(
+  setup: (app: Express, server: Server) => Promise<void>,
+) {
+  const server = await initializeRoutes();
+  attachErrorHandler();
 
   // importantly run the final setup after setting up all the other routes so
   // the catch-all route doesn't interfere with the other routes
