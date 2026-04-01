@@ -1961,11 +1961,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   if (process.env.DATABASE_URL) {
-    await storage.initializeDefaultData();
+    try {
+      await storage.initializeDefaultData();
+    } catch (error) {
+      console.error("[startup] Failed to initialize default data", error);
+    }
   } else if (process.env.NODE_ENV === "development") {
     console.warn(
       "[startup] DATABASE_URL is not set; skipping database initialization in development.",
     );
+  } else {
+    console.warn("[startup] DATABASE_URL is not set; database-backed routes will be unavailable.");
   }
 
   const httpServer = createServer(app);

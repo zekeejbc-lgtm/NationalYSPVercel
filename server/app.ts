@@ -51,7 +51,12 @@ app.use("/uploads", (_req, res) => {
 });
 
 const createSessionStore = () => {
-  if (!databaseUrl) {
+  const shouldUsePgSessionStore = process.env.ENABLE_PG_SESSION_STORE === "true";
+
+  if (!databaseUrl || !shouldUsePgSessionStore) {
+    if (databaseUrl && !shouldUsePgSessionStore) {
+      console.log("[session] using in-memory session store; set ENABLE_PG_SESSION_STORE=true to use postgres session store");
+    }
     return undefined;
   }
 
@@ -134,8 +139,13 @@ export function attachErrorHandler() {
     const status = missingDbConfig ? 503 : err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    console.error("[api-error]", { status, message });
+    if (!res.headersSent) {
+      res.status(status).json({ message });
+      return;
+    }
+
+    res.end();
   });
 
   errorHandlerAttached = true;
