@@ -11,10 +11,13 @@ const missingDatabaseUrlError = () =>
   );
 
 const isDevelopment = process.env.NODE_ENV === "development";
-const databaseUrl = process.env.DATABASE_URL;
+export const databaseUrl = process.env.DATABASE_URL;
+export const hasDatabaseUrl = Boolean(databaseUrl);
 
 if (!databaseUrl && !isDevelopment) {
-  throw missingDatabaseUrlError();
+  console.warn(
+    "[startup] DATABASE_URL is not set; database-backed API routes will fail until configured.",
+  );
 }
 
 export const pool = databaseUrl

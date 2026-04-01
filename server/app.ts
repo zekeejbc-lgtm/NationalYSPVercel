@@ -10,7 +10,7 @@ import express, {
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 
-import { pool } from "./db";
+import { databaseUrl, pool } from "./db";
 import { registerRoutes } from "./routes";
 import { ensureUploadsDir, getUploadsDir } from "./upload-path";
 
@@ -50,13 +50,24 @@ app.use("/uploads", (_req, res) => {
   res.status(404).send("Upload not found");
 });
 
-const sessionStore = pool
-  ? new PgSessionStore({
-      pool,
+const createSessionStore = () => {
+  if (!databaseUrl) {
+    return undefined;
+  }
+
+  try {
+    return new PgSessionStore({
+      pool: pool ?? undefined,
       createTableIfMissing: true,
       tableName: process.env.SESSION_TABLE_NAME || "session",
-    })
-  : undefined;
+    });
+  } catch (error) {
+    console.error("[session] failed to initialize postgres session store; falling back to memory store", error);
+    return undefined;
+  }
+};
+
+const sessionStore = createSessionStore();
 
 app.use(
   session({
@@ -119,7 +130,8 @@ export function attachErrorHandler() {
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
+    const missingDbConfig = typeof err?.message === "string" && err.message.includes("DATABASE_URL must be set");
+    const status = missingDbConfig ? 503 : err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });

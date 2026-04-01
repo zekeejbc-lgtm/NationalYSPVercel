@@ -220,7 +220,23 @@ const PUBLIC_SITE_PATHS = [
   "/contact",
 ];
 
-const NATIONAL_SITE_ORIGIN = (process.env.PUBLIC_SITE_URL || "https://youthserviceph.org").replace(/\/+$/, "");
+function normalizePublicSiteOrigin(rawUrl?: string) {
+  if (!rawUrl || !rawUrl.trim()) {
+    return "https://youthserviceph.org";
+  }
+
+  const trimmed = rawUrl.trim();
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  try {
+    return new URL(withProtocol).origin;
+  } catch {
+    console.warn(`[startup] Invalid PUBLIC_SITE_URL \"${rawUrl}\". Falling back to https://youthserviceph.org`);
+    return "https://youthserviceph.org";
+  }
+}
+
+const NATIONAL_SITE_ORIGIN = normalizePublicSiteOrigin(process.env.PUBLIC_SITE_URL);
 const NATIONAL_SITE_HOSTNAME = new URL(NATIONAL_SITE_ORIGIN).hostname.toLowerCase();
 const INDEXABLE_HOSTS = new Set([
   NATIONAL_SITE_HOSTNAME,

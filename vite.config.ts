@@ -11,7 +11,7 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["images/ysp-logo.png"],
       manifest: {
-          id: "https://youthserviceph.org/",
+          id: "/",
           name: "Youth Service Philippines National",
           short_name: "YSP National",
         description:
