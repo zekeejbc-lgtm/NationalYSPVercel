@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,13 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus, ExternalLink, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ImportantDocument } from "@shared/schema";
+
+type DocumentAcknowledgement = {
+  documentId: string;
+  chapterId: string;
+  chapterName: string;
+  readAt: string | null;
+};
 
 export default function ImportantDocumentsManager() {
   const { toast } = useToast();
@@ -24,6 +31,20 @@ export default function ImportantDocumentsManager() {
   const { data: documents = [], isLoading } = useQuery<ImportantDocument[]>({
     queryKey: ["/api/important-documents"]
   });
+
+  const { data: acknowledgements = [] } = useQuery<DocumentAcknowledgement[]>({
+    queryKey: ["/api/important-documents/acknowledgements"],
+  });
+
+  const acknowledgementsByDocumentId = useMemo(() => {
+    return acknowledgements.reduce<Record<string, DocumentAcknowledgement[]>>((acc, acknowledgement) => {
+      if (!acc[acknowledgement.documentId]) {
+        acc[acknowledgement.documentId] = [];
+      }
+      acc[acknowledgement.documentId].push(acknowledgement);
+      return acc;
+    }, {});
+  }, [acknowledgements]);
 
   const handleAdd = () => {
     setEditingDocument(null);
@@ -168,6 +189,28 @@ export default function ImportantDocumentsManager() {
                         >
                           View Document <ExternalLink className="h-3 w-3" />
                         </a>
+                        <div className="mt-3">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            Acknowledged by ({(acknowledgementsByDocumentId[document.id] || []).length})
+                          </p>
+                          {(acknowledgementsByDocumentId[document.id] || []).length === 0 ? (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              No chapters have acknowledged this document yet.
+                            </p>
+                          ) : (
+                            <ul className="mt-1 space-y-1">
+                              {(acknowledgementsByDocumentId[document.id] || []).map((acknowledgement) => (
+                                <li
+                                  key={`${acknowledgement.documentId}-${acknowledgement.chapterId}`}
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  <span className="font-medium text-foreground">{acknowledgement.chapterName}</span>
+                                  {acknowledgement.readAt ? ` - ${new Date(acknowledgement.readAt).toLocaleDateString()}` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2 shrink-0">
                         <Button 

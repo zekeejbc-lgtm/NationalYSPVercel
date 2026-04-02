@@ -18,7 +18,8 @@ import {
   MapPin,
   Target,
   Trophy,
-  MessageSquare
+  MessageSquare,
+  UserRound
 } from "lucide-react";
 import type { Chapter } from "@shared/schema";
 
@@ -229,9 +230,39 @@ export default function BarangayDashboard() {
               </p>
             </div>
           </div>
-          <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
+          <div className="hidden sm:flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setLocation("/my-profile")}
+              data-testid="button-my-profile"
+            >
+              <UserRound className="h-4 w-4 mr-2" />
+              My Profile
+            </Button>
+            <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleLogout}
+            data-testid="button-logout-mobile"
+            className="sm:hidden"
+          >
             <LogOut className="h-4 w-4 mr-2" />
             Logout
+          </Button>
+        </div>
+        <div className="container mx-auto px-4 pb-4 sm:hidden">
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => setLocation("/my-profile")}
+            data-testid="button-my-profile-mobile"
+          >
+            <UserRound className="h-4 w-4 mr-2" />
+            My Profile
           </Button>
         </div>
       </header>

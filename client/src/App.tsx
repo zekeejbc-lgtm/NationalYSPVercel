@@ -17,6 +17,7 @@ import AdminLogin from "@/pages/AdminLogin";
 import Login from "@/pages/Login";
 import ChapterDashboard from "@/pages/ChapterDashboard";
 import BarangayDashboard from "@/pages/BarangayDashboard";
+import MyProfile from "@/pages/MyProfile";
 import NotFound from "@/pages/not-found";
 import { IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 
@@ -156,6 +157,13 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
     indexable: false,
     keywords: ["youth service philippines barangay dashboard"],
   },
+  "/my-profile": {
+    title: "My Profile | Youth Service Philippines National",
+    description: "Manage your account profile and password.",
+    path: "/my-profile",
+    indexable: false,
+    keywords: ["youth service philippines profile"],
+  },
 };
 
 function toKeywordsContent(keywords: string[]) {
@@ -215,6 +223,7 @@ function Router() {
       <Route path="/admin" component={Admin} />
       <Route path="/chapter-dashboard" component={ChapterDashboard} />
       <Route path="/barangay-dashboard" component={BarangayDashboard} />
+      <Route path="/my-profile" component={MyProfile} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -226,6 +235,7 @@ function AppContent() {
     location.startsWith("/admin") ||
     location.startsWith("/chapter-dashboard") ||
     location.startsWith("/barangay-dashboard") ||
+    location.startsWith("/my-profile") ||
     location === "/login";
 
   useEffect(() => {

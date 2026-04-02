@@ -329,6 +329,33 @@ function requireChapterOrBarangayAuth(req: Request, res: Response, next: Functio
   next();
 }
 
+function isUsernameTakenByDifferentUser(
+  username: string,
+  currentRole: "admin" | "chapter" | "barangay",
+  currentUserId: string,
+  existingUsers: {
+    admin?: { id: string };
+    chapter?: { id: string };
+    barangay?: { id: string };
+  },
+) {
+  const { admin, chapter, barangay } = existingUsers;
+
+  if (admin && (currentRole !== "admin" || admin.id !== currentUserId)) {
+    return true;
+  }
+
+  if (chapter && (currentRole !== "chapter" || chapter.id !== currentUserId)) {
+    return true;
+  }
+
+  if (barangay && (currentRole !== "barangay" || barangay.id !== currentUserId)) {
+    return true;
+  }
+
+  return false;
+}
+
 const PUBLIC_SITE_PATHS = [
   "/",
   "/programs",
@@ -402,6 +429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       "Disallow: /admin",
       "Disallow: /chapter-dashboard",
       "Disallow: /barangay-dashboard",
+      "Disallow: /my-profile",
       "Disallow: /login",
       `Sitemap: ${origin}/sitemap.xml`,
       "",
@@ -902,18 +930,174 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ authenticated: false });
   });
 
-  app.post("/api/auth/change-password", requireChapterOrBarangayAuth, async (req, res) => {
+  app.get("/api/auth/profile", requireAuth, async (req, res) => {
+    if (!req.session.userId || !req.session.role) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (req.session.role === "admin") {
+      const user = await storage.getAdminUser(req.session.userId);
+      if (!user) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      return res.json({
+        id: user.id,
+        username: user.username,
+        role: "admin",
+      });
+    }
+
+    if (req.session.role === "chapter") {
+      const user = await storage.getChapterUser(req.session.userId);
+      if (!user) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const chapter = await storage.getChapter(user.chapterId);
+      return res.json({
+        id: user.id,
+        username: user.username,
+        role: "chapter",
+        chapterId: user.chapterId,
+        chapterName: chapter?.name || "",
+        mustChangePassword: user.mustChangePassword,
+      });
+    }
+
+    if (req.session.role === "barangay") {
+      const user = await storage.getBarangayUser(req.session.userId);
+      if (!user) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const chapter = await storage.getChapter(user.chapterId);
+      return res.json({
+        id: user.id,
+        username: user.username,
+        role: "barangay",
+        chapterId: user.chapterId,
+        chapterName: chapter?.name || "",
+        barangayId: user.id,
+        barangayName: user.barangayName,
+        mustChangePassword: user.mustChangePassword,
+      });
+    }
+
+    return res.status(401).json({ error: "Unauthorized" });
+  });
+
+  app.put("/api/auth/profile", requireAuth, async (req, res) => {
+    if (!req.session.userId || !req.session.role) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    if (!username || username.length < 3) {
+      return res.status(400).json({ error: "Username must be at least 3 characters" });
+    }
+
+    const [existingAdmin, existingChapter, existingBarangay] = await Promise.all([
+      storage.getAdminUserByUsername(username),
+      storage.getChapterUserByUsername(username),
+      storage.getBarangayUserByUsername(username),
+    ]);
+
+    const usernameTaken = isUsernameTakenByDifferentUser(username, req.session.role, req.session.userId, {
+      admin: existingAdmin,
+      chapter: existingChapter,
+      barangay: existingBarangay,
+    });
+
+    if (usernameTaken) {
+      return res.status(409).json({ error: "Username already exists" });
+    }
+
+    if (req.session.role === "admin") {
+      const updated = await storage.updateAdminUser(req.session.userId, { username });
+      if (!updated) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      return res.json({
+        id: updated.id,
+        username: updated.username,
+        role: "admin",
+      });
+    }
+
+    if (req.session.role === "chapter") {
+      const updated = await storage.updateChapterUser(req.session.userId, { username } as any);
+      if (!updated) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const chapter = await storage.getChapter(updated.chapterId);
+      return res.json({
+        id: updated.id,
+        username: updated.username,
+        role: "chapter",
+        chapterId: updated.chapterId,
+        chapterName: chapter?.name || "",
+        mustChangePassword: updated.mustChangePassword,
+      });
+    }
+
+    if (req.session.role === "barangay") {
+      const barangayName =
+        typeof req.body?.barangayName === "string" ? req.body.barangayName.trim() : "";
+
+      if (!barangayName) {
+        return res.status(400).json({ error: "Barangay name is required" });
+      }
+
+      const updated = await storage.updateBarangayUser(req.session.userId, {
+        username,
+        barangayName,
+      } as any);
+
+      if (!updated) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      req.session.barangayName = updated.barangayName;
+
+      const chapter = await storage.getChapter(updated.chapterId);
+      return res.json({
+        id: updated.id,
+        username: updated.username,
+        role: "barangay",
+        chapterId: updated.chapterId,
+        chapterName: chapter?.name || "",
+        barangayId: updated.id,
+        barangayName: updated.barangayName,
+        mustChangePassword: updated.mustChangePassword,
+      });
+    }
+
+    return res.status(401).json({ error: "Unauthorized" });
+  });
+
+  app.post("/api/auth/change-password", requireAuth, async (req, res) => {
     const { newPassword } = req.body;
     
     if (!newPassword || newPassword.length < 8) {
       return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
 
+    if (!req.session.userId || !req.session.role) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const now = new Date();
     
     let updated;
-    if (req.session.role === "barangay") {
+    if (req.session.role === "admin") {
+      updated = await storage.updateAdminUser(req.session.userId, {
+        password: hashedPassword,
+      });
+    } else if (req.session.role === "barangay") {
       updated = await storage.updateBarangayUser(req.session.userId!, {
         password: hashedPassword,
         mustChangePassword: false,
@@ -1964,6 +2148,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "Document not found" });
     }
     res.json({ success: true });
+  });
+
+  app.get("/api/important-documents/acknowledgements", requireAdminAuth, async (req, res) => {
+    const acknowledgements = await storage.getImportantDocumentAcknowledgements();
+    res.json(acknowledgements);
   });
 
   app.get("/api/chapter-document-acks", requireChapterAuth, async (req, res) => {

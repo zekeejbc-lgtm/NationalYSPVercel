@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, UserCheck, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3 } from "lucide-react";
+import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, UserCheck, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
@@ -154,7 +154,7 @@ export default function Admin() {
     <div className="min-h-screen bg-muted/30">
       <div className="border-b bg-background">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <img 
                 src="/images/ysp-logo.png" 
@@ -166,13 +166,43 @@ export default function Admin() {
                 <p className="text-sm text-muted-foreground">Manage website content</p>
               </div>
             </div>
+            <div className="hidden sm:flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setLocation("/my-profile")}
+                data-testid="button-my-profile"
+              >
+                <UserRound className="h-4 w-4 mr-2" />
+                My Profile
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={handleLogout}
+                data-testid="button-logout"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Logout
+              </Button>
+            </div>
             <Button 
               variant="outline" 
               onClick={handleLogout}
-              data-testid="button-logout"
+              data-testid="button-logout-mobile"
+              className="sm:hidden"
             >
               <LogOut className="h-4 w-4 mr-2" />
               Logout
+            </Button>
+          </div>
+          <div className="sm:hidden mt-3">
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setLocation("/my-profile")}
+              data-testid="button-my-profile-mobile"
+            >
+              <UserRound className="h-4 w-4 mr-2" />
+              My Profile
             </Button>
           </div>
         </div>

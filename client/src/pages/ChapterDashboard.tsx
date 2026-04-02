@@ -37,9 +37,10 @@ import {
   ClipboardList,
   Send,
   MessageSquare,
-  ImageOff
+  ImageOff,
+  UserRound
 } from "lucide-react";
-import type { Chapter, Publication } from "@shared/schema";
+import type { Chapter, ProjectReport, Publication } from "@shared/schema";
 
 const OfficersPanel = lazy(() => import("@/components/chapter/OfficersPanel"));
 const SocialMediaPanel = lazy(() => import("@/components/chapter/SocialMediaPanel"));
@@ -86,10 +87,24 @@ export default function ChapterDashboard() {
   const [failedPublicationImages, setFailedPublicationImages] = useState<Record<string, boolean>>({});
   const [chapterSearch, setChapterSearch] = useState("");
   const [chapterSort, setChapterSort] = useState<"asc" | "desc">("asc");
+  const [reportSearch, setReportSearch] = useState("");
+
+  const chapterReportsUrl = authUser?.chapterId
+    ? `/api/project-reports?chapterId=${encodeURIComponent(authUser.chapterId)}`
+    : "/api/project-reports?chapterId=";
 
   const { data: publications = [] } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
     enabled: authenticated,
+  });
+
+  const {
+    data: submittedReports = [],
+    isLoading: submittedReportsLoading,
+    isError: submittedReportsError,
+  } = useQuery<ProjectReport[]>({
+    queryKey: [chapterReportsUrl],
+    enabled: authenticated && !!authUser?.chapterId,
   });
 
   const { data: chapters = [] } = useQuery<Chapter[]>({
@@ -153,6 +168,7 @@ export default function ChapterDashboard() {
       setFacebookLink("");
       setCollaborationType("NONE");
       setCollaboratingChapterId(null);
+      queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
     },
@@ -270,6 +286,26 @@ export default function ChapterDashboard() {
     });
   }, [publications, publicationSearch, publicationChapterFilter, authUser?.chapterId, chapterNameById]);
 
+  const filteredSubmittedReports = useMemo(() => {
+    const normalizedQuery = reportSearch.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return submittedReports;
+    }
+
+    return submittedReports.filter((report) => {
+      const collaboratingChapterName = report.collaboratingChapterId
+        ? chapterNameById.get(report.collaboratingChapterId) || ""
+        : "";
+
+      return (
+        report.projectName.toLowerCase().includes(normalizedQuery) ||
+        report.projectWriteup.toLowerCase().includes(normalizedQuery) ||
+        report.facebookPostLink.toLowerCase().includes(normalizedQuery) ||
+        collaboratingChapterName.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [submittedReports, reportSearch, chapterNameById]);
+
   const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
     const raw = publication.photoUrl || publication.imageUrl || "";
     return getDisplayImageUrl(raw.trim());
@@ -278,6 +314,24 @@ export default function ChapterDashboard() {
   const getChapterName = (chapterId: string | null) => {
     if (!chapterId) return "Unknown Chapter";
     return chapterNameById.get(chapterId) || "Unknown Chapter";
+  };
+
+  const getCollaborationLabel = (report: ProjectReport) => {
+    if (report.collaborationType === "ANOTHER_CHAPTER") {
+      return "Another Chapter";
+    }
+    if (report.collaborationType === "YSP_NATIONAL") {
+      return "YSP National";
+    }
+    return "No Collaboration";
+  };
+
+  const formatDateTime = (value: string | Date) => {
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "Unknown date";
+    }
+    return parsed.toLocaleString();
   };
 
   const truncateText = (value: string, maxLength: number) => {
@@ -302,6 +356,11 @@ export default function ChapterDashboard() {
   const publicationsPagination = usePagination(filteredPublications, {
     pageSize: 9,
     resetKey: `${publicationChapterFilter}|${publicationSearch}|${filteredPublications.length}`,
+  });
+
+  const reportsPagination = usePagination(filteredSubmittedReports, {
+    pageSize: 5,
+    resetKey: `${reportSearch}|${filteredSubmittedReports.length}`,
   });
 
   const chaptersPagination = usePagination(filteredChapters, {
@@ -345,7 +404,7 @@ export default function ChapterDashboard() {
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="bg-background border-b sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <img src="/images/ysp-logo.png" alt="YSP Logo" className="h-10 w-auto" />
             <div>
@@ -353,9 +412,39 @@ export default function ChapterDashboard() {
               <p className="text-sm text-muted-foreground">{authUser?.chapterName}</p>
             </div>
           </div>
-          <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
+          <div className="hidden sm:flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setLocation("/my-profile")}
+              data-testid="button-my-profile"
+            >
+              <UserRound className="h-4 w-4 mr-2" />
+              My Profile
+            </Button>
+            <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleLogout}
+            data-testid="button-logout-mobile"
+            className="sm:hidden"
+          >
             <LogOut className="h-4 w-4 mr-2" />
             Logout
+          </Button>
+        </div>
+        <div className="container mx-auto px-4 pb-4 sm:hidden">
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => setLocation("/my-profile")}
+            data-testid="button-my-profile-mobile"
+          >
+            <UserRound className="h-4 w-4 mr-2" />
+            My Profile
           </Button>
         </div>
       </header>
@@ -371,120 +460,231 @@ export default function ChapterDashboard() {
           />
 
           <TabsContent value="reports">
-            <Card>
-              <CardHeader>
-                <CardTitle>Submit Project Report</CardTitle>
-                <CardDescription>
-                  Share your chapter's project activities. Reports are automatically published.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmitReport} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="projectName">Project Name *</Label>
-                    <Input
-                      id="projectName"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      placeholder="Enter project name"
-                      required
-                      data-testid="input-project-name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="projectWriteup">Project Write-up *</Label>
-                    <Textarea
-                      id="projectWriteup"
-                      value={projectWriteup}
-                      onChange={(e) => setProjectWriteup(e.target.value)}
-                      placeholder="Describe your project..."
-                      rows={6}
-                      required
-                      data-testid="input-project-writeup"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="photo">Photo</Label>
-                    <div className="flex items-center gap-4">
-                      <Input
-                        id="photo"
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageUpload}
-                        className="max-w-xs"
-                        data-testid="input-photo"
-                      />
-                      {uploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
-                      {photoUrl && (
-                        <img src={getDisplayImageUrl(photoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="facebookLink">Facebook Post Link *</Label>
-                    <Input
-                      id="facebookLink"
-                      type="url"
-                      value={facebookLink}
-                      onChange={(e) => setFacebookLink(e.target.value)}
-                      placeholder="https://facebook.com/..."
-                      required
-                      data-testid="input-facebook-link"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Collaboration (Optional)</Label>
-                    <Select
-                      value={collaborationType}
-                      onValueChange={(value: "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL") => {
-                        setCollaborationType(value);
-                        if (value !== "ANOTHER_CHAPTER") {
-                          setCollaboratingChapterId(null);
-                        }
-                      }}
-                    >
-                      <SelectTrigger data-testid="select-collaboration-type">
-                        <SelectValue placeholder="Select collaboration type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="NONE">None</SelectItem>
-                        <SelectItem value="ANOTHER_CHAPTER">Another Chapter</SelectItem>
-                        <SelectItem value="YSP_NATIONAL">YSP National</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {collaborationType === "ANOTHER_CHAPTER" && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Submit Project Report</CardTitle>
+                  <CardDescription>
+                    Share your chapter's project activities. Reports are automatically published.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSubmitReport} className="space-y-4">
                     <div className="space-y-2">
-                      <Label>Collaborating Chapter *</Label>
+                      <Label htmlFor="projectName">Project Name *</Label>
+                      <Input
+                        id="projectName"
+                        value={projectName}
+                        onChange={(e) => setProjectName(e.target.value)}
+                        placeholder="Enter project name"
+                        required
+                        data-testid="input-project-name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="projectWriteup">Project Write-up *</Label>
+                      <Textarea
+                        id="projectWriteup"
+                        value={projectWriteup}
+                        onChange={(e) => setProjectWriteup(e.target.value)}
+                        placeholder="Describe your project..."
+                        rows={6}
+                        required
+                        data-testid="input-project-writeup"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="photo">Photo</Label>
+                      <div className="flex items-center gap-4">
+                        <Input
+                          id="photo"
+                          type="file"
+                          accept="image/*"
+                          onChange={handleImageUpload}
+                          className="max-w-xs"
+                          data-testid="input-photo"
+                        />
+                        {uploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
+                        {photoUrl && (
+                          <img src={getDisplayImageUrl(photoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="facebookLink">Facebook Post Link *</Label>
+                      <Input
+                        id="facebookLink"
+                        type="url"
+                        value={facebookLink}
+                        onChange={(e) => setFacebookLink(e.target.value)}
+                        placeholder="https://facebook.com/..."
+                        required
+                        data-testid="input-facebook-link"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Collaboration (Optional)</Label>
                       <Select
-                        value={collaboratingChapterId || "none"}
-                        onValueChange={(value) => setCollaboratingChapterId(value === "none" ? null : value)}
+                        value={collaborationType}
+                        onValueChange={(value: "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL") => {
+                          setCollaborationType(value);
+                          if (value !== "ANOTHER_CHAPTER") {
+                            setCollaboratingChapterId(null);
+                          }
+                        }}
                       >
-                        <SelectTrigger data-testid="select-collaborating-chapter">
-                          <SelectValue placeholder="Select chapter" />
+                        <SelectTrigger data-testid="select-collaboration-type">
+                          <SelectValue placeholder="Select collaboration type" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Select a chapter</SelectItem>
-                          {chapters
-                            .filter(ch => ch.id !== authUser?.chapterId)
-                            .map(ch => (
-                              <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
-                            ))}
+                          <SelectItem value="NONE">None</SelectItem>
+                          <SelectItem value="ANOTHER_CHAPTER">Another Chapter</SelectItem>
+                          <SelectItem value="YSP_NATIONAL">YSP National</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
+                    {collaborationType === "ANOTHER_CHAPTER" && (
+                      <div className="space-y-2">
+                        <Label>Collaborating Chapter *</Label>
+                        <Select
+                          value={collaboratingChapterId || "none"}
+                          onValueChange={(value) => setCollaboratingChapterId(value === "none" ? null : value)}
+                        >
+                          <SelectTrigger data-testid="select-collaborating-chapter">
+                            <SelectValue placeholder="Select chapter" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Select a chapter</SelectItem>
+                            {chapters
+                              .filter(ch => ch.id !== authUser?.chapterId)
+                              .map(ch => (
+                                <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Button 
+                      type="submit" 
+                      disabled={submitReportMutation.isPending}
+                      data-testid="button-submit-report"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      {submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Submitted Reports</CardTitle>
+                  <CardDescription>
+                    Review every report your chapter has already submitted.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="relative max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search submitted reports..."
+                      value={reportSearch}
+                      onChange={(e) => setReportSearch(e.target.value)}
+                      className="pl-9"
+                      data-testid="input-submitted-report-search"
+                    />
+                  </div>
+
+                  {submittedReportsLoading ? (
+                    <LoadingState label="Loading submitted reports..." rows={3} compact />
+                  ) : submittedReportsError ? (
+                    <p className="text-sm text-destructive">
+                      Unable to load submitted reports right now. Please refresh and try again.
+                    </p>
+                  ) : filteredSubmittedReports.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {submittedReports.length === 0
+                        ? "No reports submitted yet."
+                        : "No submitted reports match your search."}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="space-y-3">
+                        {reportsPagination.paginatedItems.map((report) => {
+                          const reportPhotoUrl = getDisplayImageUrl((report.photoUrl || "").trim());
+
+                          return (
+                            <Card
+                              key={report.id}
+                              className="border border-border/60"
+                              data-testid={`card-submitted-report-${report.id}`}
+                            >
+                              <CardHeader className="pb-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <CardTitle className="text-base leading-tight">{report.projectName}</CardTitle>
+                                  <Badge variant="outline" className="shrink-0">
+                                    {getCollaborationLabel(report)}
+                                  </Badge>
+                                </div>
+                                <CardDescription>
+                                  Submitted {formatDateTime(report.createdAt)}
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent className="space-y-3">
+                                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                  {report.projectWriteup}
+                                </p>
+                                {report.collaborationType === "ANOTHER_CHAPTER" && report.collaboratingChapterId && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Collaborating chapter: {getChapterName(report.collaboratingChapterId)}
+                                  </p>
+                                )}
+                                <div className="flex flex-wrap items-center gap-4">
+                                  <a
+                                    href={report.facebookPostLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                    data-testid={`link-report-facebook-${report.id}`}
+                                  >
+                                    <Facebook className="h-4 w-4" />
+                                    View Facebook Post
+                                  </a>
+                                  {reportPhotoUrl && (
+                                    <a
+                                      href={reportPhotoUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                      data-testid={`link-report-photo-${report.id}`}
+                                    >
+                                      <Upload className="h-4 w-4" />
+                                      View Uploaded Photo
+                                    </a>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+
+                      <PaginationControls
+                        currentPage={reportsPagination.currentPage}
+                        totalPages={reportsPagination.totalPages}
+                        itemsPerPage={reportsPagination.itemsPerPage}
+                        totalItems={reportsPagination.totalItems}
+                        startItem={reportsPagination.startItem}
+                        endItem={reportsPagination.endItem}
+                        onPageChange={reportsPagination.setCurrentPage}
+                        onItemsPerPageChange={reportsPagination.setItemsPerPage}
+                        itemLabel="reports"
+                      />
+                    </>
                   )}
-                  <Button 
-                    type="submit" 
-                    disabled={submitReportMutation.isPending}
-                    data-testid="button-submit-report"
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    {submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="members">

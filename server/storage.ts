@@ -67,10 +67,18 @@ import { db } from "./db";
 import { eq, desc, and, sql, asc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
+export type ImportantDocumentAcknowledgement = {
+  documentId: string;
+  chapterId: string;
+  chapterName: string;
+  readAt: Date | null;
+};
+
 export interface IStorage {
   getAdminUser(id: string): Promise<AdminUser | undefined>;
   getAdminUserByUsername(username: string): Promise<AdminUser | undefined>;
   createAdminUser(user: InsertAdminUser): Promise<AdminUser>;
+  updateAdminUser(id: string, user: Partial<InsertAdminUser>): Promise<AdminUser | undefined>;
 
   getChapterUser(id: string): Promise<ChapterUser | undefined>;
   getChapterUserByUsername(username: string): Promise<ChapterUser | undefined>;
@@ -182,6 +190,7 @@ export interface IStorage {
   deleteImportantDocument(id: string): Promise<boolean>;
 
   getChapterDocumentAcks(chapterId: string): Promise<ChapterDocumentAck[]>;
+  getImportantDocumentAcknowledgements(): Promise<ImportantDocumentAcknowledgement[]>;
   getChapterDocumentAck(chapterId: string, documentId: string): Promise<ChapterDocumentAck | undefined>;
   createChapterDocumentAck(ack: InsertChapterDocumentAck): Promise<ChapterDocumentAck>;
   acknowledgeDocument(chapterId: string, documentId: string): Promise<ChapterDocumentAck>;
@@ -219,6 +228,11 @@ export class DbStorage implements IStorage {
 
   async createAdminUser(insertUser: InsertAdminUser): Promise<AdminUser> {
     const result = await db.insert(adminUsers).values(insertUser).returning();
+    return result[0];
+  }
+
+  async updateAdminUser(id: string, user: Partial<InsertAdminUser>): Promise<AdminUser | undefined> {
+    const result = await db.update(adminUsers).set(user).where(eq(adminUsers.id, id)).returning();
     return result[0];
   }
 
@@ -541,29 +555,36 @@ export class DbStorage implements IStorage {
   }
 
   async getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]> {
-    let query = sql`
+    let matchedTemplateCondition = sql`kt.id IS NOT NULL`;
+
+    if (year) {
+      matchedTemplateCondition = sql`${matchedTemplateCondition} AND kt.year = ${year}`;
+    }
+
+    if (timeframe === "yearly") {
+      matchedTemplateCondition = sql`${matchedTemplateCondition} AND (kt.timeframe = 'yearly' OR kt.timeframe = 'both')`;
+    } else if (timeframe === "quarterly") {
+      matchedTemplateCondition = sql`${matchedTemplateCondition} AND (kt.timeframe = 'quarterly' OR kt.timeframe = 'both')`;
+    } else if (timeframe && timeframe !== "all") {
+      matchedTemplateCondition = sql`${matchedTemplateCondition} AND kt.timeframe = ${timeframe}`;
+    }
+
+    if (quarter && timeframe === "quarterly") {
+      matchedTemplateCondition = sql`${matchedTemplateCondition} AND kt.quarter = ${quarter}`;
+    }
+
+    const query = sql`
       SELECT 
         c.id as chapter_id,
         c.name as chapter_name,
-        COUNT(CASE WHEN kc.is_completed = true THEN 1 END)::int as completed_kpis,
-        COUNT(CASE WHEN kc.is_completed = true THEN 1 END)::int as score
+        COUNT(CASE WHEN kc.is_completed = true AND ${matchedTemplateCondition} THEN 1 END)::int as completed_kpis,
+        COUNT(CASE WHEN kc.is_completed = true AND ${matchedTemplateCondition} THEN 1 END)::int as score
       FROM chapters c
       LEFT JOIN kpi_completions kc ON c.id = kc.chapter_id
       LEFT JOIN kpi_templates kt ON kc.kpi_template_id = kt.id
-      WHERE 1=1
+      GROUP BY c.id, c.name
+      ORDER BY score DESC, c.name ASC
     `;
-    
-    if (year) {
-      query = sql`${query} AND kt.year = ${year}`;
-    }
-    if (timeframe && timeframe !== 'all') {
-      query = sql`${query} AND kt.timeframe = ${timeframe}`;
-    }
-    if (quarter && timeframe === 'quarterly') {
-      query = sql`${query} AND kt.quarter = ${quarter}`;
-    }
-    
-    query = sql`${query} GROUP BY c.id, c.name ORDER BY score DESC, c.name ASC`;
     
     const result = await db.execute(query);
     return (result.rows as any[]).map(row => ({
@@ -780,7 +801,28 @@ export class DbStorage implements IStorage {
   }
 
   async getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]> {
-    return db.select().from(kpiCompletions).where(eq(kpiCompletions.chapterId, chapterId)).orderBy(desc(kpiCompletions.createdAt));
+    const query = sql`
+      SELECT kc.*
+      FROM kpi_completions kc
+      INNER JOIN kpi_templates kt ON kc.kpi_template_id = kt.id
+      WHERE kc.chapter_id = ${chapterId}
+      ${year ? sql`AND kt.year = ${year}` : sql``}
+      ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
+      ORDER BY kc.created_at DESC
+    `;
+
+    const result = await db.execute(query);
+    return (result.rows as any[]).map(row => ({
+      id: row.id,
+      kpiTemplateId: row.kpi_template_id,
+      chapterId: row.chapter_id,
+      numericValue: row.numeric_value,
+      textValue: row.text_value,
+      isCompleted: row.is_completed,
+      completedAt: row.completed_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   async getKpiCompletion(id: string): Promise<KpiCompletion | undefined> {
@@ -851,6 +893,20 @@ export class DbStorage implements IStorage {
 
   async getChapterDocumentAcks(chapterId: string): Promise<ChapterDocumentAck[]> {
     return db.select().from(chapterDocumentAck).where(eq(chapterDocumentAck.chapterId, chapterId));
+  }
+
+  async getImportantDocumentAcknowledgements(): Promise<ImportantDocumentAcknowledgement[]> {
+    return db
+      .select({
+        documentId: chapterDocumentAck.documentId,
+        chapterId: chapterDocumentAck.chapterId,
+        chapterName: chapters.name,
+        readAt: chapterDocumentAck.readAt,
+      })
+      .from(chapterDocumentAck)
+      .innerJoin(chapters, eq(chapterDocumentAck.chapterId, chapters.id))
+      .where(eq(chapterDocumentAck.acknowledged, true))
+      .orderBy(desc(chapterDocumentAck.readAt), asc(chapters.name));
   }
 
   async getChapterDocumentAck(chapterId: string, documentId: string): Promise<ChapterDocumentAck | undefined> {
