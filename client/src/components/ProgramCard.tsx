@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, ImageOff } from "lucide-react";
@@ -14,6 +14,7 @@ interface ProgramCardProps {
 
 const MAX_TITLE_LENGTH = 80;
 const MAX_DESCRIPTION_LENGTH = 170;
+const PROGRAM_FALLBACK_IMAGE = "/images/ysp-logo.png";
 
 function truncateText(text: string, maxLength: number) {
   const normalized = text.replace(/\s+/g, " ").trim();
@@ -22,10 +23,25 @@ function truncateText(text: string, maxLength: number) {
 }
 
 export default function ProgramCard({ id, title, description, image, onClick }: ProgramCardProps) {
-  const [imgError, setImgError] = useState(false);
   const displayUrl = getDisplayImageUrl(image);
+  const [currentImageSrc, setCurrentImageSrc] = useState(displayUrl || PROGRAM_FALLBACK_IMAGE);
+  const [showImageFallbackText, setShowImageFallbackText] = useState(false);
   const displayTitle = truncateText(title, MAX_TITLE_LENGTH);
   const displayDescription = truncateText(description, MAX_DESCRIPTION_LENGTH);
+
+  useEffect(() => {
+    setCurrentImageSrc(displayUrl || PROGRAM_FALLBACK_IMAGE);
+    setShowImageFallbackText(false);
+  }, [displayUrl, id]);
+
+  const handleImageError = () => {
+    if (currentImageSrc !== PROGRAM_FALLBACK_IMAGE) {
+      setCurrentImageSrc(PROGRAM_FALLBACK_IMAGE);
+      return;
+    }
+
+    setShowImageFallbackText(true);
+  };
 
   return (
     <Card 
@@ -34,12 +50,12 @@ export default function ProgramCard({ id, title, description, image, onClick }: 
       data-testid={`card-program-${id}`}
     >
       <div className="h-56 overflow-hidden bg-muted flex items-center justify-center">
-        {displayUrl && !imgError ? (
+        {!showImageFallbackText && currentImageSrc ? (
           <img 
-            src={displayUrl} 
+            src={currentImageSrc} 
             alt={title}
             className="w-full h-full object-cover"
-            onError={() => setImgError(true)}
+            onError={handleImageError}
             loading="lazy"
           />
         ) : (

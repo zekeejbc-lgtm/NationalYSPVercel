@@ -222,7 +222,11 @@ function Router() {
 
 function AppContent() {
   const [location] = useLocation();
-  const hideNavFooter = location.startsWith("/chapter-dashboard") || location.startsWith("/barangay-dashboard") || location === "/login";
+  const hideNavFooter =
+    location.startsWith("/admin") ||
+    location.startsWith("/chapter-dashboard") ||
+    location.startsWith("/barangay-dashboard") ||
+    location === "/login";
 
   useEffect(() => {
     const cleanPath = location.split("?")[0].split("#")[0] || "/";

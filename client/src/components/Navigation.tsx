@@ -27,13 +27,13 @@ export default function Navigation() {
       <div className="max-w-7xl mx-auto px-4 md:px-8">
         <div className="flex h-16 items-center justify-between">
           <Link href="/" data-testid="link-home">
-            <div className="flex items-center gap-3 hover-elevate px-2 py-1 rounded-md transition-all">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-3 hover-elevate px-2 py-1 rounded-md transition-all">
               <img 
                 src="/images/ysp-logo.png" 
                 alt="Youth Service Philippines Logo" 
-                className="h-10 w-auto"
+                className="h-8 sm:h-10 w-auto"
               />
-              <span className="font-bold text-lg hidden sm:inline">
+              <span className="font-bold text-sm sm:text-lg inline max-w-[180px] sm:max-w-none truncate">
                 Youth Service Philippines
               </span>
             </div>

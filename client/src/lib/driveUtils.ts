@@ -66,17 +66,22 @@ export function getDisplayImageUrl(imageUrl: string): string {
     return "";
   }
 
-  if (isDriveUrl(imageUrl)) {
-    return normalizeDriveImageUrl(imageUrl);
+  const sanitizedUrl = imageUrl.trim();
+  if (!sanitizedUrl) {
+    return "";
   }
 
-  if (isIbbPageUrl(imageUrl)) {
-    const proxyUrl = getImageProxyUrl(imageUrl);
+  if (isDriveUrl(sanitizedUrl)) {
+    return normalizeDriveImageUrl(sanitizedUrl);
+  }
+
+  if (isIbbPageUrl(sanitizedUrl)) {
+    const proxyUrl = getImageProxyUrl(sanitizedUrl);
     if (IMAGE_DEBUG_ENABLED) {
-      console.log("[Image Debug] Using image proxy URL", { imageUrl, proxyUrl });
+      console.log("[Image Debug] Using image proxy URL", { imageUrl: sanitizedUrl, proxyUrl });
     }
     return proxyUrl;
   }
 
-  return imageUrl;
+  return sanitizedUrl;
 }

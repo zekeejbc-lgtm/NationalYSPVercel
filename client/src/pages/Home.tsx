@@ -57,10 +57,12 @@ export default function Home() {
 
           {programs.length > 4 && (
             <div className="mt-6 flex justify-center">
-              <Link href="/programs" data-testid="link-home-programs-show-more">
-                <a className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline">
-                  Show more
-                </a>
+              <Link
+                href="/programs"
+                data-testid="link-home-programs-show-more"
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline"
+              >
+                Show more
               </Link>
             </div>
           )}
@@ -83,10 +85,12 @@ export default function Home() {
           </div>
 
           <div className="mt-6 flex justify-center">
-            <Link href="/membership" data-testid="link-home-chapters-show-more">
-              <a className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline">
-                Show more
-              </a>
+            <Link
+              href="/membership"
+              data-testid="link-home-chapters-show-more"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline"
+            >
+              Show more
             </Link>
           </div>
         </div>

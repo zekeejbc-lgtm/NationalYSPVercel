@@ -10,13 +10,26 @@ interface ProgramDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const PROGRAM_FALLBACK_IMAGE = "/images/ysp-logo.png";
+
 export default function ProgramDetailsDialog({ program, open, onOpenChange }: ProgramDetailsDialogProps) {
-  const [imgError, setImgError] = useState(false);
   const dialogImageUrl = program ? getDisplayImageUrl(program.image) : "";
+  const [currentImageSrc, setCurrentImageSrc] = useState(dialogImageUrl || PROGRAM_FALLBACK_IMAGE);
+  const [showImageFallbackText, setShowImageFallbackText] = useState(false);
 
   useEffect(() => {
-    setImgError(false);
-  }, [program?.id, open]);
+    setCurrentImageSrc(dialogImageUrl || PROGRAM_FALLBACK_IMAGE);
+    setShowImageFallbackText(false);
+  }, [dialogImageUrl, program?.id, open]);
+
+  const handleImageError = () => {
+    if (currentImageSrc !== PROGRAM_FALLBACK_IMAGE) {
+      setCurrentImageSrc(PROGRAM_FALLBACK_IMAGE);
+      return;
+    }
+
+    setShowImageFallbackText(true);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -32,12 +45,12 @@ export default function ProgramDetailsDialog({ program, open, onOpenChange }: Pr
 
         {program && (
           <div className="min-h-0 flex-1 overflow-y-auto space-y-4 px-4 py-4 md:px-6 md:py-5">
-            {dialogImageUrl && !imgError ? (
+            {!showImageFallbackText && currentImageSrc ? (
               <img
-                src={dialogImageUrl}
+                src={currentImageSrc}
                 alt={program.title}
                 className="w-full max-h-[420px] object-contain rounded-xl bg-muted"
-                onError={() => setImgError(true)}
+                onError={handleImageError}
               />
             ) : (
               <div className="w-full h-48 bg-muted rounded-xl flex items-center justify-center">

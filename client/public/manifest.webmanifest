@@ -1,0 +1,29 @@
+{
+  "id": "/",
+  "name": "Youth Service Philippines National",
+  "short_name": "YSP National",
+  "description": "Official national website of Youth Service Philippines. Chapter websites are hosted on separate subdomains.",
+  "theme_color": "#f97316",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/images/ysp-logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/images/ysp-logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/images/ysp-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
