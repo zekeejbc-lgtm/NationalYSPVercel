@@ -175,7 +175,7 @@ export function attachErrorHandler() {
     const isSchemaMismatch = Boolean(errorCode && schemaMismatchCodes.has(errorCode));
 
     const status =
-      missingDbConfig || isDbConnectivityIssue
+      missingDbConfig || isDbConnectivityIssue || isSchemaMismatch
         ? 503
         : err.status || err.statusCode || 500;
 

@@ -46,6 +46,44 @@ type DbDiagnostics = {
   errorCode?: string;
 };
 
+const DEFAULT_DATA_INIT_TIMEOUT_MS = 6000;
+
+function getDefaultDataInitTimeoutMs() {
+  const parsed = Number.parseInt(
+    process.env.DEFAULT_DATA_INIT_TIMEOUT_MS || `${DEFAULT_DATA_INIT_TIMEOUT_MS}`,
+    10,
+  );
+
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return DEFAULT_DATA_INIT_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
+
+async function initializeDefaultsWithoutBlockingStartup() {
+  const timeoutMs = getDefaultDataInitTimeoutMs();
+
+  try {
+    await Promise.race([
+      storage.initializeDefaultData(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          const timeoutError = new Error(`initializeDefaultData timed out after ${timeoutMs}ms`);
+          (timeoutError as Error & { code?: string }).code = "DEFAULT_INIT_TIMEOUT";
+          reject(timeoutError);
+        }, timeoutMs);
+      }),
+    ]);
+    console.log("[startup] Default data initialization finished");
+  } catch (error: any) {
+    console.error("[startup] Failed to initialize default data", {
+      message: error?.message,
+      code: error?.code,
+    });
+  }
+}
+
 async function getDbDiagnostics(): Promise<DbDiagnostics> {
   if (!hasDatabaseUrl) {
     return {
@@ -2091,11 +2129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   if (process.env.DATABASE_URL) {
-    try {
-      await storage.initializeDefaultData();
-    } catch (error) {
-      console.error("[startup] Failed to initialize default data", error);
-    }
+    void initializeDefaultsWithoutBlockingStartup();
   } else if (process.env.NODE_ENV === "development") {
     console.warn(
       "[startup] DATABASE_URL is not set; skipping database initialization in development.",

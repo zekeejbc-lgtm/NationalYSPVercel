@@ -17,10 +17,31 @@ type SessionQueryCachePayload = {
 
 let sessionPersistenceInitialized = false;
 
+type ParsedResponsePayload<T = unknown> = {
+  data: T | null;
+  text: string;
+};
+
+async function readResponsePayload<T = unknown>(res: Response): Promise<ParsedResponsePayload<T>> {
+  const text = await res.text();
+  if (!text) {
+    return { data: null, text: "" };
+  }
+
+  try {
+    return { data: JSON.parse(text) as T, text };
+  } catch {
+    return { data: null, text };
+  }
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    const { data, text } = await readResponsePayload<{ error?: string; message?: string }>(res);
+    const normalizedMessage =
+      data?.error || data?.message || text.trim() || res.statusText || "Request failed";
+
+    throw new Error(`${res.status}: ${normalizedMessage}`);
   }
 }
 
@@ -37,33 +58,41 @@ export async function apiRequest(
   });
 
   await throwIfResNotOk(res);
-  
-  const contentType = res.headers.get("content-type");
-  if (contentType && contentType.includes("application/json")) {
-    return await res.json();
-  }
-  
-  return null;
+
+  const payload = await readResponsePayload(res);
+  return payload.data;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
-export const getQueryFn: <T>(options: {
+export const getQueryFn = <T>(options: {
   on401: UnauthorizedBehavior;
-}) => QueryFunction<T> =
-  ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+}): QueryFunction<T> => {
+  const { on401: unauthorizedBehavior } = options;
+
+  return async ({ queryKey }) => {
     const url = queryKey[0] as string;
     const res = await fetch(url, {
       credentials: "include",
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+      return null as unknown as T;
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+
+    const payload = await readResponsePayload<T>(res);
+    if (payload.data !== null) {
+      return payload.data;
+    }
+
+    if (!payload.text.trim()) {
+      return null as T;
+    }
+
+    throw new Error(`Expected JSON response for ${url}`);
   };
+};
 
 function canUseSessionStorage() {
   return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";

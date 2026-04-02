@@ -21,6 +21,24 @@ interface AuthResponse {
   };
 }
 
+type ParsedResponsePayload<T = unknown> = {
+  data: T | null;
+  text: string;
+};
+
+async function readResponsePayload<T = unknown>(response: Response): Promise<ParsedResponsePayload<T>> {
+  const text = await response.text();
+  if (!text) {
+    return { data: null, text: "" };
+  }
+
+  try {
+    return { data: JSON.parse(text) as T, text };
+  } catch {
+    return { data: null, text };
+  }
+}
+
 export default function Login() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
@@ -41,7 +59,19 @@ export default function Login() {
       console.log("[Login] Checking existing auth...");
       try {
         const response = await fetch("/api/auth/check", { credentials: "include" });
-        const data: AuthResponse = await response.json();
+        const payload = await readResponsePayload<AuthResponse>(response);
+        const data = payload.data;
+
+        if (!response.ok) {
+          const fallbackMessage =
+            payload.text.trim() || `Auth check failed (${response.status})`;
+          throw new Error(fallbackMessage);
+        }
+
+        if (!data) {
+          throw new Error("Auth check returned invalid response format");
+        }
+
         console.log("[Login] Auth check result:", data);
         
         if (showDebug) {
@@ -115,13 +145,23 @@ export default function Login() {
         body: JSON.stringify({ username, password }),
         credentials: "include",
       });
+
+      const payload = await readResponsePayload<{ success?: boolean; user?: AuthResponse["user"]; error?: string; message?: string }>(response);
+      const data = payload.data;
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.message || "Invalid credentials");
+        const errorMessage =
+          data?.error ||
+          data?.message ||
+          payload.text.trim() ||
+          "Invalid credentials";
+        throw new Error(errorMessage);
       }
-      
-      const data = await response.json();
+
+      if (!data) {
+        throw new Error("Login returned invalid response format");
+      }
+
       console.log("[Login] LOGIN_SUCCESS, payload keys:", Object.keys(data));
       console.log("[Login] Login response:", data);
       
