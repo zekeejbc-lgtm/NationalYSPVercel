@@ -1,11 +1,22 @@
 import "dotenv/config";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import * as appModule from "../server/app";
 
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 12000;
 
 let serverlessBootstrapPromise: Promise<void> | null = null;
 let appHandler: ((req: IncomingMessage, res: ServerResponse) => void) | null = null;
+let appModulePromise: Promise<typeof import("../server/app")> | null = null;
+
+async function loadAppModule() {
+  if (!appModulePromise) {
+    appModulePromise = import("../server/app").catch((error) => {
+      appModulePromise = null;
+      throw error;
+    });
+  }
+
+  return appModulePromise;
+}
 
 function getBootstrapTimeoutMs() {
   const parsed = Number.parseInt(
@@ -43,6 +54,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 async function ensureServerlessBootstrap() {
   if (!serverlessBootstrapPromise) {
     serverlessBootstrapPromise = (async () => {
+      const appModule = await loadAppModule();
       await appModule.initializeRoutes();
       appModule.attachErrorHandler();
       appHandler = appModule.app as unknown as (req: IncomingMessage, res: ServerResponse) => void;
