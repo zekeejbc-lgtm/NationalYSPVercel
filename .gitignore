@@ -7,3 +7,8 @@ vite.config.ts.*
 .env
 .env.*
 !.env.example
+
+# Local AI tooling artifacts
+.claude/
+.junie/
+.vscode/mcp.json
