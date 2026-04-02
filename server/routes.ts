@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { hasDatabaseUrl, pool } from "./db";
 import multer from "multer";
 import fs from "node:fs";
 import path from "path";
@@ -27,6 +28,85 @@ import {
   insertNationalRequestSchema
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
+
+const REQUIRED_PUBLIC_TABLES = ["programs", "chapters", "stats"];
+
+type DbDiagnostics = {
+  status:
+    | "ok"
+    | "missing-config"
+    | "pool-unavailable"
+    | "connection-failed"
+    | "schema-mismatch";
+  hasDatabaseUrl: boolean;
+  canConnect: boolean;
+  missingTables: string[];
+  details: string;
+  pingMs?: number;
+  errorCode?: string;
+};
+
+async function getDbDiagnostics(): Promise<DbDiagnostics> {
+  if (!hasDatabaseUrl) {
+    return {
+      status: "missing-config",
+      hasDatabaseUrl: false,
+      canConnect: false,
+      missingTables: [...REQUIRED_PUBLIC_TABLES],
+      details: "DATABASE_URL is not set",
+    };
+  }
+
+  if (!pool) {
+    return {
+      status: "pool-unavailable",
+      hasDatabaseUrl: true,
+      canConnect: false,
+      missingTables: [...REQUIRED_PUBLIC_TABLES],
+      details: "Database pool failed to initialize",
+    };
+  }
+
+  const startedAt = Date.now();
+
+  try {
+    await pool.query("select 1 as ok");
+
+    const tableResult = await pool.query<{ table_name: string }>(
+      `
+      select table_name
+      from information_schema.tables
+      where table_schema = 'public' and table_name = any($1::text[])
+      `,
+      [REQUIRED_PUBLIC_TABLES],
+    );
+
+    const existingTables = new Set(tableResult.rows.map((row) => row.table_name));
+    const missingTables = REQUIRED_PUBLIC_TABLES.filter((table) => !existingTables.has(table));
+
+    return {
+      status: missingTables.length === 0 ? "ok" : "schema-mismatch",
+      hasDatabaseUrl: true,
+      canConnect: true,
+      missingTables,
+      details:
+        missingTables.length === 0
+          ? "Database connection and required tables are healthy"
+          : `Missing required public tables: ${missingTables.join(", ")}`,
+      pingMs: Date.now() - startedAt,
+    };
+  } catch (error: any) {
+    return {
+      status: "connection-failed",
+      hasDatabaseUrl: true,
+      canConnect: false,
+      missingTables: [...REQUIRED_PUBLIC_TABLES],
+      details: error?.message || "Failed to connect to the database",
+      errorCode: typeof error?.code === "string" ? error.code : undefined,
+      pingMs: Date.now() - startedAt,
+    };
+  }
+}
 
 function normalizeDriveUrl(url: string): string {
   if (!url || !url.includes("drive.google.com")) return url;
@@ -372,6 +452,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.status(502).json({ error: "Failed to resolve image URL" });
     }
+  });
+
+  app.get("/api/health", async (_req, res) => {
+    const db = await getDbDiagnostics();
+    const healthy = db.status === "ok";
+
+    res.status(healthy ? 200 : 503).json({
+      healthy,
+      service: "api",
+      timestamp: new Date().toISOString(),
+      checks: {
+        database: {
+          status: db.status,
+          hasDatabaseUrl: db.hasDatabaseUrl,
+          canConnect: db.canConnect,
+          missingTables: db.missingTables,
+          details: db.details,
+          pingMs: db.pingMs,
+          errorCode: db.errorCode,
+        },
+      },
+    });
+  });
+
+  app.get("/api/health/debug", async (_req, res) => {
+    const db = await getDbDiagnostics();
+    const healthy = db.status === "ok";
+
+    res.status(healthy ? 200 : 503).json({
+      healthy,
+      service: "api",
+      timestamp: new Date().toISOString(),
+      runtime: {
+        nodeEnv: process.env.NODE_ENV || "unknown",
+        vercelEnv: process.env.VERCEL_ENV || "not-vercel",
+        region: process.env.VERCEL_REGION || "unknown",
+      },
+      checks: {
+        database: {
+          status: db.status,
+          hasDatabaseUrl: db.hasDatabaseUrl,
+          canConnect: db.canConnect,
+          requiredTables: REQUIRED_PUBLIC_TABLES,
+          missingTables: db.missingTables,
+          details: db.details,
+          pingMs: db.pingMs,
+          errorCode: db.errorCode,
+        },
+      },
+    });
   });
   
   app.post("/api/auth/login/admin", async (req, res) => {

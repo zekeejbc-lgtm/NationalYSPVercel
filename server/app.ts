@@ -1,5 +1,6 @@
 import { type Server } from "node:http";
 import net from "node:net";
+import "express-async-errors";
 
 import express, {
   type Express,
@@ -149,13 +150,49 @@ export function attachErrorHandler() {
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const missingDbConfig = typeof err?.message === "string" && err.message.includes("DATABASE_URL must be set");
-    const status = missingDbConfig ? 503 : err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const message = typeof err?.message === "string" ? err.message : "Internal Server Error";
+    const errorCode = typeof err?.code === "string" ? err.code : undefined;
 
-    console.error("[api-error]", { status, message });
+    const missingDbConfig =
+      message.includes("DATABASE_URL must be set") ||
+      message.includes("DATABASE_URL is invalid or unusable");
+
+    const dbConnectivityCodes = new Set([
+      "ECONNREFUSED",
+      "ENOTFOUND",
+      "ETIMEDOUT",
+      "EAI_AGAIN",
+      "08001",
+      "08006",
+      "28P01",
+      "3D000",
+      "57P01",
+      "53300",
+    ]);
+
+    const schemaMismatchCodes = new Set(["42P01", "42703"]);
+    const isDbConnectivityIssue = Boolean(errorCode && dbConnectivityCodes.has(errorCode));
+    const isSchemaMismatch = Boolean(errorCode && schemaMismatchCodes.has(errorCode));
+
+    const status =
+      missingDbConfig || isDbConnectivityIssue
+        ? 503
+        : err.status || err.statusCode || 500;
+
+    const responseMessage = missingDbConfig
+      ? "Database configuration is missing on the server"
+      : isDbConnectivityIssue
+      ? "Database is currently unavailable"
+      : isSchemaMismatch
+      ? "Database schema is out of sync with the application"
+      : message;
+
+    console.error("[api-error]", { status, message, code: errorCode });
     if (!res.headersSent) {
-      res.status(status).json({ message });
+      res.status(status).json({
+        message: responseMessage,
+        code: errorCode,
+      });
       return;
     }
 
