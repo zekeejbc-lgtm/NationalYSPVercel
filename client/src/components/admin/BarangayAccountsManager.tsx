@@ -12,9 +12,11 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, Trash2, MapPin, Key } from "lucide-react";
 import type { Chapter, BarangayUser } from "@shared/schema";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function BarangayAccountsManager() {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [selectedChapterId, setSelectedChapterId] = useState<string>("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newBarangayName, setNewBarangayName] = useState("");
@@ -121,6 +123,14 @@ export default function BarangayAccountsManager() {
     resetPasswordMutation.mutate(user.id);
   };
 
+  const handleDeleteUser = async (id: string) => {
+    if (!(await confirmDelete("Delete this barangay account?", "Delete Barangay Account"))) {
+      return;
+    }
+
+    deleteUserMutation.mutate(id);
+  };
+
   const selectedChapter = chapters.find(c => c.id === selectedChapterId);
 
   return (
@@ -210,11 +220,7 @@ export default function BarangayAccountsManager() {
                       <Button
                         size="icon"
                         variant="ghost"
-                        onClick={() => {
-                          if (confirm("Delete this barangay account?")) {
-                            deleteUserMutation.mutate(user.id);
-                          }
-                        }}
+                        onClick={() => handleDeleteUser(user.id)}
                         disabled={deleteUserMutation.isPending}
                         data-testid={`button-delete-barangay-user-${user.id}`}
                       >

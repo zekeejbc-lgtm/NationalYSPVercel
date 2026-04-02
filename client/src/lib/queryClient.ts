@@ -2,6 +2,9 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const SESSION_QUERY_CACHE_KEY = "ysp-query-cache-v1";
 const SESSION_QUERY_CACHE_TTL_MS = 1000 * 60 * 30;
+const MAX_QUERY_RETRIES = 2;
+
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 type SessionQueryCacheEntry = {
   queryKey: unknown[];
@@ -43,6 +46,33 @@ async function throwIfResNotOk(res: Response) {
 
     throw new Error(`${res.status}: ${normalizedMessage}`);
   }
+}
+
+function extractStatusCode(error: unknown) {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+
+  const match = error.message.match(/^(\d{3}):/);
+  if (!match) {
+    return null;
+  }
+
+  const statusCode = Number.parseInt(match[1], 10);
+  return Number.isNaN(statusCode) ? null : statusCode;
+}
+
+function shouldRetryQuery(failureCount: number, error: unknown) {
+  if (failureCount >= MAX_QUERY_RETRIES) {
+    return false;
+  }
+
+  const statusCode = extractStatusCode(error);
+  if (statusCode !== null) {
+    return RETRYABLE_STATUS_CODES.has(statusCode);
+  }
+
+  return true;
 }
 
 export async function apiRequest(
@@ -240,7 +270,8 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: 0,
       gcTime: SESSION_QUERY_CACHE_TTL_MS,
-      retry: false,
+      retry: shouldRetryQuery,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 4000),
     },
     mutations: {
       retry: false,

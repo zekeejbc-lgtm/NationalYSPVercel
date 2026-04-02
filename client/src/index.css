@@ -221,6 +221,37 @@
     -webkit-line-clamp: unset !important;
   }
 
+  @keyframes admin-card-enter {
+    0% {
+      opacity: 0;
+      transform: translateY(8px) scale(0.995);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes admin-card-exit {
+    0% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(6px) scale(0.99);
+    }
+  }
+
+  .admin-card-enter {
+    animation: admin-card-enter 220ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+
+  .admin-card-exit {
+    animation: admin-card-exit 180ms ease-in both;
+    pointer-events: none;
+  }
+
   @keyframes skeleton-shimmer {
     0% {
       transform: translateX(-100%);
@@ -251,6 +282,11 @@
 
   @media (prefers-reduced-motion: reduce) {
     .skeleton-shimmer::after {
+      animation: none;
+    }
+
+    .admin-card-enter,
+    .admin-card-exit {
       animation: none;
     }
   }

@@ -84,14 +84,14 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
         <div className="space-y-4">
           {templates.map((kpi) => (
             <div key={kpi.id} className="p-4 border rounded-lg hover-elevate">
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex-1">
-                  <h4 className="font-medium">{kpi.name}</h4>
+                  <h4 className="font-medium break-normal">{kpi.name}</h4>
                   {kpi.description && (
-                    <p className="text-sm text-muted-foreground mt-1">{kpi.description}</p>
+                    <p className="mt-1 text-sm text-muted-foreground break-normal">{kpi.description}</p>
                   )}
                 </div>
-                <Badge variant="outline">{getScopeLabel(kpi.scope)}</Badge>
+                <Badge variant="outline" className="self-start sm:self-auto">{getScopeLabel(kpi.scope)}</Badge>
               </div>
               <div className="flex items-center gap-4 mt-3 text-sm text-muted-foreground flex-wrap">
                 {kpi.targetValue && (

@@ -1,4 +1,7 @@
 export const IMAGE_DEBUG_ENABLED = import.meta.env.DEV && import.meta.env.VITE_IMAGE_DEBUG === "true";
+export const DEFAULT_IMAGE_FALLBACK_SRC = "/images/ysp-logo.png";
+
+const FALLBACK_APPLIED_DATASET_KEY = "fallbackApplied";
 
 export function extractDriveFileId(url: string): string | null {
   if (!url) return null;
@@ -84,4 +87,27 @@ export function getDisplayImageUrl(imageUrl: string): string {
   }
 
   return sanitizedUrl;
+}
+
+export function applyImageFallback(target: HTMLImageElement, fallbackSrc = DEFAULT_IMAGE_FALLBACK_SRC): boolean {
+  if (!target) {
+    return false;
+  }
+
+  if (target.dataset[FALLBACK_APPLIED_DATASET_KEY] === "true") {
+    return false;
+  }
+
+  target.dataset[FALLBACK_APPLIED_DATASET_KEY] = "true";
+  target.src = fallbackSrc;
+  return true;
+}
+
+export function resetImageFallback(target: HTMLImageElement): void {
+  if (!target) {
+    return;
+  }
+
+  delete target.dataset[FALLBACK_APPLIED_DATASET_KEY];
+  target.style.removeProperty("display");
 }

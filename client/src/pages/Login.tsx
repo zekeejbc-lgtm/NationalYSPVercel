@@ -26,6 +26,66 @@ type ParsedResponsePayload<T = unknown> = {
   text: string;
 };
 
+const LAST_ROUTE_STORAGE_KEY = "ysp:last-route:v1";
+
+function readLastRoute() {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return null;
+  }
+
+  const route = window.sessionStorage.getItem(LAST_ROUTE_STORAGE_KEY);
+  return route && route.trim().length > 0 ? route : null;
+}
+
+function isAllowedRouteForRole(route: string, role: "admin" | "chapter" | "barangay") {
+  const pathname = route.split("?")[0].split("#")[0] || "/";
+
+  if (pathname === "/my-profile") {
+    return true;
+  }
+
+  if (role === "admin") {
+    return pathname === "/admin";
+  }
+
+  if (role === "chapter") {
+    return pathname === "/chapter-dashboard";
+  }
+
+  return pathname === "/barangay-dashboard";
+}
+
+function resolveTargetRoute(
+  role: "admin" | "chapter" | "barangay",
+  mustChangePassword?: boolean,
+) {
+  const fallback =
+    role === "admin"
+      ? "/admin"
+      : role === "chapter"
+        ? mustChangePassword
+          ? "/chapter-dashboard?changePassword=true"
+          : "/chapter-dashboard"
+        : mustChangePassword
+          ? "/barangay-dashboard?changePassword=true"
+          : "/barangay-dashboard";
+
+  const lastRoute = readLastRoute();
+  if (!lastRoute || !isAllowedRouteForRole(lastRoute, role)) {
+    return fallback;
+  }
+
+  if (mustChangePassword && role === "chapter") {
+    return "/chapter-dashboard?changePassword=true";
+  }
+
+  if (mustChangePassword && role === "barangay") {
+    return "/barangay-dashboard?changePassword=true";
+  }
+
+  return lastRoute;
+}
+
 async function readResponsePayload<T = unknown>(response: Response): Promise<ParsedResponsePayload<T>> {
   const text = await response.text();
   if (!text) {
@@ -85,29 +145,11 @@ export default function Login() {
         if (data.authenticated && data.user) {
           const userRole = data.user.role;
           console.log("[Login] Already authenticated, role:", userRole);
-          
-          if (userRole === "admin") {
-            console.log("[Login] Redirecting to /admin");
+          if (userRole === "admin" || userRole === "chapter" || userRole === "barangay") {
+            const targetRoute = resolveTargetRoute(userRole, data.user.mustChangePassword);
+            console.log("[Login] Redirecting to:", targetRoute);
             hasRedirected.current = true;
-            setLocation("/admin");
-            return;
-          } else if (userRole === "chapter") {
-            console.log("[Login] Redirecting to /chapter-dashboard");
-            hasRedirected.current = true;
-            if (data.user.mustChangePassword) {
-              setLocation("/chapter-dashboard?changePassword=true");
-            } else {
-              setLocation("/chapter-dashboard");
-            }
-            return;
-          } else if (userRole === "barangay") {
-            console.log("[Login] Redirecting to /barangay-dashboard");
-            hasRedirected.current = true;
-            if (data.user.mustChangePassword) {
-              setLocation("/barangay-dashboard?changePassword=true");
-            } else {
-              setLocation("/barangay-dashboard");
-            }
+            setLocation(targetRoute);
             return;
           } else {
             console.log("[Login] Unknown role:", userRole);
@@ -177,12 +219,7 @@ export default function Login() {
         throw new Error("Role not found. Please contact admin.");
       }
 
-      const targetPath =
-        userRole === "admin"
-          ? "/admin"
-          : userRole === "barangay"
-            ? "/barangay-dashboard"
-            : "/chapter-dashboard";
+      const targetPath = resolveTargetRoute(userRole, data.user?.mustChangePassword);
       console.log("[Login] REDIRECT_TO:", targetPath);
       
       toast({
@@ -193,22 +230,7 @@ export default function Login() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       
       hasRedirected.current = true;
-      
-      if (userRole === "admin") {
-        setLocation("/admin");
-      } else if (userRole === "barangay") {
-        if (data?.user?.mustChangePassword) {
-          setLocation("/barangay-dashboard?changePassword=true");
-        } else {
-          setLocation("/barangay-dashboard");
-        }
-      } else {
-        if (data?.user?.mustChangePassword) {
-          setLocation("/chapter-dashboard?changePassword=true");
-        } else {
-          setLocation("/chapter-dashboard");
-        }
-      }
+      setLocation(targetPath);
     } catch (error: any) {
       console.log("[Login] Login failed:", error.message);
       toast({

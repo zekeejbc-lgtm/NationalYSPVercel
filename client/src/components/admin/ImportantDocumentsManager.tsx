@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus, ExternalLink, FileText } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ImportantDocument } from "@shared/schema";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 type DocumentAcknowledgement = {
   documentId: string;
@@ -20,8 +21,10 @@ type DocumentAcknowledgement = {
 
 export default function ImportantDocumentsManager() {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [editingDocument, setEditingDocument] = useState<ImportantDocument | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [showAcknowledgementsByDocumentId, setShowAcknowledgementsByDocumentId] = useState<Record<string, boolean>>({});
   const [formData, setFormData] = useState({
     title: "",
     url: "",
@@ -133,8 +136,15 @@ export default function ImportantDocumentsManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this document? This will also remove all chapter acknowledgements for this document.")) return;
+    if (!(await confirmDelete("Are you sure you want to delete this document? This will also remove all chapter acknowledgements for this document."))) return;
     deleteMutation.mutate(id);
+  };
+
+  const toggleAcknowledgementsVisibility = (documentId: string) => {
+    setShowAcknowledgementsByDocumentId((prev) => ({
+      ...prev,
+      [documentId]: !(prev[documentId] ?? true),
+    }));
   };
 
   if (isLoading) {
@@ -167,7 +177,11 @@ export default function ImportantDocumentsManager() {
             <p className="text-muted-foreground">No documents yet. Add your first document!</p>
           ) : (
             <div className="space-y-4">
-              {documents.map((document) => (
+              {documents.map((document) => {
+                const documentAcknowledgements = acknowledgementsByDocumentId[document.id] || [];
+                const isAcknowledgementsVisible = showAcknowledgementsByDocumentId[document.id] ?? true;
+
+                return (
                 <Card key={document.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-4">
@@ -190,16 +204,31 @@ export default function ImportantDocumentsManager() {
                           View Document <ExternalLink className="h-3 w-3" />
                         </a>
                         <div className="mt-3">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            Acknowledged by ({(acknowledgementsByDocumentId[document.id] || []).length})
-                          </p>
-                          {(acknowledgementsByDocumentId[document.id] || []).length === 0 ? (
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              Acknowledged by ({documentAcknowledgements.length})
+                            </p>
+                            {documentAcknowledgements.length > 0 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-xs"
+                                onClick={() => toggleAcknowledgementsVisibility(document.id)}
+                                data-testid={`button-toggle-acknowledgements-${document.id}`}
+                                aria-expanded={isAcknowledgementsVisible}
+                              >
+                                {isAcknowledgementsVisible ? "Hide" : "Show"}
+                              </Button>
+                            )}
+                          </div>
+                          {documentAcknowledgements.length === 0 ? (
                             <p className="text-xs text-muted-foreground mt-1">
                               No chapters have acknowledged this document yet.
                             </p>
-                          ) : (
+                          ) : isAcknowledgementsVisible ? (
                             <ul className="mt-1 space-y-1">
-                              {(acknowledgementsByDocumentId[document.id] || []).map((acknowledgement) => (
+                              {documentAcknowledgements.map((acknowledgement) => (
                                 <li
                                   key={`${acknowledgement.documentId}-${acknowledgement.chapterId}`}
                                   className="text-xs text-muted-foreground"
@@ -209,7 +238,7 @@ export default function ImportantDocumentsManager() {
                                 </li>
                               ))}
                             </ul>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                       <div className="flex gap-2 shrink-0">
@@ -233,7 +262,8 @@ export default function ImportantDocumentsManager() {
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

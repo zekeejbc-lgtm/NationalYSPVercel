@@ -64,7 +64,7 @@ import {
   nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, asc } from "drizzle-orm";
+import { eq, desc, and, sql, asc, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 export type ImportantDocumentAcknowledgement = {
@@ -72,6 +72,26 @@ export type ImportantDocumentAcknowledgement = {
   chapterId: string;
   chapterName: string;
   readAt: Date | null;
+};
+
+export type PublicChapterDirectoryEntry = {
+  id: string;
+  chapterId: string;
+  barangayId: string | null;
+  level: string;
+  position: string;
+  fullName: string;
+  contactNumber: string;
+  chapterEmail: string;
+};
+
+export type PublicBarangayDirectoryEntry = {
+  id: string;
+  chapterId: string;
+  barangayName: string;
+  presidentName: string | null;
+  presidentContactNumber: string | null;
+  presidentEmail: string | null;
 };
 
 export interface IStorage {
@@ -130,6 +150,7 @@ export interface IStorage {
   getPublication(id: string): Promise<Publication | undefined>;
   createPublication(publication: InsertPublication): Promise<Publication>;
   updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
+  updatePublicationBySourceProjectReportId(sourceProjectReportId: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
   deletePublication(id: string): Promise<boolean>;
 
   getProjectReports(): Promise<ProjectReport[]>;
@@ -143,6 +164,7 @@ export interface IStorage {
   getChapterKpiByYear(chapterId: string, year: number): Promise<ChapterKpi | undefined>;
   createChapterKpi(kpi: InsertChapterKpi): Promise<ChapterKpi>;
   updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined>;
+  deleteChapterKpi(id: string): Promise<boolean>;
 
   getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]>;
   getBarangayLeaderboard(chapterId: string): Promise<{ barangayId: string; barangayName: string; memberCount: number; rank: number }[]>;
@@ -156,6 +178,8 @@ export interface IStorage {
   getHouseholdSummary(): Promise<{ totalSubmissions: number; totalHouseholdSize: number; averageHouseholdSize: number }>;
 
   getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]>;
+  getPublicChapterDirectory(chapterId: string): Promise<PublicChapterDirectoryEntry[]>;
+  getPublicBarangayDirectory(chapterId: string): Promise<PublicBarangayDirectoryEntry[]>;
   getAllOfficers(): Promise<ChapterOfficer[]>;
   getChapterOfficer(id: string): Promise<ChapterOfficer | undefined>;
   createChapterOfficer(officer: InsertChapterOfficer): Promise<ChapterOfficer>;
@@ -180,6 +204,7 @@ export interface IStorage {
   createKpiCompletion(completion: InsertKpiCompletion): Promise<KpiCompletion>;
   updateKpiCompletion(id: string, completion: Partial<InsertKpiCompletion>): Promise<KpiCompletion | undefined>;
   markKpiCompleted(id: string): Promise<KpiCompletion | undefined>;
+  deleteKpiCompletion(id: string): Promise<boolean>;
 
   getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]>;
 
@@ -196,21 +221,25 @@ export interface IStorage {
   acknowledgeDocument(chapterId: string, documentId: string): Promise<ChapterDocumentAck>;
 
   getMouSubmissions(): Promise<MouSubmission[]>;
+  getMouSubmission(id: string): Promise<MouSubmission | undefined>;
   getMouSubmissionByChapter(chapterId: string): Promise<MouSubmission | undefined>;
   createMouSubmission(submission: InsertMouSubmission): Promise<MouSubmission>;
   updateMouSubmission(id: string, submission: Partial<InsertMouSubmission>): Promise<MouSubmission | undefined>;
+  deleteMouSubmission(id: string): Promise<boolean>;
 
   getChapterRequests(): Promise<ChapterRequest[]>;
   getChapterRequestsByChapter(chapterId: string): Promise<ChapterRequest[]>;
   getChapterRequest(id: string): Promise<ChapterRequest | undefined>;
   createChapterRequest(request: InsertChapterRequest): Promise<ChapterRequest>;
   updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined>;
+  deleteChapterRequest(id: string): Promise<boolean>;
 
   getNationalRequests(): Promise<NationalRequest[]>;
   getNationalRequestsBySender(senderType: string, senderId: string): Promise<NationalRequest[]>;
   getNationalRequest(id: string): Promise<NationalRequest | undefined>;
   createNationalRequest(request: InsertNationalRequest): Promise<NationalRequest>;
   updateNationalRequest(id: string, request: Partial<InsertNationalRequest>): Promise<NationalRequest | undefined>;
+  deleteNationalRequest(id: string): Promise<boolean>;
 
   initializeDefaultData(): Promise<void>;
 }
@@ -497,6 +526,15 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async updatePublicationBySourceProjectReportId(sourceProjectReportId: string, publication: Partial<InsertPublication>): Promise<Publication | undefined> {
+    const result = await db
+      .update(publications)
+      .set(publication)
+      .where(eq(publications.sourceProjectReportId, sourceProjectReportId))
+      .returning();
+    return result[0];
+  }
+
   async deletePublication(id: string): Promise<boolean> {
     const result = await db.delete(publications).where(eq(publications.id, id)).returning();
     return result.length > 0;
@@ -526,6 +564,7 @@ export class DbStorage implements IStorage {
   }
 
   async deleteProjectReport(id: string): Promise<boolean> {
+    await db.delete(publications).where(eq(publications.sourceProjectReportId, id));
     const result = await db.delete(projectReports).where(eq(projectReports.id, id)).returning();
     return result.length > 0;
   }
@@ -552,6 +591,11 @@ export class DbStorage implements IStorage {
       updatedAt: new Date()
     }).where(eq(chapterKpis.id, id)).returning();
     return result[0];
+  }
+
+  async deleteChapterKpi(id: string): Promise<boolean> {
+    const result = await db.delete(chapterKpis).where(eq(chapterKpis.id, id)).returning();
+    return result.length > 0;
   }
 
   async getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]> {
@@ -660,6 +704,81 @@ export class DbStorage implements IStorage {
 
   async getChapterOfficers(chapterId: string): Promise<ChapterOfficer[]> {
     return db.select().from(chapterOfficers).where(eq(chapterOfficers.chapterId, chapterId)).orderBy(chapterOfficers.position);
+  }
+
+  async getPublicChapterDirectory(chapterId: string): Promise<PublicChapterDirectoryEntry[]> {
+    return db.select({
+      id: chapterOfficers.id,
+      chapterId: chapterOfficers.chapterId,
+      barangayId: chapterOfficers.barangayId,
+      level: chapterOfficers.level,
+      position: chapterOfficers.position,
+      fullName: chapterOfficers.fullName,
+      contactNumber: chapterOfficers.contactNumber,
+      chapterEmail: chapterOfficers.chapterEmail,
+    }).from(chapterOfficers).where(and(
+      eq(chapterOfficers.chapterId, chapterId),
+      isNull(chapterOfficers.barangayId),
+      sql`COALESCE(LOWER(${chapterOfficers.level}), 'chapter') <> 'barangay'`,
+      sql`LOWER(${chapterOfficers.position}) LIKE '%president%'`,
+      sql`LOWER(${chapterOfficers.position}) NOT LIKE '%barangay%'`,
+    )).orderBy(chapterOfficers.position);
+  }
+
+  async getPublicBarangayDirectory(chapterId: string): Promise<PublicBarangayDirectoryEntry[]> {
+    const chapterBarangays = await db.select({
+      id: barangayUsers.id,
+      chapterId: barangayUsers.chapterId,
+      barangayName: barangayUsers.barangayName,
+    }).from(barangayUsers).where(and(
+      eq(barangayUsers.chapterId, chapterId),
+      eq(barangayUsers.isActive, true),
+    )).orderBy(asc(barangayUsers.barangayName));
+
+    const barangayDirectory = await Promise.all(chapterBarangays.map(async (barangay: {
+      id: string;
+      chapterId: string;
+      barangayName: string;
+    }) => {
+      const officers = await db.select({
+        position: chapterOfficers.position,
+        fullName: chapterOfficers.fullName,
+        contactNumber: chapterOfficers.contactNumber,
+        chapterEmail: chapterOfficers.chapterEmail,
+      }).from(chapterOfficers).where(and(
+        eq(chapterOfficers.barangayId, barangay.id),
+      )).orderBy(asc(chapterOfficers.position));
+
+      const barangayPresident = officers.find((officer: {
+        position: string;
+        fullName: string;
+        contactNumber: string;
+        chapterEmail: string;
+      }) => {
+        const normalizedPosition = officer.position.toLowerCase();
+        return normalizedPosition.includes("barangay") && normalizedPosition.includes("president");
+      });
+
+      const fallbackPresident = officers.find((officer: {
+        position: string;
+        fullName: string;
+        contactNumber: string;
+        chapterEmail: string;
+      }) => officer.position.toLowerCase().includes("president"));
+
+      const president = barangayPresident ?? fallbackPresident;
+
+      return {
+        id: barangay.id,
+        chapterId: barangay.chapterId,
+        barangayName: barangay.barangayName,
+        presidentName: president?.fullName ?? null,
+        presidentContactNumber: president?.contactNumber ?? null,
+        presidentEmail: president?.chapterEmail ?? null,
+      };
+    }));
+
+    return barangayDirectory;
   }
 
   async getAllOfficers(): Promise<ChapterOfficer[]> {
@@ -859,6 +978,11 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async deleteKpiCompletion(id: string): Promise<boolean> {
+    const result = await db.delete(kpiCompletions).where(eq(kpiCompletions.id, id)).returning();
+    return result.length > 0;
+  }
+
   async getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]> {
     return db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.chapterId, chapterId)).orderBy(volunteerOpportunities.date);
   }
@@ -942,6 +1066,11 @@ export class DbStorage implements IStorage {
     return db.select().from(mouSubmissions).orderBy(desc(mouSubmissions.submittedAt));
   }
 
+  async getMouSubmission(id: string): Promise<MouSubmission | undefined> {
+    const result = await db.select().from(mouSubmissions).where(eq(mouSubmissions.id, id));
+    return result[0];
+  }
+
   async getMouSubmissionByChapter(chapterId: string): Promise<MouSubmission | undefined> {
     const result = await db.select().from(mouSubmissions).where(eq(mouSubmissions.chapterId, chapterId)).orderBy(desc(mouSubmissions.submittedAt));
     return result[0];
@@ -955,6 +1084,11 @@ export class DbStorage implements IStorage {
   async updateMouSubmission(id: string, submission: Partial<InsertMouSubmission>): Promise<MouSubmission | undefined> {
     const result = await db.update(mouSubmissions).set(submission).where(eq(mouSubmissions.id, id)).returning();
     return result[0];
+  }
+
+  async deleteMouSubmission(id: string): Promise<boolean> {
+    const result = await db.delete(mouSubmissions).where(eq(mouSubmissions.id, id)).returning();
+    return result.length > 0;
   }
 
   async getChapterRequests(): Promise<ChapterRequest[]> {
@@ -978,6 +1112,11 @@ export class DbStorage implements IStorage {
   async updateChapterRequest(id: string, request: Partial<InsertChapterRequest>): Promise<ChapterRequest | undefined> {
     const result = await db.update(chapterRequests).set(request).where(eq(chapterRequests.id, id)).returning();
     return result[0];
+  }
+
+  async deleteChapterRequest(id: string): Promise<boolean> {
+    const result = await db.delete(chapterRequests).where(eq(chapterRequests.id, id)).returning();
+    return result.length > 0;
   }
 
   async getNationalRequests(): Promise<NationalRequest[]> {
@@ -1006,6 +1145,11 @@ export class DbStorage implements IStorage {
       updatedAt: new Date()
     }).where(eq(nationalRequests.id, id)).returning();
     return result[0];
+  }
+
+  async deleteNationalRequest(id: string): Promise<boolean> {
+    const result = await db.delete(nationalRequests).where(eq(nationalRequests.id, id)).returning();
+    return result.length > 0;
   }
 
   async initializeDefaultData(): Promise<void> {

@@ -6,12 +6,19 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Calendar, Facebook, ExternalLink, Image, ImageOff } from "lucide-react";
 import { format } from "date-fns";
 import type { Publication } from "@shared/schema";
-import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  getDisplayImageUrl,
+  IMAGE_DEBUG_ENABLED,
+  resetImageFallback,
+} from "@/lib/driveUtils";
 
 const PUBLICATIONS_BATCH_SIZE = 3;
 
 export default function Publications() {
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [fallbackImages, setFallbackImages] = useState<Record<string, boolean>>({});
   const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
   const [visibleCount, setVisibleCount] = useState(PUBLICATIONS_BATCH_SIZE);
   const { data: publications = [], isLoading, isError } = useQuery<Publication[]>({
@@ -82,7 +89,13 @@ export default function Publications() {
             <div className="space-y-8">
               {visiblePublications.map((publication, index) => {
                 const photoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
+                const usesFallbackImage = Boolean(fallbackImages[publication.id]);
                 const hasImageError = Boolean(failedImages[publication.id]);
+                const cardImageSrc = hasImageError
+                  ? ""
+                  : usesFallbackImage
+                    ? DEFAULT_IMAGE_FALLBACK_SRC
+                    : photoUrl;
 
                 return (
                 <Card 
@@ -99,19 +112,28 @@ export default function Publications() {
                     }
                   }}
                 >
-                  {photoUrl && !hasImageError ? (
+                  {cardImageSrc ? (
                     <div className="relative w-full aspect-video">
                       <img
-                        src={photoUrl}
+                        src={cardImageSrc}
                         alt={publication.title}
                         className="w-full h-full object-cover"
-                        onError={() => {
+                        onLoad={(event) => {
+                          resetImageFallback(event.currentTarget);
+                        }}
+                        onError={(event) => {
+                          if (!usesFallbackImage && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                            setFallbackImages((prev) => ({ ...prev, [publication.id]: true }));
+                            return;
+                          }
+
                           setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
                           if (IMAGE_DEBUG_ENABLED) {
                             console.error("[Image Debug] Publication image failed", {
                               publicationId: publication.id,
                               title: publication.title,
                               photoUrl,
+                              attemptedFallback: usesFallbackImage,
                             });
                           }
                         }}
@@ -211,17 +233,31 @@ export default function Publications() {
             <div className="min-h-0 flex-1 overflow-y-auto space-y-4 px-4 py-4 md:px-6 md:py-5">
               {(() => {
                 const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
+                const selectedUsesFallback = Boolean(fallbackImages[selectedPublication.id]);
                 const selectedImageError = Boolean(failedImages[selectedPublication.id]);
+                const selectedImageSrc = selectedImageError
+                  ? ""
+                  : selectedUsesFallback
+                    ? DEFAULT_IMAGE_FALLBACK_SRC
+                    : selectedPhotoUrl;
 
-                if (selectedPhotoUrl && !selectedImageError) {
+                if (selectedImageSrc) {
                   return (
                     <img
-                      src={selectedPhotoUrl}
+                      src={selectedImageSrc}
                       alt={selectedPublication.title}
                       className="w-full max-h-[420px] object-contain rounded-xl bg-muted"
                       loading="lazy"
                       decoding="async"
-                      onError={() => {
+                      onLoad={(event) => {
+                        resetImageFallback(event.currentTarget);
+                      }}
+                      onError={(event) => {
+                        if (!selectedUsesFallback && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                          setFallbackImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
+                          return;
+                        }
+
                         setFailedImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
                       }}
                     />

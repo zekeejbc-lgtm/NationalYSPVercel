@@ -9,7 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  getDisplayImageUrl,
+  resetImageFallback,
+} from "@/lib/driveUtils";
 import LoadingState from "@/components/ui/loading-state";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { usePagination } from "@/hooks/use-pagination";
@@ -299,6 +304,16 @@ export default function VolunteerOpportunityPanel({ chapterId }: VolunteerOpport
                           src={displayPhotoUrl} 
                           alt={opp.eventName}
                           className="w-16 h-16 object-cover rounded-md flex-shrink-0"
+                          loading="lazy"
+                          decoding="async"
+                          onLoad={(event) => {
+                            resetImageFallback(event.currentTarget);
+                          }}
+                          onError={(event) => {
+                            if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                              event.currentTarget.style.display = "none";
+                            }
+                          }}
                         />
                       )}
                       <div className="flex-1">

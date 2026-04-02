@@ -14,6 +14,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { usePagination } from "@/hooks/use-pagination";
 import { UserCheck, Plus, Save, Trash2, Edit2, Phone, Mail, Calendar } from "lucide-react";
 import type { ChapterOfficer } from "@shared/schema";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 const OFFICER_POSITIONS = [
   "City/Municipality President",
@@ -83,6 +84,7 @@ function toDateInputValue(value: Date | string | null | undefined) {
 
 export default function OfficersPanel({ chapterId, level = "chapter", barangayId, chapterName }: OfficersPanelProps) {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -269,6 +271,14 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     resetKey: officers.length,
   });
 
+  const handleDeleteOfficer = async (officerId: string) => {
+    if (!(await confirmDelete("Remove this officer?", "Delete Officer"))) {
+      return;
+    }
+
+    deleteMutation.mutate(officerId);
+  };
+
   const renderOfficerRow = (officer: ChapterOfficer, useBarangayLabel = false, showActions = true) => {
     const displayPosition = ((level === "barangay" || useBarangayLabel) && officer.position === "City/Municipality President")
       ? "Barangay President"
@@ -320,11 +330,7 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
             <Button
               size="icon"
               variant="ghost"
-              onClick={() => {
-                if (confirm("Remove this officer?")) {
-                  deleteMutation.mutate(officer.id);
-                }
-              }}
+              onClick={() => handleDeleteOfficer(officer.id)}
               disabled={deleteMutation.isPending}
               data-testid={`button-delete-officer-${officer.id}`}
             >

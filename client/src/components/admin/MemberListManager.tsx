@@ -20,6 +20,7 @@ import { format } from "date-fns";
 import type { Chapter, Member } from "@shared/schema";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 interface AddMemberFormData {
   fullName: string;
@@ -33,6 +34,7 @@ interface AddMemberFormData {
 
 export default function MemberListManager() {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const isMobile = useIsMobile();
   const [filterChapter, setFilterChapter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -183,6 +185,14 @@ export default function MemberListManager() {
   const totalMembers = filteredMembers.length;
   const activeMembers = filteredMembers.filter(m => m.isActive).length;
   const registeredVoters = filteredMembers.filter(m => m.registeredVoter).length;
+
+  const handleDeleteMember = async (id: string) => {
+    if (!(await confirmDelete("Are you sure you want to delete this member?"))) {
+      return;
+    }
+
+    deleteMutation.mutate(id);
+  };
 
   return (
     <Card>
@@ -510,11 +520,7 @@ export default function MemberListManager() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          onClick={() => {
-                            if (confirm("Are you sure you want to delete this member?")) {
-                              deleteMutation.mutate(member.id);
-                            }
-                          }}
+                          onClick={() => handleDeleteMember(member.id)}
                           disabled={deleteMutation.isPending}
                           data-testid={`button-delete-member-${member.id}`}
                         >
@@ -613,11 +619,7 @@ export default function MemberListManager() {
                       <Button
                         size="icon"
                         variant="ghost"
-                        onClick={() => {
-                          if (confirm("Are you sure you want to delete this member?")) {
-                            deleteMutation.mutate(member.id);
-                          }
-                        }}
+                        onClick={() => handleDeleteMember(member.id)}
                         disabled={deleteMutation.isPending}
                         data-testid={`button-delete-member-${member.id}`}
                       >

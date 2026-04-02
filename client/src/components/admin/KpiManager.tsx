@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,9 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin, Trophy, TrendingUp, CheckCircle2, Clock3, Users, Search, Copy } from "lucide-react";
+import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin, Trophy, TrendingUp, CheckCircle2, Clock3, Users, Search, Copy, FileDown } from "lucide-react";
 import type { Chapter, KpiTemplate, KpiCompletion } from "@shared/schema";
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 interface BarangayUser {
   id: string;
@@ -44,10 +44,23 @@ interface TemplateAnalyticsRow {
   assignedCount: number;
   completedCount: number;
   completionRate: number;
-  completedPeople: string[];
+  completedPeople: Array<{ personName: string; chapterName: string }>;
   completedChapterNames: string[];
   pendingChapterNames: string[];
 }
+
+type PdfSectionOptions = {
+  rankings: boolean;
+  analytics: boolean;
+  charts: boolean;
+  kpiRequirements: boolean;
+  completionPeople: boolean;
+};
+
+type PdfChartOptions = {
+  leaderboard: boolean;
+  completionBreakdown: boolean;
+};
 
 const PIE_COLORS = ["#16a34a", "#f59e0b"];
 
@@ -59,6 +72,28 @@ const SCOPE_OPTIONS = [
   { value: "selected_barangays", label: "Selected Barangays" },
 ];
 
+const ORGANIZATION_REPORT_INFO = {
+  name: "Youth Service PH",
+  fullGovernmentName: "Youth Service to the Filipino Youth, Inc.",
+  motto: "Empowering Filipino Youth Through Community Service",
+  secRegistryNumber: "2023010080782-00",
+  facebook: "/YOUTHSERVICEPHILIPPINES",
+  website: "youthserviceph.org",
+  email: "national@youthserviceph.org",
+  logoPath: "/images/ysp-logo.png",
+};
+
+const formatManilaDateTime12h = (date: Date) =>
+  new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "long",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+
 export default function KpiManager() {
   const { toast } = useToast();
   const currentYear = new Date().getFullYear();
@@ -66,10 +101,27 @@ export default function KpiManager() {
   const [selectedQuarter, setSelectedQuarter] = useState<number | null>(null);
   const [viewTab, setViewTab] = useState<string>("templates");
   const [selectedChapterId, setSelectedChapterId] = useState<string>("");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [coverageSearch, setCoverageSearch] = useState("");
   const [selectedCoverageTemplateId, setSelectedCoverageTemplateId] = useState<string>("");
   const [isCoverageDialogOpen, setIsCoverageDialogOpen] = useState(false);
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [exportReportTitle, setExportReportTitle] = useState("KPI Summary Report");
+  const [pdfSectionOptions, setPdfSectionOptions] = useState<PdfSectionOptions>({
+    rankings: true,
+    analytics: true,
+    charts: true,
+    kpiRequirements: true,
+    completionPeople: true,
+  });
+  const [pdfChartOptions, setPdfChartOptions] = useState<PdfChartOptions>({
+    leaderboard: true,
+    completionBreakdown: true,
+  });
+  const [selectedPdfTemplateIds, setSelectedPdfTemplateIds] = useState<string[]>([]);
+
+  const leaderboardChartCardRef = useRef<HTMLDivElement | null>(null);
+  const completionBreakdownCardRef = useRef<HTMLDivElement | null>(null);
   
   const [isCreating, setIsCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -117,14 +169,16 @@ export default function KpiManager() {
     },
   });
 
+  const leaderboardTimeframe = selectedQuarter ? "quarterly" : "all";
+
   const { data: chapterLeaderboard = [], isLoading: isLeaderboardLoading } = useQuery<LeaderboardEntry[]>({
     queryKey: [
       "/api/leaderboard",
-      { timeframe: selectedQuarter ? "quarterly" : "yearly", year: selectedYear, quarter: selectedQuarter },
+      { timeframe: leaderboardTimeframe, year: selectedYear, quarter: selectedQuarter },
     ],
     queryFn: async () => {
       const params = new URLSearchParams({
-        timeframe: selectedQuarter ? "quarterly" : "yearly",
+        timeframe: leaderboardTimeframe,
         year: String(selectedYear),
       });
       if (selectedQuarter) {
@@ -424,12 +478,16 @@ export default function KpiManager() {
     ? Math.round((completedChapterKpis / activeChapterTemplates.length) * 100)
     : 0;
 
-  const topChapter = chapterLeaderboard[0];
-  const selectedChapterRank = chapterLeaderboard.findIndex(entry => entry.chapterId === selectedChapterId) + 1;
-  const activeChapterCount = chapterLeaderboard.filter(entry => entry.completedKpis > 0).length;
-  const averageScore = chapterLeaderboard.length > 0
-    ? Math.round(chapterLeaderboard.reduce((sum, entry) => sum + entry.score, 0) / chapterLeaderboard.length)
+  const chaptersWithCompletedKpis = chapterLeaderboard.filter((entry) => entry.completedKpis > 0);
+  const chaptersWithoutCompletedKpis = chapterLeaderboard.filter((entry) => entry.completedKpis === 0);
+  const topChapter = chaptersWithCompletedKpis[0] || chapterLeaderboard[0];
+  const hasCompletedChapterData = chaptersWithCompletedKpis.length > 0;
+  const selectedChapterRank = chaptersWithCompletedKpis.findIndex(entry => entry.chapterId === selectedChapterId) + 1;
+  const activeChapterCount = chaptersWithCompletedKpis.length;
+  const averageScore = chaptersWithCompletedKpis.length > 0
+    ? Math.round(chaptersWithCompletedKpis.reduce((sum, entry) => sum + entry.score, 0) / chaptersWithCompletedKpis.length)
     : 0;
+  const topChapterLeaderboardEntries = chaptersWithCompletedKpis.slice(0, 3);
 
   const templateAnalyticsRows = useMemo<TemplateAnalyticsRow[]>(() => {
     const activeTemplates = kpiTemplates.filter((template) => template.isActive);
@@ -475,16 +533,15 @@ export default function KpiManager() {
 
         const completedChapterNames = completedWithinAssigned.map((chapterId) => chapterById.get(chapterId)?.name || "Unknown chapter");
         const pendingChapterNames = pendingChapterIds.map((chapterId) => chapterById.get(chapterId)?.name || "Unknown chapter");
-
         const completedPeople = completedWithinAssigned.map((chapterId) => {
           const chapter = chapterById.get(chapterId);
-          if (!chapter) return "Unknown chapter";
+          const chapterName = chapter?.name || "Unknown chapter";
+          const personName = chapter?.contactPerson?.trim() || chapterName;
 
-          const contactPerson = chapter.contactPerson?.trim();
-          if (contactPerson) {
-            return `${contactPerson} (${chapter.name})`;
-          }
-          return chapter.name;
+          return {
+            personName,
+            chapterName,
+          };
         });
 
         const assignedCount = uniqueAssignedChapterIds.length;
@@ -506,31 +563,12 @@ export default function KpiManager() {
       })
       .sort((a, b) => b.completedCount - a.completedCount || a.templateName.localeCompare(b.templateName));
   }, [allChapterCompletions, barangayUsers, chapterById, chapters, kpiTemplates, selectedScopesByTemplate]);
-
-  useEffect(() => {
-    if (templateAnalyticsRows.length === 0) {
-      setSelectedTemplateId("");
-      return;
-    }
-
-    const templateExists = templateAnalyticsRows.some((row) => row.templateId === selectedTemplateId);
-    if (!selectedTemplateId || !templateExists) {
-      setSelectedTemplateId(templateAnalyticsRows[0].templateId);
-    }
-  }, [selectedTemplateId, templateAnalyticsRows]);
-
-  const selectedTemplateAnalytics = templateAnalyticsRows.find((row) => row.templateId === selectedTemplateId);
   const totalAssignedSubmissions = templateAnalyticsRows.reduce((sum, row) => sum + row.assignedCount, 0);
   const totalCompletedSubmissions = templateAnalyticsRows.reduce((sum, row) => sum + row.completedCount, 0);
   const overallCompletionRate = totalAssignedSubmissions > 0
     ? Math.round((totalCompletedSubmissions / totalAssignedSubmissions) * 100)
     : 0;
-
-  const chapterPerformanceChartData = chapterLeaderboard.slice(0, 10).map((entry) => ({
-    chapterName: entry.chapterName.length > 18 ? `${entry.chapterName.slice(0, 18)}...` : entry.chapterName,
-    score: entry.score,
-    completedKpis: entry.completedKpis,
-  }));
+  const allAssignedSubmissionsCompleted = totalAssignedSubmissions > 0 && totalCompletedSubmissions >= totalAssignedSubmissions;
 
   const overallCompletionPieData = [
     { name: "Completed", value: totalCompletedSubmissions },
@@ -545,6 +583,59 @@ export default function KpiManager() {
   }, [coverageSearch, templateAnalyticsRows]);
 
   const selectedCoverageTemplate = templateAnalyticsRows.find((row) => row.templateId === selectedCoverageTemplateId);
+  const selectedPdfTemplates = useMemo(() => {
+    const idSet = new Set(selectedPdfTemplateIds);
+    return templateAnalyticsRows.filter((row) => idSet.has(row.templateId));
+  }, [selectedPdfTemplateIds, templateAnalyticsRows]);
+
+  useEffect(() => {
+    if (templateAnalyticsRows.length === 0) {
+      setSelectedPdfTemplateIds([]);
+      return;
+    }
+
+    setSelectedPdfTemplateIds((currentIds) => {
+      const validIds = currentIds.filter((id) => templateAnalyticsRows.some((row) => row.templateId === id));
+      if (validIds.length > 0) {
+        return validIds;
+      }
+
+      return templateAnalyticsRows.map((row) => row.templateId);
+    });
+  }, [templateAnalyticsRows]);
+
+  const togglePdfSectionOption = (key: keyof PdfSectionOptions, checked: boolean) => {
+    setPdfSectionOptions((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const togglePdfChartOption = (key: keyof PdfChartOptions, checked: boolean) => {
+    setPdfChartOptions((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const togglePdfTemplateSelection = (templateId: string, checked: boolean) => {
+    setSelectedPdfTemplateIds((prev) => {
+      if (checked) {
+        if (prev.includes(templateId)) return prev;
+        return [...prev, templateId];
+      }
+
+      return prev.filter((id) => id !== templateId);
+    });
+  };
+
+  const handleSelectAllPdfTemplates = () => {
+    setSelectedPdfTemplateIds(templateAnalyticsRows.map((row) => row.templateId));
+  };
+
+  const handleClearPdfTemplates = () => {
+    setSelectedPdfTemplateIds([]);
+  };
 
   const handleOpenCoverageDialog = (templateId: string) => {
     setSelectedCoverageTemplateId(templateId);
@@ -589,6 +680,527 @@ export default function KpiManager() {
     if (completion.numericValue !== null && completion.numericValue !== undefined) return completion.numericValue;
     if (completion.textValue) return completion.textValue;
     return "No value submitted";
+  };
+
+  const handleExportPdf = async () => {
+    if (isExportingPdf) return;
+
+    const requiresTemplates = pdfSectionOptions.kpiRequirements || pdfSectionOptions.completionPeople;
+    if (requiresTemplates && selectedPdfTemplates.length === 0) {
+      toast({
+        title: "Select KPI Requirements",
+        description: "Choose at least one KPI requirement to include in the PDF report.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingPdf(true);
+
+    try {
+      const [{ jsPDF }, html2canvasModule] = await Promise.all([import("jspdf"), import("html2canvas")]);
+      const html2canvas = html2canvasModule.default;
+
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const marginX = 40;
+      const contentWidth = pageWidth - marginX * 2;
+      const headerBottomY = 126;
+      const footerStartY = pageHeight - 70;
+      const contentStartY = headerBottomY + 20;
+      const usablePageHeight = footerStartY - contentStartY;
+      const sectionSpacing = 14;
+      const itemSpacing = 6;
+      const reportPeriod = selectedQuarter ? `Q${selectedQuarter} ${selectedYear}` : `Year ${selectedYear}`;
+      const exportedAt = `${formatManilaDateTime12h(new Date())} (Asia/Manila)`;
+      const reportTemplates = selectedPdfTemplates;
+      const pdfTheme = {
+        accent: [249, 115, 22] as const,
+        success: [22, 163, 74] as const,
+        border: [229, 231, 235] as const,
+        text: [17, 24, 39] as const,
+        mutedText: [75, 85, 99] as const,
+      };
+
+      const getLogoDataUrl = async () => {
+        const logoCandidates = [
+          ORGANIZATION_REPORT_INFO.logoPath,
+          "/images/ysp-logo.png",
+          "images/ysp-logo.png",
+        ];
+
+        const blobToDataUrl = async (blob: Blob) =>
+          await new Promise<string | null>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              resolve(typeof reader.result === "string" ? reader.result : null);
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+
+        for (const candidate of logoCandidates) {
+          try {
+            const response = await fetch(candidate, { cache: "no-store" });
+            if (!response.ok) continue;
+
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.startsWith("image/")) continue;
+
+            const blob = await response.blob();
+            const dataUrl = await blobToDataUrl(blob);
+            if (dataUrl) return dataUrl;
+          } catch {
+            // Keep trying fallback candidates.
+          }
+        }
+
+        const loadImageToDataUrl = async (src: string) =>
+          await new Promise<string | null>((resolve) => {
+            const image = new Image();
+            image.onload = () => {
+              const canvas = document.createElement("canvas");
+              canvas.width = image.naturalWidth || 96;
+              canvas.height = image.naturalHeight || 96;
+              const context = canvas.getContext("2d");
+              if (!context) {
+                resolve(null);
+                return;
+              }
+
+              context.drawImage(image, 0, 0);
+              resolve(canvas.toDataURL("image/png"));
+            };
+            image.onerror = () => resolve(null);
+            image.src = `${src}${src.includes("?") ? "&" : "?"}v=${Date.now()}`;
+          });
+
+        for (const candidate of logoCandidates) {
+          const dataUrl = await loadImageToDataUrl(candidate);
+          if (dataUrl) return dataUrl;
+        }
+
+        return null;
+      };
+
+      const logoDataUrl = await getLogoDataUrl();
+      let cursorY = contentStartY;
+
+      const drawHeader = (pageNumber = 1) => {
+        let titleStartX = marginX;
+
+        doc.setDrawColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.setLineWidth(1.2);
+        doc.line(marginX, 18, pageWidth - marginX, 18);
+
+        if (logoDataUrl) {
+          doc.addImage(logoDataUrl, "PNG", marginX, 24, 48, 48);
+          titleStartX = marginX + 60;
+        } else {
+          // Fallback marker when logo image cannot be loaded.
+          doc.setDrawColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+          doc.setLineWidth(0.8);
+          doc.roundedRect(marginX, 24, 48, 48, 6, 6);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(12);
+          doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+          doc.text("YSP", marginX + 24, 53, { align: "center" });
+          titleStartX = marginX + 60;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(15);
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.text(ORGANIZATION_REPORT_INFO.name, titleStartX, 36);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.mutedText[0], pdfTheme.mutedText[1], pdfTheme.mutedText[2]);
+        doc.text(ORGANIZATION_REPORT_INFO.fullGovernmentName, titleStartX, 50);
+        doc.text(ORGANIZATION_REPORT_INFO.motto, titleStartX, 64);
+        doc.text(`SEC Registry No.: ${ORGANIZATION_REPORT_INFO.secRegistryNumber}`, titleStartX, 78);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(pdfTheme.mutedText[0], pdfTheme.mutedText[1], pdfTheme.mutedText[2]);
+        doc.text(`Exported: ${exportedAt}`, pageWidth - marginX, 30, { align: "right" });
+
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.line(marginX, 90, pageWidth - marginX, 90);
+
+        if (pageNumber === 1) {
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(13);
+          doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+          doc.text(exportReportTitle || "KPI Summary Report", marginX, 111);
+
+          doc.setLineWidth(0.8);
+          doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+          doc.line(marginX, 118, pageWidth - marginX, 118);
+        }
+      };
+
+      const ensureSpace = (requiredHeight: number) => {
+        if (cursorY + requiredHeight > footerStartY) {
+          doc.addPage();
+          drawHeader(doc.getNumberOfPages());
+          cursorY = contentStartY;
+        }
+      };
+
+      const addSectionTitle = (title: string) => {
+        ensureSpace(30);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.text(title, marginX, cursorY);
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.7);
+        doc.line(marginX, cursorY + 8, pageWidth - marginX, cursorY + 8);
+        cursorY += 24;
+      };
+
+      const startSection = (title: string, estimatedSectionHeight: number, minContentHeight = 56) => {
+        // If the whole section can fit on one page but not in remaining space, move it entirely to next page.
+        if (estimatedSectionHeight <= usablePageHeight && cursorY + estimatedSectionHeight > footerStartY) {
+          doc.addPage();
+          drawHeader(doc.getNumberOfPages());
+          cursorY = contentStartY;
+        }
+
+        // Keep section heading with at least part of its content on the same page.
+        ensureSpace(minContentHeight + 30);
+        addSectionTitle(title);
+      };
+
+      const addTextBlock = (text: string, font: "normal" | "bold" = "normal", size = 10) => {
+        const lines = doc.splitTextToSize(text, contentWidth) as string[];
+        const height = lines.length * 14 + 3;
+        ensureSpace(height);
+        const textColor = font === "bold" ? pdfTheme.text : pdfTheme.mutedText;
+        doc.setFont("helvetica", font);
+        doc.setFontSize(size);
+        doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+        doc.text(lines, marginX, cursorY);
+        cursorY += height;
+      };
+
+      const estimateTextBlockHeight = (text: string) => {
+        const lines = doc.splitTextToSize(text, contentWidth) as string[];
+        return lines.length * 14 + 3;
+      };
+
+      const addMetricRow = (label: string, value: string, tone: "accent" | "success" | "brand" = "accent") => {
+        ensureSpace(26);
+        void tone;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.text[0], pdfTheme.text[1], pdfTheme.text[2]);
+        doc.text(label, marginX, cursorY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.text[0], pdfTheme.text[1], pdfTheme.text[2]);
+        doc.text(value, pageWidth - marginX, cursorY, { align: "right" });
+
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.5);
+        doc.line(marginX, cursorY + 7, pageWidth - marginX, cursorY + 7);
+        cursorY += 20;
+      };
+
+      const addRankingRow = (rank: number, chapterName: string, score: number, completedKpis: number) => {
+        ensureSpace(34);
+        void rank;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.text[0], pdfTheme.text[1], pdfTheme.text[2]);
+        doc.text(`#${rank} ${chapterName}`, marginX, cursorY);
+
+        doc.setTextColor(pdfTheme.text[0], pdfTheme.text[1], pdfTheme.text[2]);
+        doc.text(`${score} pts`, pageWidth - marginX, cursorY, { align: "right" });
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(pdfTheme.mutedText[0], pdfTheme.mutedText[1], pdfTheme.mutedText[2]);
+        doc.text(`${completedKpis} completed KPIs`, marginX, cursorY + 13);
+
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.5);
+        doc.line(marginX, cursorY + 19, pageWidth - marginX, cursorY + 19);
+
+        cursorY += 26;
+      };
+
+      const addSubsectionLabel = (label: string) => {
+        ensureSpace(24);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.text[0], pdfTheme.text[1], pdfTheme.text[2]);
+        doc.text(label, marginX, cursorY);
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.5);
+        doc.line(marginX, cursorY + 4, pageWidth - marginX, cursorY + 4);
+        cursorY += 18;
+      };
+
+      const addChartSnapshot = async (
+        title: string,
+        element: HTMLDivElement | null,
+        options?: { maxHeight?: number; widthRatio?: number },
+      ) => {
+        if (!element) return;
+
+        const canvas = await html2canvas(element, {
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+        });
+        const imageData = canvas.toDataURL("image/png");
+
+        let renderWidth = contentWidth * (options?.widthRatio ?? 0.98);
+        let renderHeight = (canvas.height / canvas.width) * renderWidth;
+        const maxChartHeight = options?.maxHeight ?? 250;
+        if (renderHeight > maxChartHeight) {
+          const scale = maxChartHeight / renderHeight;
+          renderHeight = maxChartHeight;
+          renderWidth = renderWidth * scale;
+        }
+
+        ensureSpace(renderHeight + 24);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.text(title, marginX, cursorY);
+        cursorY += 10;
+
+        const chartX = marginX + (contentWidth - renderWidth) / 2;
+        doc.addImage(imageData, "PNG", chartX, cursorY, renderWidth, renderHeight);
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.7);
+        doc.rect(chartX, cursorY, renderWidth, renderHeight);
+        cursorY += renderHeight + 14;
+      };
+
+      const drawFooterIconWithText = (
+        x: number,
+        y: number,
+        kind: "facebook" | "website" | "email",
+        text: string,
+      ) => {
+        const iconCenterX = x + 4;
+        const iconCenterY = y - 3;
+
+        doc.setDrawColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.setLineWidth(0.7);
+        doc.circle(iconCenterX, iconCenterY, 4);
+
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+
+        if (kind === "website") {
+          // Better minimal globe icon: equator, latitudes, and meridians.
+          doc.setLineWidth(0.5);
+          doc.line(iconCenterX - 2.3, iconCenterY, iconCenterX + 2.3, iconCenterY);
+          doc.ellipse(iconCenterX, iconCenterY - 1.4, 2.2, 0.9);
+          doc.ellipse(iconCenterX, iconCenterY + 1.4, 2.2, 0.9);
+          doc.ellipse(iconCenterX, iconCenterY, 1.0, 2.9);
+          doc.ellipse(iconCenterX, iconCenterY, 2.0, 2.9);
+        } else {
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(6);
+          doc.text(kind === "facebook" ? "f" : "@", iconCenterX, y - 1, { align: "center" });
+        }
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(pdfTheme.mutedText[0], pdfTheme.mutedText[1], pdfTheme.mutedText[2]);
+        doc.text(text, x + 12, y);
+      };
+
+      drawHeader(1);
+
+      const reportScopeEstimatedHeight = 24 + 20 + 20 + sectionSpacing;
+      startSection("Report Scope", reportScopeEstimatedHeight, 62);
+      addMetricRow("Period", reportPeriod, "brand");
+      addMetricRow("Exported On", exportedAt, "accent");
+      cursorY += sectionSpacing;
+
+      if (pdfSectionOptions.kpiRequirements) {
+        const kpiRequirementsEstimatedHeight =
+          24 +
+          reportTemplates.reduce((sum, _row) => sum + 18 + 20 + 20 + 20 + itemSpacing, 0) +
+          sectionSpacing;
+
+        startSection("KPI Requirements Included", kpiRequirementsEstimatedHeight, 72);
+        reportTemplates.forEach((row) => {
+          const pending = Math.max(row.assignedCount - row.completedCount, 0);
+          addSubsectionLabel(row.templateName);
+          addMetricRow("Completion", `${row.completedCount}/${row.assignedCount}`, "success");
+          addMetricRow("Pending", String(pending), "brand");
+          addMetricRow("Rate", `${row.completionRate}%`, "accent");
+          cursorY += itemSpacing;
+        });
+        cursorY += sectionSpacing;
+      }
+
+      if (pdfSectionOptions.analytics) {
+        const analyticsEstimatedHeight = 24 + 20 + 20 + 20 + 20 + sectionSpacing;
+        startSection("Analytics Snapshot", analyticsEstimatedHeight, 72);
+        addMetricRow(
+          "Top Chapter",
+          hasCompletedChapterData && topChapter ? `${topChapter.chapterName} (${topChapter.score} pts)` : "No completed KPI data yet",
+          "brand",
+        );
+        addMetricRow("Active Chapters", `${activeChapterCount} of ${chapters.length}`, "accent");
+        addMetricRow("Average Score", String(averageScore), "accent");
+        addMetricRow(
+          "Overall Completion",
+          `${overallCompletionRate}% (${totalCompletedSubmissions} / ${totalAssignedSubmissions} assigned submissions)`,
+          "success",
+        );
+        cursorY += sectionSpacing;
+      }
+
+      if (pdfSectionOptions.rankings) {
+        const rankingsEstimatedHeight =
+          24 +
+          (chaptersWithCompletedKpis.length === 0
+            ? estimateTextBlockHeight("No chapter has completed KPI tasks yet for this period.")
+            : chaptersWithCompletedKpis.length * 26) +
+          18 +
+          (chaptersWithoutCompletedKpis.length === 0
+            ? estimateTextBlockHeight("All chapters have completed at least one KPI.")
+            : chaptersWithoutCompletedKpis.reduce((sum, entry) => sum + estimateTextBlockHeight(`- ${entry.chapterName}`), 0)) +
+          sectionSpacing;
+
+        startSection("Chapter KPI Rankings", rankingsEstimatedHeight, 72);
+        if (chaptersWithCompletedKpis.length === 0) {
+          addTextBlock("No chapter has completed KPI tasks yet for this period.");
+        } else {
+          chaptersWithCompletedKpis.forEach((entry, index) => {
+            addRankingRow(index + 1, entry.chapterName, entry.score, entry.completedKpis);
+          });
+        }
+
+        addSubsectionLabel("Chapters with no KPI completion yet");
+        if (chaptersWithoutCompletedKpis.length === 0) {
+          addTextBlock("All chapters have completed at least one KPI.");
+        } else {
+          chaptersWithoutCompletedKpis.forEach((entry) => {
+            addTextBlock(`- ${entry.chapterName}`);
+          });
+        }
+        cursorY += sectionSpacing;
+      }
+
+      if (pdfSectionOptions.completionPeople) {
+        const completionPeopleEstimatedHeight =
+          24 +
+          reportTemplates.reduce((sum, row) => {
+            const entriesHeight =
+              row.completedPeople.length === 0
+                ? estimateTextBlockHeight("No completed chapter entries.")
+                : row.completedPeople.reduce(
+                    (entrySum, entry) => entrySum + estimateTextBlockHeight(`- ${entry.personName} (${entry.chapterName})`),
+                    0,
+                  );
+
+            return sum + 18 + entriesHeight + itemSpacing;
+          }, 0) +
+          sectionSpacing;
+
+        startSection("People and Their Chapters Who Completed KPI Requirements", completionPeopleEstimatedHeight, 72);
+        reportTemplates.forEach((row) => {
+          addSubsectionLabel(`KPI Requirement: ${row.templateName}`);
+
+          if (row.completedPeople.length === 0) {
+            addTextBlock("No completed chapter entries.");
+            return;
+          }
+
+          row.completedPeople.forEach((entry) => {
+            addTextBlock(`- ${entry.personName} (${entry.chapterName})`);
+          });
+
+          cursorY += itemSpacing;
+        });
+        cursorY += sectionSpacing;
+      }
+
+      if (pdfSectionOptions.charts) {
+        const selectedChartEntries = [
+          pdfChartOptions.leaderboard
+            ? { title: "Chapter Performance Leaderboard", element: leaderboardChartCardRef.current }
+            : null,
+          pdfChartOptions.completionBreakdown
+            ? { title: "Submission Completion Breakdown", element: completionBreakdownCardRef.current }
+            : null,
+        ].filter((entry): entry is { title: string; element: HTMLDivElement | null } => Boolean(entry));
+
+        const denseChartMode = selectedChartEntries.length > 1;
+        const chartMaxHeight = denseChartMode ? 180 : 250;
+        const chartWidthRatio = denseChartMode ? 0.92 : 0.98;
+        const chartsEstimatedHeight =
+          24 +
+          (selectedChartEntries.length === 0 ? 34 : selectedChartEntries.length * (chartMaxHeight + 30)) +
+          sectionSpacing;
+        startSection("Charts", chartsEstimatedHeight, 120);
+
+        if (selectedChartEntries.length === 0) {
+          addTextBlock("No chart selected.");
+        } else {
+          for (const chart of selectedChartEntries) {
+            await addChartSnapshot(chart.title, chart.element, {
+              maxHeight: chartMaxHeight,
+              widthRatio: chartWidthRatio,
+            });
+          }
+        }
+      }
+
+      const pageCount = doc.getNumberOfPages();
+      for (let page = 1; page <= pageCount; page += 1) {
+        doc.setPage(page);
+        doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
+        doc.setLineWidth(0.8);
+        doc.line(marginX, footerStartY - 12, pageWidth - marginX, footerStartY - 12);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.text(ORGANIZATION_REPORT_INFO.fullGovernmentName, marginX, footerStartY - 4);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(pdfTheme.mutedText[0], pdfTheme.mutedText[1], pdfTheme.mutedText[2]);
+        doc.text(`SEC Registry No.: ${ORGANIZATION_REPORT_INFO.secRegistryNumber}`, marginX, footerStartY + 6);
+
+        drawFooterIconWithText(marginX, footerStartY + 18, "facebook", ORGANIZATION_REPORT_INFO.facebook);
+        drawFooterIconWithText(marginX + 165, footerStartY + 18, "website", ORGANIZATION_REPORT_INFO.website);
+        drawFooterIconWithText(marginX + 305, footerStartY + 18, "email", ORGANIZATION_REPORT_INFO.email);
+
+        doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
+        doc.text(`Page ${page} of ${pageCount}`, pageWidth - marginX, footerStartY + 32, { align: "right" });
+      }
+
+      const fileSuffix = selectedQuarter ? `${selectedYear}-Q${selectedQuarter}` : `${selectedYear}`;
+      doc.save(`YSP-KPI-Summary-${fileSuffix}.pdf`);
+      setIsExportDialogOpen(false);
+      toast({ title: "PDF Exported", description: "KPI summary PDF report downloaded successfully." });
+    } catch (error) {
+      console.error("Failed to export KPI PDF report", error);
+      toast({
+        title: "Export failed",
+        description: "Unable to generate KPI PDF report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   return (
@@ -859,10 +1471,10 @@ export default function KpiManager() {
                 </p>
               ) : (
                 kpiTemplates.map((template) => (
-                  <div key={template.id} className="flex items-center justify-between p-4 border rounded-lg hover-elevate">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{template.name}</span>
+                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <span className="font-medium break-words">{template.name}</span>
                         {getTimeframeBadge(template.timeframe)}
                         {getInputTypeBadge(template.inputType)}
                         {!template.isActive && <Badge variant="destructive">Inactive</Badge>}
@@ -870,20 +1482,20 @@ export default function KpiManager() {
                       {template.description && (
                         <p className="text-sm text-muted-foreground">{template.description}</p>
                       )}
-                      <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1">
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-1 whitespace-nowrap">
                           <Calendar className="h-3 w-3" />
                           {template.year}{template.quarter && ` Q${template.quarter}`}
                         </span>
                         {template.targetValue && (
-                          <span className="flex items-center gap-1">
+                          <span className="flex items-center gap-1 whitespace-nowrap">
                             <Target className="h-3 w-3" />
                             Target: {template.targetValue}
                           </span>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
                       <Button size="icon" variant="ghost" onClick={() => handleEdit(template)} data-testid={`button-edit-${template.id}`}>
                         <Edit2 className="h-4 w-4" />
                       </Button>
@@ -911,10 +1523,10 @@ export default function KpiManager() {
                 </p>
               ) : (
                 groupedTemplates.quarterly.map((template) => (
-                  <div key={template.id} className="flex items-center justify-between p-4 border rounded-lg hover-elevate">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{template.name}</span>
+                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <span className="font-medium break-words">{template.name}</span>
                         {template.quarter && <Badge variant="outline">Q{template.quarter}</Badge>}
                         {getInputTypeBadge(template.inputType)}
                       </div>
@@ -922,7 +1534,7 @@ export default function KpiManager() {
                         <p className="text-sm text-muted-foreground">{template.description}</p>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
                       <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
                         <Edit2 className="h-4 w-4" />
                       </Button>
@@ -944,10 +1556,10 @@ export default function KpiManager() {
                 </p>
               ) : (
                 [...groupedTemplates.yearly, ...groupedTemplates.both].map((template) => (
-                  <div key={template.id} className="flex items-center justify-between p-4 border rounded-lg hover-elevate">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium">{template.name}</span>
+                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <span className="font-medium break-words">{template.name}</span>
                         {getTimeframeBadge(template.timeframe)}
                         {getInputTypeBadge(template.inputType)}
                       </div>
@@ -955,13 +1567,13 @@ export default function KpiManager() {
                         <p className="text-sm text-muted-foreground">{template.description}</p>
                       )}
                       {template.targetValue && (
-                        <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
+                        <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground whitespace-nowrap">
                           <Target className="h-3 w-3" />
                           Target: {template.targetValue}
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
                       <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
                         <Edit2 className="h-4 w-4" />
                       </Button>
@@ -976,14 +1588,27 @@ export default function KpiManager() {
           </TabsContent>
 
           <TabsContent value="analytics" className="mt-4 space-y-4">
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" onClick={() => setIsExportDialogOpen(true)} data-testid="button-open-kpi-export-pdf">
+                <FileDown className="h-4 w-4 mr-2" />
+                Export PDF Report
+              </Button>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-4">
               <Card className="p-4 bg-primary/5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="text-sm text-muted-foreground">Top Chapter</div>
-                    <div className="text-lg font-semibold">{topChapter ? topChapter.chapterName : "No data"}</div>
+                    <div className="text-lg font-semibold">
+                      {isLeaderboardLoading ? "Loading..." : hasCompletedChapterData && topChapter ? topChapter.chapterName : "No data"}
+                    </div>
                     <div className="text-sm text-muted-foreground">
-                      {topChapter ? `${topChapter.score} pts` : "No KPI submissions yet"}
+                      {isLeaderboardLoading
+                        ? "Fetching chapter performance..."
+                        : hasCompletedChapterData && topChapter
+                          ? `${topChapter.score} pts`
+                          : "No KPI submissions yet"}
                     </div>
                   </div>
                   <Trophy className="h-6 w-6 text-yellow-500" />
@@ -994,7 +1619,7 @@ export default function KpiManager() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="text-sm text-muted-foreground">Active Chapters</div>
-                    <div className="text-2xl font-bold">{activeChapterCount}</div>
+                    <div className="text-2xl font-bold">{isLeaderboardLoading ? "..." : activeChapterCount}</div>
                     <div className="text-sm text-muted-foreground">of {chapters.length} chapters</div>
                   </div>
                   <Users className="h-6 w-6 text-primary" />
@@ -1005,7 +1630,7 @@ export default function KpiManager() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="text-sm text-muted-foreground">Average Score</div>
-                    <div className="text-2xl font-bold">{averageScore}</div>
+                    <div className="text-2xl font-bold">{isLeaderboardLoading ? "..." : averageScore}</div>
                     <div className="text-sm text-muted-foreground">
                       {selectedQuarter ? `Q${selectedQuarter} ${selectedYear}` : `Year ${selectedYear}`}
                     </div>
@@ -1029,31 +1654,50 @@ export default function KpiManager() {
             </div>
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <Card>
+              <Card ref={leaderboardChartCardRef}>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Chapter Performance Chart</CardTitle>
-                  <CardDescription>Top chapters by KPI score and completed KPI count.</CardDescription>
+                  <CardTitle className="text-base">Chapter Performance Leaderboard</CardTitle>
+                  <CardDescription>Top 3 chapters with completed KPI tasks for this period.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {chapterPerformanceChartData.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No chapter performance data yet.</p>
+                  {isLeaderboardLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading chapter performance...</p>
+                  ) : allAssignedSubmissionsCompleted ? (
+                    <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                      All of them are completed.
+                    </p>
+                  ) : topChapterLeaderboardEntries.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No chapter has completed KPI tasks yet.</p>
                   ) : (
-                    <div className="h-72 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chapterPerformanceChartData} margin={{ top: 8, right: 8, left: -16, bottom: 24 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="chapterName" tickLine={false} axisLine={false} angle={-12} textAnchor="end" height={58} />
-                          <YAxis allowDecimals={false} tickLine={false} axisLine={false} />
-                          <Tooltip formatter={(value: number, name: string) => [value, name === "score" ? "Score" : "Completed KPIs"]} />
-                          <Bar dataKey="score" fill="#2563eb" radius={[6, 6, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                    <div className="space-y-2">
+                      {topChapterLeaderboardEntries.map((entry, index) => (
+                        <div key={entry.chapterId} className="flex items-center justify-between rounded-md border px-3 py-2">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${
+                                index === 0
+                                  ? "bg-yellow-100 text-yellow-800"
+                                  : index === 1
+                                    ? "bg-slate-100 text-slate-700"
+                                    : "bg-orange-100 text-orange-700"
+                              }`}
+                            >
+                              #{index + 1}
+                            </span>
+                            <div>
+                              <p className="font-medium">{entry.chapterName}</p>
+                              <p className="text-xs text-muted-foreground">{entry.completedKpis} completed KPIs</p>
+                            </div>
+                          </div>
+                          <Badge variant="secondary">{entry.score} pts</Badge>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card ref={completionBreakdownCardRef}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Submission Completion Breakdown</CardTitle>
                   <CardDescription>Completed versus pending submissions for assigned KPI workloads.</CardDescription>
@@ -1080,6 +1724,16 @@ export default function KpiManager() {
                             ))}
                           </Pie>
                           <Tooltip formatter={(value: number, name: string) => [value, name]} />
+                          <Legend
+                            verticalAlign="bottom"
+                            height={30}
+                            iconType="circle"
+                            formatter={(value: string | number) => {
+                              const label = String(value);
+                              const matched = overallCompletionPieData.find((item) => item.name === label);
+                              return `${label}: ${matched?.value ?? 0}`;
+                            }}
+                          />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
@@ -1093,11 +1747,11 @@ export default function KpiManager() {
                 <CardTitle className="text-base">KPI Coverage List</CardTitle>
                 <CardDescription>Readable KPI completion coverage, even when many KPI templates are assigned.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="max-h-[26rem] overflow-y-auto pr-1">
                 {templateAnalyticsRows.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No KPI template analytics available yet.</p>
                 ) : (
-                  <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+                  <div className="space-y-3">
                     {templateAnalyticsRows.map((row) => {
                       const pendingCount = Math.max(row.assignedCount - row.completedCount, 0);
 
@@ -1124,62 +1778,10 @@ export default function KpiManager() {
 
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">People Who Completed It</CardTitle>
-                <CardDescription>
-                  Shows chapter contact people for chapters that completed the selected KPI template.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="w-full md:w-[26rem]">
-                  <Label>KPI Template</Label>
-                  <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                    <SelectTrigger data-testid="select-analytics-template">
-                      <SelectValue placeholder="Select KPI template" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {templateAnalyticsRows.map((row) => (
-                        <SelectItem key={row.templateId} value={row.templateId}>
-                          {row.templateName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {!selectedTemplateAnalytics ? (
-                  <p className="text-sm text-muted-foreground">No KPI template analytics available for this period.</p>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">Completed: {selectedTemplateAnalytics.completedCount}</Badge>
-                      <Badge variant="outline">Assigned: {selectedTemplateAnalytics.assignedCount}</Badge>
-                      <Badge variant="outline">Rate: {selectedTemplateAnalytics.completionRate}%</Badge>
-                      {getTimeframeBadge(selectedTemplateAnalytics.timeframe)}
-                      {getScopeBadge(selectedTemplateAnalytics.scope)}
-                    </div>
-
-                    {selectedTemplateAnalytics.completedPeople.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No chapter has completed this KPI yet.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {selectedTemplateAnalytics.completedPeople.map((person) => (
-                          <Badge key={`${selectedTemplateAnalytics.templateId}-${person}`} variant="secondary">
-                            {person}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
                 <CardTitle className="text-base">Template Analytics Table</CardTitle>
                 <CardDescription>Completion rates and scope coverage for each KPI template.</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="max-h-[26rem] overflow-y-auto pr-1">
                 {isAnalyticsLoading ? (
                   <p className="text-sm text-muted-foreground">Loading KPI analytics...</p>
                 ) : templateAnalyticsRows.length === 0 ? (
@@ -1211,35 +1813,61 @@ export default function KpiManager() {
                 <CardTitle className="text-base">Chapter KPI Rankings</CardTitle>
                 <CardDescription>
                   {selectedQuarter
-                    ? `Chapter rankings for Q${selectedQuarter} ${selectedYear}`
-                    : `Chapter rankings for ${selectedYear}`}
+                    ? `Chapter rankings for Q${selectedQuarter} ${selectedYear} (completed KPI tasks only)`
+                    : `Chapter rankings for ${selectedYear} (completed KPI tasks only)`}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="max-h-[26rem] overflow-y-auto pr-1">
                 {isLeaderboardLoading ? (
                   <p className="text-sm text-muted-foreground">Loading rankings...</p>
                 ) : chapterLeaderboard.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No chapter KPI analytics available yet.</p>
                 ) : (
-                  <div className="space-y-2">
-                    {chapterLeaderboard.map((entry, index) => {
-                      const isSelected = entry.chapterId === selectedChapterId;
-                      return (
-                        <div
-                          key={entry.chapterId}
-                          className={`flex items-center justify-between rounded-md border px-3 py-2 ${isSelected ? "bg-primary/10 border-primary/30" : ""}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="w-6 text-sm font-semibold text-muted-foreground">#{index + 1}</span>
-                            <div>
-                              <p className="font-medium">{entry.chapterName}</p>
-                              <p className="text-xs text-muted-foreground">{entry.completedKpis} completed KPIs</p>
+                  <div className="space-y-3">
+                    {chaptersWithCompletedKpis.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No chapter has completed KPI tasks yet for this period.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {allAssignedSubmissionsCompleted ? (
+                          <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                            All of them are completed.
+                          </p>
+                        ) : null}
+                        {chaptersWithCompletedKpis.map((entry, index) => {
+                          const isSelected = entry.chapterId === selectedChapterId;
+                          return (
+                            <div
+                              key={entry.chapterId}
+                              className={`flex flex-col gap-2 rounded-md border px-3 py-2 sm:flex-row sm:items-center sm:justify-between ${isSelected ? "bg-primary/10 border-primary/30" : ""}`}
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <span className="w-6 text-sm font-semibold text-muted-foreground">#{index + 1}</span>
+                                <div className="min-w-0">
+                                  <p className="font-medium break-normal">{entry.chapterName}</p>
+                                  <p className="text-xs text-muted-foreground">{entry.completedKpis} completed KPIs</p>
+                                </div>
+                              </div>
+                              <Badge variant="secondary" className="self-start sm:self-auto">{entry.score} pts</Badge>
                             </div>
-                          </div>
-                          <Badge variant="secondary">{entry.score} pts</Badge>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="rounded-md border border-dashed p-3">
+                      <p className="mb-2 text-sm font-medium">Chapters with no KPI completion yet</p>
+                      {chaptersWithoutCompletedKpis.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">All chapters have completed at least one KPI.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {chaptersWithoutCompletedKpis.map((entry) => (
+                            <Badge key={`pending-kpi-${entry.chapterId}`} variant="outline">
+                              {entry.chapterName}
+                            </Badge>
+                          ))}
                         </div>
-                      );
-                    })}
+                      )}
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -1322,15 +1950,15 @@ export default function KpiManager() {
                           const completion = completionByTemplateId.get(template.id);
                           return (
                             <div key={template.id} className="rounded-md border p-3">
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="min-w-0 flex-1">
-                                  <div className="mb-1 flex items-center gap-2">
-                                    <p className="font-medium truncate">{template.name}</p>
+                                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                                    <p className="font-medium break-normal">{template.name}</p>
                                     {getTimeframeBadge(template.timeframe)}
                                     {getInputTypeBadge(template.inputType)}
                                   </div>
                                   {template.description && (
-                                    <p className="text-sm text-muted-foreground">{template.description}</p>
+                                    <p className="text-sm text-muted-foreground break-normal">{template.description}</p>
                                   )}
                                   <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
                                     <span className="flex items-center gap-1">
@@ -1347,9 +1975,9 @@ export default function KpiManager() {
                                   </div>
                                 </div>
                                 {completion?.isCompleted ? (
-                                  <Badge className="bg-green-600">Completed</Badge>
+                                  <Badge className="bg-green-600 self-start sm:self-auto">Completed</Badge>
                                 ) : (
-                                  <Badge variant="outline">Pending</Badge>
+                                  <Badge variant="outline" className="self-start sm:self-auto">Pending</Badge>
                                 )}
                               </div>
                             </div>
@@ -1363,6 +1991,161 @@ export default function KpiManager() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Export KPI Analytics PDF</DialogTitle>
+              <DialogDescription>
+                Customize what to include in the report before downloading the PDF summary.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="kpi-export-report-title">Report Title</Label>
+                <Input
+                  id="kpi-export-report-title"
+                  value={exportReportTitle}
+                  onChange={(event) => setExportReportTitle(event.target.value)}
+                  placeholder="KPI Summary Report"
+                  data-testid="input-kpi-export-report-title"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sections to Include</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={pdfSectionOptions.analytics}
+                      onCheckedChange={(checked) => togglePdfSectionOption("analytics", checked === true)}
+                      data-testid="checkbox-kpi-export-analytics"
+                    />
+                    Analytics Summary
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={pdfSectionOptions.rankings}
+                      onCheckedChange={(checked) => togglePdfSectionOption("rankings", checked === true)}
+                      data-testid="checkbox-kpi-export-rankings"
+                    />
+                    Chapter KPI Rankings
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={pdfSectionOptions.charts}
+                      onCheckedChange={(checked) => togglePdfSectionOption("charts", checked === true)}
+                      data-testid="checkbox-kpi-export-charts"
+                    />
+                    Charts
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={pdfSectionOptions.kpiRequirements}
+                      onCheckedChange={(checked) => togglePdfSectionOption("kpiRequirements", checked === true)}
+                      data-testid="checkbox-kpi-export-requirements"
+                    />
+                    KPI Requirements Summary
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm md:col-span-2">
+                    <Checkbox
+                      checked={pdfSectionOptions.completionPeople}
+                      onCheckedChange={(checked) => togglePdfSectionOption("completionPeople", checked === true)}
+                      data-testid="checkbox-kpi-export-completion-people"
+                    />
+                    People and Chapters Who Completed KPI Requirements
+                  </label>
+                </div>
+              </div>
+
+              {pdfSectionOptions.charts ? (
+                <div className="space-y-2">
+                  <Label>Charts to Include</Label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={pdfChartOptions.leaderboard}
+                        onCheckedChange={(checked) => togglePdfChartOption("leaderboard", checked === true)}
+                        data-testid="checkbox-kpi-export-chart-leaderboard"
+                      />
+                      Chapter Performance Leaderboard
+                    </label>
+
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={pdfChartOptions.completionBreakdown}
+                        onCheckedChange={(checked) => togglePdfChartOption("completionBreakdown", checked === true)}
+                        data-testid="checkbox-kpi-export-chart-completion"
+                      />
+                      Submission Completion Breakdown
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+
+              {pdfSectionOptions.kpiRequirements || pdfSectionOptions.completionPeople ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>KPI Requirements to Include</Label>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={handleSelectAllPdfTemplates}>
+                        Select All
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={handleClearPdfTemplates}>
+                        Clear
+                      </Button>
+                    </div>
+                  </div>
+
+                  {templateAnalyticsRows.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No KPI requirements found for the selected period.</p>
+                  ) : (
+                    <div className="max-h-56 space-y-2 overflow-y-auto rounded-md border p-3">
+                      {templateAnalyticsRows.map((row) => {
+                        const isChecked = selectedPdfTemplateIds.includes(row.templateId);
+                        return (
+                          <label key={row.templateId} className="flex items-start gap-2 rounded-md border px-3 py-2 text-sm">
+                            <Checkbox
+                              checked={isChecked}
+                              onCheckedChange={(checked) => togglePdfTemplateSelection(row.templateId, checked === true)}
+                              data-testid={`checkbox-kpi-export-template-${row.templateId}`}
+                            />
+                            <div className="space-y-1">
+                              <p className="font-medium">{row.templateName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Completed {row.completedCount}/{row.assignedCount} ({row.completionRate}%)
+                              </p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+                <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setIsExportDialogOpen(false)} disabled={isExportingPdf}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleExportPdf} disabled={isExportingPdf} data-testid="button-download-kpi-export-pdf">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  {isExportingPdf ? "Generating PDF..." : "Download PDF"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

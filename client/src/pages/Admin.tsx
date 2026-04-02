@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, UserCheck, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound } from "lucide-react";
+import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
@@ -16,15 +16,40 @@ const VolunteerManager = lazy(() => import("@/components/admin/VolunteerManager"
 const StatsManager = lazy(() => import("@/components/admin/StatsManager"));
 const ContactManager = lazy(() => import("@/components/admin/ContactManager"));
 const PublicationsManager = lazy(() => import("@/components/admin/PublicationsManager"));
-const ChapterAccountsManager = lazy(() => import("@/components/admin/ChapterAccountsManager"));
-const BarangayAccountsManager = lazy(() => import("@/components/admin/BarangayAccountsManager"));
-const AccountManagementPanel = lazy(() => import("@/components/admin/AccountManagementPanel"));
 const KpiManager = lazy(() => import("@/components/admin/KpiManager"));
 const MemberListManager = lazy(() => import("@/components/admin/MemberListManager"));
-const OfficerListManager = lazy(() => import("@/components/admin/OfficerListManager"));
 const ImportantDocumentsManager = lazy(() => import("@/components/admin/ImportantDocumentsManager"));
 const ChapterRequestsPanel = lazy(() => import("@/components/admin/ChapterRequestsPanel"));
 const NationalRequestsManager = lazy(() => import("@/components/admin/NationalRequestsManager"));
+
+const ADMIN_ACTIVE_TAB_STORAGE_KEY = "ysp:admin-active-tab:v1";
+const ADMIN_TAB_FALLBACK = "stats";
+const VALID_ADMIN_TABS = new Set([
+  "stats",
+  "programs",
+  "publications",
+  "chapters",
+  "members",
+  "kpis",
+  "volunteer",
+  "documents",
+  "requests",
+  "inbox",
+  "contact",
+]);
+
+function readInitialAdminTab() {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return ADMIN_TAB_FALLBACK;
+  }
+
+  const savedTab = window.sessionStorage.getItem(ADMIN_ACTIVE_TAB_STORAGE_KEY);
+  if (!savedTab || !VALID_ADMIN_TABS.has(savedTab)) {
+    return ADMIN_TAB_FALLBACK;
+  }
+
+  return savedTab;
+}
 
 interface HouseholdSummary {
   totalSubmissions: number;
@@ -42,7 +67,7 @@ export default function Admin() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
-  const [activeTab, setActiveTab] = useState("stats");
+  const [activeTab, setActiveTab] = useState(readInitialAdminTab);
 
   const { data: householdSummary } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
@@ -57,6 +82,14 @@ export default function Admin() {
   useEffect(() => {
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(ADMIN_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
 
   const checkAuth = async () => {
     console.log("[Admin] DASHBOARD_MOUNTED, checking auth...");
@@ -129,11 +162,7 @@ export default function Admin() {
     { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
     { value: "publications", label: "Publications", icon: Newspaper, group: "Content", dataTestId: "tab-publications", desktopPriority: true },
     { value: "chapters", label: "Chapters", icon: Building2, group: "People", dataTestId: "tab-chapters", desktopPriority: true },
-    { value: "account-management", label: "Account Management", icon: Users, group: "Accounts", dataTestId: "tab-account-management", desktopPriority: true },
-    { value: "accounts", label: "Chapter Accounts", icon: Users, group: "Accounts", dataTestId: "tab-accounts" },
-    { value: "barangay-accounts", label: "Barangay Accounts", icon: Home, group: "Accounts", dataTestId: "tab-barangay-accounts" },
     { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
-    { value: "officers", label: "Officers", icon: UserCheck, group: "People", dataTestId: "tab-officers" },
     { value: "kpis", label: "KPIs", icon: Target, group: "Insights", dataTestId: "tab-kpis", mobilePriority: true, desktopPriority: true },
     { value: "volunteer", label: "Volunteer", icon: HandHeart, group: "Operations", dataTestId: "tab-volunteer" },
     { value: "documents", label: "Documents", icon: ClipboardList, group: "Operations", dataTestId: "tab-documents" },
@@ -269,24 +298,6 @@ export default function Admin() {
             </Suspense>
           </TabsContent>
 
-          <TabsContent value="account-management">
-            <Suspense fallback={renderTabFallback("Loading account management...")}>
-              <AccountManagementPanel />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="accounts">
-            <Suspense fallback={renderTabFallback("Loading chapter accounts...")}>
-              <ChapterAccountsManager />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="barangay-accounts">
-            <Suspense fallback={renderTabFallback("Loading barangay accounts...")}>
-              <BarangayAccountsManager />
-            </Suspense>
-          </TabsContent>
-
           <TabsContent value="members">
             {householdSummary && (
               <Card className="mb-6" data-testid="card-household-summary">
@@ -322,12 +333,6 @@ export default function Admin() {
             )}
             <Suspense fallback={renderTabFallback("Loading members...")}>
               <MemberListManager />
-            </Suspense>
-          </TabsContent>
-
-          <TabsContent value="officers">
-            <Suspense fallback={renderTabFallback("Loading officers...")}>
-              <OfficerListManager />
             </Suspense>
           </TabsContent>
 

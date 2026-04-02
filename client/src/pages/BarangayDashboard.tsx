@@ -29,6 +29,16 @@ const BarangayKpiPanel = lazy(() => import("@/components/chapter/BarangayKpiPane
 const BarangayLeaderboard = lazy(() => import("@/components/chapter/BarangayLeaderboard"));
 const NationalRequestPanel = lazy(() => import("@/components/chapter/NationalRequestPanel"));
 
+const BARANGAY_ACTIVE_TAB_STORAGE_KEY = "ysp:barangay-active-tab:v1";
+
+function readInitialBarangayTab() {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return "members";
+  }
+
+  return window.sessionStorage.getItem(BARANGAY_ACTIVE_TAB_STORAGE_KEY) || "members";
+}
+
 interface AuthUser {
   id: string;
   username: string;
@@ -43,7 +53,7 @@ interface AuthUser {
 export default function BarangayDashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("members");
+  const [activeTab, setActiveTab] = useState(readInitialBarangayTab);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -105,6 +115,14 @@ export default function BarangayDashboard() {
     
     checkAuth();
   }, [setLocation]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(BARANGAY_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();

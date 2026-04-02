@@ -139,7 +139,18 @@ export default function ChaptersMap({ chapters }: ChaptersMapProps) {
           >
             <Popup>
               <div className="min-w-[200px] max-w-[280px]">
-                <h3 className="font-bold text-base mb-2 text-foreground">{chapter.name}</h3>
+                <div className="mb-2 flex items-start gap-2">
+                  <img
+                    src={getChapterLogoSrc(chapter.photo)}
+                    alt={`${chapter.name} logo`}
+                    className="h-10 w-10 rounded-full border bg-white object-contain p-1"
+                    onError={(event) => {
+                      event.currentTarget.onerror = null;
+                      event.currentTarget.src = WEBSITE_LOGO_SRC;
+                    }}
+                  />
+                  <h3 className="font-bold text-base text-foreground leading-tight">{chapter.name}</h3>
+                </div>
                 <div className="space-y-1.5 text-sm">
                   <p className="flex items-center gap-2 text-muted-foreground">
                     <MapPin className="h-3.5 w-3.5 flex-shrink-0" />

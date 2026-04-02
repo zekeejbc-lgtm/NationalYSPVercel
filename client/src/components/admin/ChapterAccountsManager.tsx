@@ -12,9 +12,11 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, Trash2, UserPlus, Key } from "lucide-react";
 import type { Chapter, ChapterUser } from "@shared/schema";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function ChapterAccountsManager() {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [selectedChapterId, setSelectedChapterId] = useState<string>("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newUsername, setNewUsername] = useState("");
@@ -110,8 +112,8 @@ export default function ChapterAccountsManager() {
     });
   };
 
-  const handleDeleteUser = (id: string) => {
-    if (!confirm("Are you sure you want to delete this user?")) return;
+  const handleDeleteUser = async (id: string) => {
+    if (!(await confirmDelete("Are you sure you want to delete this user?"))) return;
     deleteUserMutation.mutate(id);
   };
 

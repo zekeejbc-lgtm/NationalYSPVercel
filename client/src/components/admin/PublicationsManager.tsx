@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,13 +11,29 @@ import { Trash2, Edit, Plus, Calendar, Facebook, Image } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Publication } from "@shared/schema";
 import { format } from "date-fns";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  getDisplayImageUrl,
+  resetImageFallback,
+} from "@/lib/driveUtils";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function PublicationsManager() {
+  const INITIAL_VISIBLE_PUBLICATIONS = 6;
+  const CARD_ANIMATION_MS = 220;
+
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [editingPublication, setEditingPublication] = useState<Publication | null>(null);
+  const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
+  const [visiblePublicationsCount, setVisiblePublicationsCount] = useState(INITIAL_VISIBLE_PUBLICATIONS);
+  const [animatedFromIndex, setAnimatedFromIndex] = useState<number | null>(null);
+  const [isCollapsingPublications, setIsCollapsingPublications] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
+  const [fallbackImages, setFallbackImages] = useState<Record<string, boolean>>({});
   const [formData, setFormData] = useState({
     title: "",
     content: "",
@@ -35,6 +51,26 @@ export default function PublicationsManager() {
   const { data: publications = [], isLoading } = useQuery<Publication[]>({
     queryKey: ["/api/publications"]
   });
+
+  const visiblePublications = publications.slice(0, visiblePublicationsCount);
+  const hasMorePublications = visiblePublicationsCount < publications.length;
+  const canCollapsePublications = publications.length > INITIAL_VISIBLE_PUBLICATIONS;
+  const isPublicationsExpanded = visiblePublicationsCount > INITIAL_VISIBLE_PUBLICATIONS;
+  const remainingPublications = Math.max(publications.length - visiblePublicationsCount, 0);
+
+  useEffect(() => {
+    if (animatedFromIndex === null) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setAnimatedFromIndex(null);
+    }, CARD_ANIMATION_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [animatedFromIndex]);
 
   const handleAdd = () => {
     setEditingPublication(null);
@@ -179,8 +215,33 @@ export default function PublicationsManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this publication?")) return;
+    if (!(await confirmDelete("Are you sure you want to delete this publication?"))) return;
     deleteMutation.mutate(id);
+  };
+
+  const handleOpenDetails = (publication: Publication) => {
+    setSelectedPublication(publication);
+  };
+
+  const handleShowMorePublications = () => {
+    if (isCollapsingPublications || !hasMorePublications) {
+      return;
+    }
+
+    setAnimatedFromIndex(visiblePublicationsCount);
+    setVisiblePublicationsCount((prev) => Math.min(prev + INITIAL_VISIBLE_PUBLICATIONS, publications.length));
+  };
+
+  const handleHidePublications = () => {
+    if (!isPublicationsExpanded || isCollapsingPublications) {
+      return;
+    }
+
+    setIsCollapsingPublications(true);
+    window.setTimeout(() => {
+      setVisiblePublicationsCount(INITIAL_VISIBLE_PUBLICATIONS);
+      setIsCollapsingPublications(false);
+    }, CARD_ANIMATION_MS);
   };
 
   if (isLoading) {
@@ -212,29 +273,61 @@ export default function PublicationsManager() {
           {publications.length === 0 ? (
             <p className="text-muted-foreground">No publications yet. Add your first publication!</p>
           ) : (
-            <div className="space-y-4">
-              {publications.map((publication) => (
-                <Card key={publication.id} className="hover-elevate transition-all">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-4 flex-wrap sm:flex-nowrap">
-                      {getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null }) ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {visiblePublications.map((publication, index) => {
+                const publicationPhotoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
+                const usesFallbackImage = Boolean(fallbackImages[publication.id]);
+                const hasImageError = Boolean(failedImages[publication.id]);
+                const cardImageSrc = hasImageError
+                  ? ""
+                  : usesFallbackImage
+                    ? DEFAULT_IMAGE_FALLBACK_SRC
+                    : publicationPhotoUrl;
+
+                return (
+                <Card
+                  key={publication.id}
+                  className={`hover-elevate transition-all cursor-pointer h-[20rem] overflow-hidden ${
+                    animatedFromIndex !== null && index >= animatedFromIndex ? "admin-card-enter" : ""
+                  } ${isCollapsingPublications && index >= INITIAL_VISIBLE_PUBLICATIONS ? "admin-card-exit" : ""}`}
+                  onClick={() => handleOpenDetails(publication)}
+                  data-testid={`card-publication-admin-${publication.id}`}
+                >
+                  <CardContent className="p-4 h-full flex flex-col gap-3">
+                    <div className="h-32 rounded-md overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
+                      {cardImageSrc ? (
                         <img 
-                          src={getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null })}
+                          src={cardImageSrc}
                           alt={publication.title} 
-                          className="w-24 h-24 object-cover rounded-md flex-shrink-0"
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
+                          onLoad={(event) => {
+                            resetImageFallback(event.currentTarget);
+                          }}
+                          onError={(event) => {
+                            if (!usesFallbackImage && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                              setFallbackImages((prev) => ({ ...prev, [publication.id]: true }));
+                              return;
+                            }
+
+                            setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
+                          }}
                         />
                       ) : (
-                        <div className="w-24 h-24 bg-muted rounded-md flex items-center justify-center flex-shrink-0">
+                        <div className="w-full h-full bg-muted rounded-md flex items-center justify-center">
                           <Image className="h-8 w-8 text-muted-foreground" />
                         </div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-lg break-words">{publication.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">
+                    </div>
+                    <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+                        <h3 className="font-semibold text-base leading-tight break-words line-clamp-2">{publication.title}</h3>
+                        <p className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap break-words line-clamp-3">
                           {publication.content}
                         </p>
-                        <div className="flex items-center gap-4 mt-2 flex-wrap">
-                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <div className="flex items-center gap-3 mt-2 overflow-hidden">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
                             <Calendar className="h-3 w-3" />
                             {format(new Date(publication.publishedAt), "MMM d, yyyy 'at' h:mm a")}
                           </span>
@@ -243,15 +336,20 @@ export default function PublicationsManager() {
                               href={publication.facebookLink}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-primary hover:underline flex items-center gap-1"
+                              className="text-xs text-primary hover:underline flex items-center gap-1 truncate"
                             >
                               <Facebook className="h-3 w-3" />
                               View on Facebook
                             </a>
                           )}
                         </div>
-                      </div>
-                      <div className="flex gap-2 flex-shrink-0">
+                    </div>
+                    <div
+                      className="mt-auto pt-2 border-t flex items-center justify-between gap-2 flex-shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-xs text-primary">View details</span>
+                      <div className="flex gap-2">
                         <Button 
                           variant="outline" 
                           size="icon"
@@ -272,8 +370,37 @@ export default function PublicationsManager() {
                     </div>
                   </CardContent>
                 </Card>
-              ))}
-            </div>
+                );
+                })}
+              </div>
+
+              {canCollapsePublications && (
+                <div className="mt-4 flex justify-center">
+                  <div className="flex items-center gap-2">
+                    {hasMorePublications && (
+                      <Button
+                        variant="outline"
+                        onClick={handleShowMorePublications}
+                        disabled={isCollapsingPublications}
+                        data-testid="button-show-more-publications"
+                      >
+                        {`Show More (${Math.min(INITIAL_VISIBLE_PUBLICATIONS, remainingPublications)} next)`}
+                      </Button>
+                    )}
+                    {isPublicationsExpanded && (
+                      <Button
+                        variant="ghost"
+                        onClick={handleHidePublications}
+                        disabled={isCollapsingPublications}
+                        data-testid="button-hide-publications"
+                      >
+                        {isCollapsingPublications ? "Hiding..." : "Hide"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -339,6 +466,14 @@ export default function PublicationsManager() {
                     src={previewUrl}
                     alt="Preview" 
                     className="max-w-xs h-32 object-cover rounded-md"
+                    onLoad={(event) => {
+                      resetImageFallback(event.currentTarget);
+                    }}
+                    onError={(event) => {
+                      if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                        event.currentTarget.style.display = "none";
+                      }
+                    }}
                   />
                 </div>
               )}
@@ -375,6 +510,84 @@ export default function PublicationsManager() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedPublication} onOpenChange={(open) => !open && setSelectedPublication(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedPublication?.title}</DialogTitle>
+          </DialogHeader>
+          {selectedPublication && (
+            <div className="space-y-4">
+              <div className="rounded-md overflow-hidden border bg-muted">
+                {(() => {
+                  const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
+                  const selectedUsesFallback = Boolean(fallbackImages[selectedPublication.id]);
+                  const selectedImageError = Boolean(failedImages[selectedPublication.id]);
+                  const selectedImageSrc = selectedImageError
+                    ? ""
+                    : selectedUsesFallback
+                      ? DEFAULT_IMAGE_FALLBACK_SRC
+                      : selectedPhotoUrl;
+
+                  if (!selectedImageSrc) {
+                    return (
+                      <div className="h-48 flex items-center justify-center text-muted-foreground">
+                        <Image className="h-8 w-8" />
+                      </div>
+                    );
+                  }
+
+                  return (
+                  <img
+                    src={selectedImageSrc}
+                    alt={selectedPublication.title}
+                    className="w-full max-h-[320px] object-contain"
+                    loading="lazy"
+                    decoding="async"
+                    onLoad={(event) => {
+                      resetImageFallback(event.currentTarget);
+                    }}
+                    onError={(event) => {
+                      if (!selectedUsesFallback && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                        setFallbackImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
+                        return;
+                      }
+
+                      setFailedImages((prev) => ({ ...prev, [selectedPublication.id]: true }));
+                    }}
+                  />
+                  );
+                })()}
+              </div>
+
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Calendar className="h-3 w-3" />
+                  {format(new Date(selectedPublication.publishedAt), "MMM d, yyyy 'at' h:mm a")}
+                </span>
+                {selectedPublication.facebookLink && (
+                  <a
+                    href={selectedPublication.facebookLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    <Facebook className="h-3 w-3" />
+                    View on Facebook
+                  </a>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-semibold">Full Details</h4>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                  {selectedPublication.content}
+                </p>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

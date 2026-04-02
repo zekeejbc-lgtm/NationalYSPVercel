@@ -20,6 +20,7 @@ import BarangayDashboard from "@/pages/BarangayDashboard";
 import MyProfile from "@/pages/MyProfile";
 import NotFound from "@/pages/not-found";
 import { IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
+import { ConfirmDialogProvider } from "@/hooks/use-confirm-dialog";
 
 type RouteSeo = {
   title: string;
@@ -209,6 +210,59 @@ function setCanonicalLink(href: string) {
   link.setAttribute("href", href);
 }
 
+const LAST_ROUTE_STORAGE_KEY = "ysp:last-route:v1";
+const SCROLL_POSITIONS_STORAGE_KEY = "ysp:scroll-positions:v1";
+
+function canUseSessionStorage() {
+  return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
+}
+
+function shouldPersistRoute(route: string) {
+  const pathname = route.split("?")[0].split("#")[0] || "/";
+  return pathname !== "/login" && pathname !== "/admin/login";
+}
+
+function isProtectedRoute(route: string) {
+  const pathname = route.split("?")[0].split("#")[0] || "/";
+  return (
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/chapter-dashboard") ||
+    pathname.startsWith("/barangay-dashboard") ||
+    pathname.startsWith("/my-profile")
+  );
+}
+
+function readScrollPositions() {
+  if (!canUseSessionStorage()) {
+    return {} as Record<string, number>;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(SCROLL_POSITIONS_STORAGE_KEY);
+    if (!raw) {
+      return {} as Record<string, number>;
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const entries = Object.entries(parsed).filter(([, value]) => typeof value === "number");
+    return Object.fromEntries(entries) as Record<string, number>;
+  } catch {
+    return {} as Record<string, number>;
+  }
+}
+
+function writeScrollPositions(positions: Record<string, number>) {
+  if (!canUseSessionStorage()) {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(SCROLL_POSITIONS_STORAGE_KEY, JSON.stringify(positions));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
 function Router() {
   return (
     <Switch>
@@ -230,7 +284,7 @@ function Router() {
 }
 
 function AppContent() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const hideNavFooter =
     location.startsWith("/admin") ||
     location.startsWith("/chapter-dashboard") ||
@@ -261,6 +315,111 @@ function AppContent() {
     setMetaTag("name", "twitter:title", seo.title);
     setMetaTag("name", "twitter:description", seo.description);
     setMetaTag("name", "twitter:image", OG_IMAGE_URL);
+  }, [location]);
+
+  useEffect(() => {
+    if (!canUseSessionStorage()) {
+      return;
+    }
+
+    if (shouldPersistRoute(location)) {
+      window.sessionStorage.setItem(LAST_ROUTE_STORAGE_KEY, location);
+    }
+  }, [location]);
+
+  useEffect(() => {
+    if (!canUseSessionStorage()) {
+      return;
+    }
+
+    if (window.history.scrollRestoration) {
+      window.history.scrollRestoration = "manual";
+    }
+
+    return () => {
+      if (window.history.scrollRestoration) {
+        window.history.scrollRestoration = "auto";
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canUseSessionStorage() || !shouldPersistRoute(location)) {
+      return;
+    }
+
+    const persistCurrentScroll = () => {
+      const positions = readScrollPositions();
+      positions[location] = window.scrollY;
+      writeScrollPositions(positions);
+    };
+
+    const handleScroll = () => {
+      persistCurrentScroll();
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("beforeunload", persistCurrentScroll);
+
+    return () => {
+      persistCurrentScroll();
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("beforeunload", persistCurrentScroll);
+    };
+  }, [location]);
+
+  useEffect(() => {
+    if (!canUseSessionStorage()) {
+      return;
+    }
+
+    const pathname = location.split("?")[0].split("#")[0] || "/";
+    if (pathname !== "/") {
+      return;
+    }
+
+    const lastRoute = window.sessionStorage.getItem(LAST_ROUTE_STORAGE_KEY);
+    if (!lastRoute || !shouldPersistRoute(lastRoute) || lastRoute === location) {
+      return;
+    }
+
+    if (!isProtectedRoute(lastRoute)) {
+      setLocation(lastRoute);
+      return;
+    }
+
+    let cancelled = false;
+
+    const restoreProtectedRoute = async () => {
+      try {
+        const response = await fetch("/api/auth/check", { credentials: "include" });
+        const data = (await response.json()) as { authenticated?: boolean };
+        if (!cancelled && data?.authenticated) {
+          setLocation(lastRoute);
+        }
+      } catch {
+        // Ignore auth check failures and stay on the current route.
+      }
+    };
+
+    restoreProtectedRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location, setLocation]);
+
+  useEffect(() => {
+    if (!canUseSessionStorage()) {
+      return;
+    }
+
+    const positions = readScrollPositions();
+    const y = positions[location];
+
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: typeof y === "number" ? y : 0, left: 0, behavior: "auto" });
+    });
   }, [location]);
 
   useEffect(() => {
@@ -323,8 +482,10 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <AppContent />
-        <Toaster />
+        <ConfirmDialogProvider>
+          <AppContent />
+          <Toaster />
+        </ConfirmDialogProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

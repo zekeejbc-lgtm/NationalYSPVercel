@@ -15,6 +15,7 @@ import type { NationalRequest, Chapter, BarangayUser } from "@shared/schema";
 
 export default function NationalRequestsManager() {
   const { toast } = useToast();
+  const [showDetailsDialog, setShowDetailsDialog] = useState(false);
   const [showReplyDialog, setShowReplyDialog] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<NationalRequest | null>(null);
   const [replyText, setReplyText] = useState("");
@@ -82,6 +83,11 @@ export default function NationalRequestsManager() {
     setShowReplyDialog(true);
   };
 
+  const handleOpenDetails = (request: NationalRequest) => {
+    setSelectedRequest(request);
+    setShowDetailsDialog(true);
+  };
+
   const handleSubmitReply = () => {
     if (!selectedRequest || !newStatus) return;
     updateMutation.mutate({
@@ -138,7 +144,12 @@ export default function NationalRequestsManager() {
           ) : (
             <div className="space-y-4">
               {requests.map((request) => (
-                <Card key={request.id} className="hover-elevate" data-testid={`card-request-${request.id}`}>
+                <Card
+                  key={request.id}
+                  className="hover-elevate cursor-pointer"
+                  onClick={() => handleOpenDetails(request)}
+                  data-testid={`card-request-${request.id}`}
+                >
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
@@ -152,8 +163,10 @@ export default function NationalRequestsManager() {
                             {request.senderType === "chapter" ? "Chapter" : "Barangay"}: {getSenderName(request)}
                           </span>
                         </div>
-                        <h4 className="font-medium">{request.subject}</h4>
-                        <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">{request.message}</p>
+                        <h4 className="font-medium truncate">{request.subject}</h4>
+                        <div className="mt-1 max-h-14 overflow-hidden">
+                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words line-clamp-2 text-justify">{request.message}</p>
+                        </div>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
@@ -164,19 +177,16 @@ export default function NationalRequestsManager() {
                             Received: {format(new Date(request.createdAt), "MMM d, yyyy")}
                           </span>
                         </div>
-                        {request.adminReply && (
-                          <div className="mt-3 p-3 bg-muted rounded-md">
-                            <p className="text-sm font-medium">Your Reply:</p>
-                            <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap break-words">{request.adminReply}</p>
-                          </div>
-                        )}
                       </div>
                       <div className="flex flex-col items-end gap-2">
                         {getStatusBadge(request.status)}
                         <Button 
                           variant="outline" 
                           size="sm" 
-                          onClick={() => handleOpenReply(request)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleOpenReply(request);
+                          }}
                           data-testid={`button-reply-request-${request.id}`}
                         >
                           <Send className="h-4 w-4 mr-2" />
@@ -191,6 +201,71 @@ export default function NationalRequestsManager() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
+        <DialogContent className="max-w-2xl p-0 gap-0 overflow-hidden">
+          <div className="flex max-h-[calc(100dvh-3rem)] flex-col">
+            <DialogHeader className="border-b px-6 py-4 pr-12">
+              <DialogTitle>{selectedRequest?.subject}</DialogTitle>
+              <DialogDescription>
+                Received on {selectedRequest && format(new Date(selectedRequest.createdAt), "MMMM d, yyyy 'at' h:mm a")}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">From</p>
+                  <p className="mt-1 flex items-center gap-2">
+                    {selectedRequest?.senderType === "chapter" ? (
+                      <Building2 className="h-4 w-4" />
+                    ) : (
+                      <MapPin className="h-4 w-4" />
+                    )}
+                    {selectedRequest && getSenderName(selectedRequest)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Status</p>
+                  <div className="mt-1">{selectedRequest && getStatusBadge(selectedRequest.status)}</div>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Date Needed</p>
+                  <p className="mt-1">{selectedRequest && format(new Date(selectedRequest.dateNeeded), "MMMM d, yyyy")}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Message</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-justify">{selectedRequest?.message}</p>
+                </div>
+                {selectedRequest?.adminReply && (
+                  <div className="p-4 bg-muted rounded-md">
+                    <p className="text-sm font-medium">Your Reply</p>
+                    <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap text-justify">{selectedRequest.adminReply}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <DialogFooter className="border-t px-6 py-4">
+              <Button type="button" variant="outline" onClick={() => setShowDetailsDialog(false)}>
+                Close
+              </Button>
+              {selectedRequest && (
+                <Button
+                  onClick={() => {
+                    setShowDetailsDialog(false);
+                    handleOpenReply(selectedRequest);
+                  }}
+                  data-testid="button-open-reply-from-details"
+                >
+                  <Send className="h-4 w-4 mr-2" />
+                  Reply / Update
+                </Button>
+              )}
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showReplyDialog} onOpenChange={setShowReplyDialog}>
         <DialogContent className="max-w-lg">
@@ -214,7 +289,7 @@ export default function NationalRequestsManager() {
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Message</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{selectedRequest?.message}</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-justify">{selectedRequest?.message}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Date Needed</p>

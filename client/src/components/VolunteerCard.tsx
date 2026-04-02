@@ -1,6 +1,12 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  getDisplayImageUrl,
+  resetImageFallback,
+} from "@/lib/driveUtils";
 import { Calendar, MapPin, Phone, Mail } from "lucide-react";
 import { format } from "date-fns";
 
@@ -48,18 +54,36 @@ export default function VolunteerCard({
   photoUrl,
 }: VolunteerCardProps) {
   const displayPhotoUrl = photoUrl ? getDisplayImageUrl(photoUrl) : "";
+  const [currentPhotoSrc, setCurrentPhotoSrc] = useState(displayPhotoUrl);
+
+  useEffect(() => {
+    setCurrentPhotoSrc(displayPhotoUrl);
+  }, [displayPhotoUrl, id]);
 
   return (
     <Card 
       className="hover-elevate transition-all overflow-hidden"
       data-testid={`card-volunteer-${id}`}
     >
-      {displayPhotoUrl && (
+      {currentPhotoSrc && (
         <div className="w-full h-48 overflow-hidden">
           <img 
-            src={displayPhotoUrl} 
+            src={currentPhotoSrc} 
             alt={eventName}
             className="w-full h-full object-cover"
+            loading="lazy"
+            decoding="async"
+            onLoad={(event) => {
+              resetImageFallback(event.currentTarget);
+            }}
+            onError={(event) => {
+              if (applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                setCurrentPhotoSrc(DEFAULT_IMAGE_FALLBACK_SRC);
+                return;
+              }
+
+              setCurrentPhotoSrc("");
+            }}
           />
         </div>
       )}

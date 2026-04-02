@@ -28,6 +28,7 @@ import {
   insertNationalRequestSchema
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
+import { createClient } from "@supabase/supabase-js";
 
 const REQUIRED_PUBLIC_TABLES = ["programs", "chapters", "stats"];
 
@@ -213,6 +214,149 @@ async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
 
   return rawUrl;
 }
+
+const CHAPTER_LOGO_BUCKET = process.env.SUPABASE_CHAPTER_LOGO_BUCKET || "chapter-logos";
+const CHAPTER_LOGO_MAX_BYTES = 5 * 1024 * 1024;
+const CHAPTER_LOGO_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+let supabaseStorageClient: ReturnType<typeof createClient> | null = null;
+let chapterLogoBucketEnsured = false;
+
+function getSupabaseStorageClient() {
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceRoleKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE ||
+    process.env.SUPABASE_SECRET_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return null;
+  }
+
+  if (!supabaseStorageClient) {
+    supabaseStorageClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  }
+
+  return supabaseStorageClient;
+}
+
+function isStorageAlreadyExistsError(error: { message?: string } | null) {
+  const normalizedMessage = error?.message?.toLowerCase() || "";
+  return normalizedMessage.includes("already exists") || normalizedMessage.includes("duplicate");
+}
+
+async function ensureChapterLogoBucket(client: ReturnType<typeof createClient>) {
+  if (chapterLogoBucketEnsured) {
+    return;
+  }
+
+  const bucketOptions = {
+    public: true,
+    fileSizeLimit: CHAPTER_LOGO_MAX_BYTES,
+    allowedMimeTypes: Array.from(CHAPTER_LOGO_ALLOWED_MIME_TYPES),
+  };
+
+  const { error: createBucketError } = await client.storage.createBucket(CHAPTER_LOGO_BUCKET, bucketOptions);
+  if (createBucketError && !isStorageAlreadyExistsError(createBucketError)) {
+    throw createBucketError;
+  }
+
+  if (createBucketError && isStorageAlreadyExistsError(createBucketError)) {
+    const { data: existingBucket, error: getBucketError } = await client.storage.getBucket(CHAPTER_LOGO_BUCKET);
+    if (getBucketError) {
+      throw getBucketError;
+    }
+
+    if (existingBucket && !existingBucket.public) {
+      const { error: updateBucketError } = await client.storage.updateBucket(CHAPTER_LOGO_BUCKET, bucketOptions);
+      if (updateBucketError) {
+        throw updateBucketError;
+      }
+    }
+  }
+
+  chapterLogoBucketEnsured = true;
+}
+
+function sanitizePathSegment(value: string) {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "chapter"
+  );
+}
+
+function resolveImageExtension(originalName: string, mimeType: string) {
+  const extension = path.extname(originalName).toLowerCase();
+  if (extension) {
+    return extension;
+  }
+
+  if (mimeType === "image/png") {
+    return ".png";
+  }
+
+  if (mimeType === "image/gif") {
+    return ".gif";
+  }
+
+  if (mimeType === "image/webp") {
+    return ".webp";
+  }
+
+  return ".jpg";
+}
+
+function getStoragePathFromPublicUrl(url: string, bucketName: string) {
+  try {
+    const parsedUrl = new URL(url);
+    const publicPathPrefix = `/storage/v1/object/public/${bucketName}/`;
+    const pathStartIndex = parsedUrl.pathname.indexOf(publicPathPrefix);
+
+    if (pathStartIndex < 0) {
+      return null;
+    }
+
+    return decodeURIComponent(parsedUrl.pathname.slice(pathStartIndex + publicPathPrefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function getUploadsPathFromPublicUrl(url: string) {
+  const normalized = (url || "").trim();
+  if (!normalized.startsWith("/uploads/")) {
+    return null;
+  }
+
+  return normalized.replace(/^\/uploads\//, "");
+}
+
+const chapterLogoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CHAPTER_LOGO_MAX_BYTES },
+  fileFilter: (_req, file, cb) => {
+    const normalizedMimeType = (file.mimetype || "").toLowerCase();
+    if (CHAPTER_LOGO_ALLOWED_MIME_TYPES.has(normalizedMimeType)) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error("Only JPG, PNG, GIF, and WEBP images are allowed for chapter logos"));
+  },
+});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -1185,6 +1329,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(chapter);
   });
 
+  app.get("/api/chapters/:id/directory", async (req, res) => {
+    const chapter = await storage.getChapter(req.params.id);
+    if (!chapter) {
+      return res.status(404).json({ error: "Chapter not found" });
+    }
+
+    const directoryEntries = await storage.getPublicChapterDirectory(req.params.id);
+    res.json(directoryEntries);
+  });
+
+  app.get("/api/chapters/:id/barangay-directory", async (req, res) => {
+    const chapter = await storage.getChapter(req.params.id);
+    if (!chapter) {
+      return res.status(404).json({ error: "Chapter not found" });
+    }
+
+    const barangayDirectoryEntries = await storage.getPublicBarangayDirectory(req.params.id);
+    res.json(barangayDirectoryEntries);
+  });
+
   app.get("/api/chapters/:id/barangays", async (req, res) => {
     const barangays = await storage.getBarangayUsersByChapterId(req.params.id);
     res.json(barangays.filter(b => b.isActive).map(b => ({ 
@@ -1202,6 +1366,142 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.post("/api/chapters/:id/logo", requireAdminAuth, (req, res, next) => {
+    chapterLogoUpload.single("logo")(req, res, (uploadError: any) => {
+      if (!uploadError) {
+        next();
+        return;
+      }
+
+      if (uploadError instanceof multer.MulterError && uploadError.code === "LIMIT_FILE_SIZE") {
+        res.status(400).json({ error: "Chapter logo must be 5MB or less" });
+        return;
+      }
+
+      res.status(400).json({ error: uploadError?.message || "Invalid chapter logo upload" });
+    });
+  }, async (req, res) => {
+    const chapterId = req.params.id;
+    const existingChapter = await storage.getChapter(chapterId);
+
+    if (!existingChapter) {
+      return res.status(404).json({ error: "Chapter not found" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No chapter logo file uploaded" });
+    }
+
+    const supabaseClient = getSupabaseStorageClient();
+
+    try {
+      const fileExtension = resolveImageExtension(req.file.originalname, req.file.mimetype);
+      const baseFileName = `${sanitizePathSegment(existingChapter.name)}-${Date.now()}-${Math.round(Math.random() * 1e9)}${fileExtension}`;
+      const storageObjectPath = [
+        "chapters",
+        sanitizePathSegment(chapterId),
+        baseFileName,
+      ].join("/");
+
+      if (!supabaseClient) {
+        const uploadsDir = ensureUploadsDir();
+        const localFileName = `chapter-${sanitizePathSegment(chapterId)}-${baseFileName}`;
+        const localFilePath = path.join(uploadsDir, localFileName);
+        await fs.promises.writeFile(localFilePath, req.file.buffer);
+
+        const localLogoUrl = `/uploads/${localFileName}`;
+        const updatedChapter = await storage.updateChapter(chapterId, { photo: localLogoUrl });
+        if (!updatedChapter) {
+          return res.status(404).json({ error: "Chapter not found after upload" });
+        }
+
+        const previousLocalLogoPath = existingChapter.photo
+          ? getUploadsPathFromPublicUrl(existingChapter.photo)
+          : null;
+
+        if (previousLocalLogoPath && previousLocalLogoPath !== localFileName) {
+          try {
+            await fs.promises.unlink(path.join(uploadsDir, previousLocalLogoPath));
+          } catch {
+            // Ignore cleanup failures for old fallback files.
+          }
+        }
+
+        return res.json({
+          url: localLogoUrl,
+          photo: localLogoUrl,
+          logoUrl: localLogoUrl,
+          chapter: updatedChapter,
+          storageProvider: "local-fallback",
+        });
+      }
+
+      await ensureChapterLogoBucket(supabaseClient);
+
+      const { error: uploadError } = await supabaseClient.storage
+        .from(CHAPTER_LOGO_BUCKET)
+        .upload(storageObjectPath, req.file.buffer, {
+          contentType: req.file.mimetype,
+          cacheControl: "31536000",
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error("[chapter-logo-upload] upload failed", {
+          chapterId,
+          message: uploadError.message,
+        });
+        return res.status(500).json({ error: "Failed to upload chapter logo to Supabase" });
+      }
+
+      const { data: publicUrlData } = supabaseClient.storage
+        .from(CHAPTER_LOGO_BUCKET)
+        .getPublicUrl(storageObjectPath);
+
+      const publicLogoUrl = publicUrlData?.publicUrl;
+      if (!publicLogoUrl) {
+        return res.status(500).json({ error: "Supabase did not return a public logo URL" });
+      }
+
+      const updatedChapter = await storage.updateChapter(chapterId, { photo: publicLogoUrl });
+      if (!updatedChapter) {
+        return res.status(404).json({ error: "Chapter not found after upload" });
+      }
+
+      const previousLogoPath = existingChapter.photo
+        ? getStoragePathFromPublicUrl(existingChapter.photo, CHAPTER_LOGO_BUCKET)
+        : null;
+
+      if (previousLogoPath && previousLogoPath !== storageObjectPath) {
+        const { error: deleteOldLogoError } = await supabaseClient.storage
+          .from(CHAPTER_LOGO_BUCKET)
+          .remove([previousLogoPath]);
+
+        if (deleteOldLogoError) {
+          console.warn("[chapter-logo-upload] failed to remove old logo", {
+            chapterId,
+            previousLogoPath,
+            message: deleteOldLogoError.message,
+          });
+        }
+      }
+
+      res.json({
+        url: publicLogoUrl,
+        photo: publicLogoUrl,
+        logoUrl: publicLogoUrl,
+        chapter: updatedChapter,
+        storageProvider: "supabase",
+      });
+    } catch (error: any) {
+      console.error("[chapter-logo-upload] request failed", {
+        chapterId,
+        message: error?.message,
+      });
+      res.status(500).json({ error: "Failed to upload chapter logo to Supabase" });
     }
   });
 
@@ -1698,6 +1998,70 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/project-reports/:id", requireAuth, async (req, res) => {
+    const existing = await storage.getProjectReport(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Project report not found" });
+    }
+
+    if (req.session.role === "chapter" && existing.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role !== "admin" && req.session.role !== "chapter") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    try {
+      const validated = insertProjectReportSchema.partial().parse(req.body) as Record<string, unknown>;
+
+      if (req.session.role !== "admin") {
+        delete validated.chapterId;
+        delete validated.barangayId;
+      }
+
+      const report = await storage.updateProjectReport(req.params.id, validated as any);
+      if (!report) {
+        return res.status(404).json({ error: "Project report not found" });
+      }
+
+      await storage.updatePublicationBySourceProjectReportId(report.id, {
+        chapterId: report.chapterId,
+        title: report.projectName,
+        content: report.projectWriteup,
+        photoUrl: report.photoUrl,
+        facebookLink: report.facebookPostLink,
+      });
+
+      res.json(report);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/project-reports/:id", requireAuth, async (req, res) => {
+    const existing = await storage.getProjectReport(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Project report not found" });
+    }
+
+    if (req.session.role === "chapter" && existing.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role !== "admin" && req.session.role !== "chapter") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteProjectReport(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Project report not found" });
+    }
+
+    res.json({ success: true });
+  });
+
   app.get("/api/chapter-kpis", requireAuth, async (req, res) => {
     const chapterId = req.query.chapterId as string;
     if (!chapterId) {
@@ -1745,6 +2109,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
+  });
+
+  app.delete("/api/chapter-kpis/:id", requireAdminAuth, async (req, res) => {
+    const deleted = await storage.deleteChapterKpi(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "KPI not found" });
+    }
+    res.json({ success: true });
   });
 
   app.get("/api/leaderboard", async (req, res) => {
@@ -1810,20 +2182,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!member) {
         return res.status(404).json({ error: "Member not found" });
       }
-      
-      if (req.session.role === "chapter" && member.chapterId !== req.session.chapterId) {
+
+      if (req.session.role === "chapter") {
+        if (member.chapterId !== req.session.chapterId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      } else if (req.session.role === "barangay") {
+        if (!req.session.barangayId || member.barangayId !== req.session.barangayId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      } else if (req.session.role !== "admin") {
         return res.status(403).json({ error: "Access denied" });
       }
-      
-      const allowedFields = ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "chapterId"];
+
+      const allowedFieldsByRole: Record<string, string[]> = {
+        admin: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "chapterId", "barangayId"],
+        chapter: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "barangayId"],
+        barangay: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink"],
+      };
+
+      const allowedFields = allowedFieldsByRole[req.session.role || ""] || [];
       const updateData: Record<string, any> = {};
-      
+
       for (const field of allowedFields) {
         if (req.body[field] !== undefined) {
           updateData[field] = req.body[field];
         }
       }
-      
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: "No valid fields provided for update" });
+      }
+
+      if (req.session.role === "chapter" && updateData.barangayId) {
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(req.session.chapterId!);
+        const isValidBarangay = chapterBarangays.some((barangay) => barangay.id === updateData.barangayId);
+        if (!isValidBarangay) {
+          return res.status(400).json({ error: "Invalid barangay for this chapter" });
+        }
+      }
+
       const updated = await storage.updateMember(req.params.id, updateData);
       res.json(updated);
     } catch (error: any) {
@@ -1846,21 +2244,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/chapter-officers", requireAuth, async (req, res) => {
-    const chapterId = req.query.chapterId as string;
-    const barangayId = req.query.barangayId as string | undefined;
+    const requestedChapterId = req.query.chapterId as string | undefined;
+    const requestedBarangayId = req.query.barangayId as string | undefined;
     const level = req.query.level as string | undefined;
-    
-    if (!chapterId) {
-      return res.status(400).json({ error: "chapterId required" });
+
+    if (req.session.role === "admin") {
+      if (!requestedChapterId) {
+        return res.status(400).json({ error: "chapterId required" });
+      }
+
+      if (requestedBarangayId && level === "barangay") {
+        const officers = await storage.getOfficersByBarangay(requestedBarangayId);
+        return res.json(officers);
+      }
+
+      const officers = await storage.getChapterOfficers(requestedChapterId);
+      return res.json(officers);
     }
-    
-    if (barangayId && level === "barangay") {
-      const officers = await storage.getOfficersByBarangay(barangayId);
-      res.json(officers);
-    } else {
-      const officers = await storage.getChapterOfficers(chapterId);
-      res.json(officers);
+
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId!;
+
+      if (requestedChapterId && requestedChapterId !== sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (requestedBarangayId && level === "barangay") {
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(sessionChapterId);
+        const isValidBarangay = chapterBarangays.some((barangay) => barangay.id === requestedBarangayId);
+        if (!isValidBarangay) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        const officers = await storage.getOfficersByBarangay(requestedBarangayId);
+        return res.json(officers);
+      }
+
+      const officers = await storage.getChapterOfficers(sessionChapterId);
+      return res.json(officers);
     }
+
+    if (req.session.role === "barangay") {
+      if (!req.session.barangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (requestedBarangayId && requestedBarangayId !== req.session.barangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const officers = await storage.getOfficersByBarangay(req.session.barangayId);
+      return res.json(officers);
+    }
+
+    return res.status(403).json({ error: "Access denied" });
   });
 
   app.post("/api/chapter-officers", requireChapterOrBarangayAuth, async (req, res) => {
@@ -1885,8 +2322,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/chapter-officers/:id", requireChapterOrBarangayAuth, async (req, res) => {
     try {
-      const validated = insertChapterOfficerSchema.partial().parse(req.body);
-      const officer = await storage.updateChapterOfficer(req.params.id, validated);
+      const existingOfficer = await storage.getChapterOfficer(req.params.id);
+      if (!existingOfficer) {
+        return res.status(404).json({ error: "Officer not found" });
+      }
+
+      if (req.session.role === "chapter" && existingOfficer.chapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (req.session.role === "barangay" && existingOfficer.barangayId !== req.session.barangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const validated = insertChapterOfficerSchema.partial().parse(req.body) as Record<string, unknown>;
+      delete validated.chapterId;
+
+      if (req.session.role === "barangay") {
+        delete validated.barangayId;
+        validated.level = "barangay";
+      }
+
+      const officer = await storage.updateChapterOfficer(req.params.id, validated as any);
       if (!officer) {
         return res.status(404).json({ error: "Officer not found" });
       }
@@ -1898,6 +2355,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.delete("/api/chapter-officers/:id", requireChapterOrBarangayAuth, async (req, res) => {
+    const existingOfficer = await storage.getChapterOfficer(req.params.id);
+    if (!existingOfficer) {
+      return res.status(404).json({ error: "Officer not found" });
+    }
+
+    if (req.session.role === "chapter" && existingOfficer.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role === "barangay" && existingOfficer.barangayId !== req.session.barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const deleted = await storage.deleteChapterOfficer(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: "Officer not found" });
@@ -2002,13 +2472,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/kpi-completions", requireAuth, async (req, res) => {
-    const chapterId = req.query.chapterId as string;
-    if (!chapterId) {
-      return res.status(400).json({ error: "chapterId required" });
+    const requestedChapterId = req.query.chapterId as string | undefined;
+    let effectiveChapterId = requestedChapterId;
+
+    if (req.session.role === "admin") {
+      if (!effectiveChapterId) {
+        return res.status(400).json({ error: "chapterId required" });
+      }
+    } else if (req.session.role === "chapter" || req.session.role === "barangay") {
+      if (!req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (requestedChapterId && requestedChapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      effectiveChapterId = req.session.chapterId;
+    } else {
+      return res.status(403).json({ error: "Access denied" });
     }
+
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
     const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
-    const completions = await storage.getKpiCompletions(chapterId, year, quarter);
+    const completions = await storage.getKpiCompletions(effectiveChapterId!, year, quarter);
     res.json(completions);
   });
 
@@ -2036,8 +2523,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/kpi-completions/:id", requireChapterAuth, async (req, res) => {
     try {
-      const validated = insertKpiCompletionSchema.partial().parse(req.body);
-      const completion = await storage.updateKpiCompletion(req.params.id, validated);
+      const existingCompletion = await storage.getKpiCompletion(req.params.id);
+      if (!existingCompletion) {
+        return res.status(404).json({ error: "KPI completion not found" });
+      }
+
+      if (existingCompletion.chapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const validated = insertKpiCompletionSchema.partial().parse(req.body) as Record<string, unknown>;
+      delete validated.chapterId;
+      delete validated.kpiTemplateId;
+
+      const completion = await storage.updateKpiCompletion(req.params.id, validated as any);
       if (!completion) {
         return res.status(404).json({ error: "KPI completion not found" });
       }
@@ -2049,11 +2548,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/kpi-completions/:id/mark-complete", requireChapterAuth, async (req, res) => {
+    const existingCompletion = await storage.getKpiCompletion(req.params.id);
+    if (!existingCompletion) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+
+    if (existingCompletion.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const completion = await storage.markKpiCompleted(req.params.id);
     if (!completion) {
       return res.status(404).json({ error: "KPI completion not found" });
     }
     res.json(completion);
+  });
+
+  app.delete("/api/kpi-completions/:id", requireChapterAuth, async (req, res) => {
+    const existingCompletion = await storage.getKpiCompletion(req.params.id);
+    if (!existingCompletion) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+
+    if (existingCompletion.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteKpiCompletion(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+
+    res.json({ success: true });
   });
 
   app.put("/api/chapters/:id/social-media", requireChapterAuth, async (req, res) => {
@@ -2197,7 +2723,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/mou-submissions/:id", requireChapterAuth, async (req, res) => {
     try {
-      const submission = await storage.updateMouSubmission(req.params.id, req.body);
+      const existingSubmission = await storage.getMouSubmission(req.params.id);
+      if (!existingSubmission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      if (existingSubmission.chapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const validated = insertMouSubmissionSchema.partial().parse(req.body) as Record<string, unknown>;
+      delete validated.chapterId;
+      delete validated.driveFolderUrl;
+
+      const submission = await storage.updateMouSubmission(req.params.id, validated as any);
       if (!submission) {
         return res.status(404).json({ error: "Submission not found" });
       }
@@ -2205,6 +2744,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
+  });
+
+  app.delete("/api/mou-submissions/:id", requireChapterAuth, async (req, res) => {
+    const existingSubmission = await storage.getMouSubmission(req.params.id);
+    if (!existingSubmission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    if (existingSubmission.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteMouSubmission(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    res.json({ success: true });
   });
 
   app.get("/api/chapter-requests", requireAdminAuth, async (req, res) => {
@@ -2244,6 +2801,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
+  });
+
+  app.delete("/api/chapter-requests/:id", requireAuth, async (req, res) => {
+    const existingRequest = await storage.getChapterRequest(req.params.id);
+    if (!existingRequest) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    if (req.session.role === "chapter" && existingRequest.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role !== "admin" && req.session.role !== "chapter") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteChapterRequest(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    res.json({ success: true });
   });
 
   // National Request routes (messaging system)
@@ -2315,6 +2894,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
+  });
+
+  app.delete("/api/national-requests/:id", requireAuth, async (req, res) => {
+    const existingRequest = await storage.getNationalRequest(req.params.id);
+    if (!existingRequest) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    if (req.session.role !== "admin") {
+      let senderType: string;
+      let senderId: string;
+
+      if (req.session.chapterId) {
+        senderType = "chapter";
+        senderId = req.session.chapterId;
+      } else if (req.session.barangayId) {
+        senderType = "barangay";
+        senderId = req.session.barangayId;
+      } else {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (existingRequest.senderType !== senderType || existingRequest.senderId !== senderId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
+    const deleted = await storage.deleteNationalRequest(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Request not found" });
+    }
+
+    res.json({ success: true });
   });
 
   if (process.env.DATABASE_URL) {

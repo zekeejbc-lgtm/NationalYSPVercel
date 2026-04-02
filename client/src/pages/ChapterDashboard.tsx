@@ -17,6 +17,7 @@ import { usePagination } from "@/hooks/use-pagination";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { 
   FileText, 
   Newspaper, 
@@ -27,8 +28,12 @@ import {
   Search,
   Facebook,
   Phone,
+  Mail,
   ArrowUpDown,
   Upload,
+  Edit2,
+  Trash2,
+  Save,
   MapPin,
   UserCheck,
   Share2,
@@ -51,6 +56,17 @@ const MemberDashboardPanel = lazy(() => import("@/components/chapter/MemberDashb
 const ImportantDocumentsPanel = lazy(() => import("@/components/chapter/ImportantDocumentsPanel"));
 const FundingRequestPanel = lazy(() => import("@/components/chapter/FundingRequestPanel"));
 const NationalRequestPanel = lazy(() => import("@/components/chapter/NationalRequestPanel"));
+const ChaptersMap = lazy(() => import("@/components/ChaptersMap"));
+
+const CHAPTER_ACTIVE_TAB_STORAGE_KEY = "ysp:chapter-active-tab:v1";
+
+function readInitialChapterTab() {
+  if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+    return "reports";
+  }
+
+  return window.sessionStorage.getItem(CHAPTER_ACTIVE_TAB_STORAGE_KEY) || "reports";
+}
 
 interface AuthUser {
   id: string;
@@ -61,11 +77,49 @@ interface AuthUser {
   mustChangePassword?: boolean;
 }
 
+interface PublicChapterDirectoryEntry {
+  id: string;
+  chapterId: string;
+  position: string;
+  fullName: string;
+  contactNumber: string;
+  chapterEmail: string;
+}
+
+interface PublicBarangayDirectoryEntry {
+  id: string;
+  chapterId: string;
+  barangayName: string;
+  presidentName: string | null;
+  presidentContactNumber: string | null;
+  presidentEmail: string | null;
+}
+
+interface ChapterBarangayOption {
+  id: string;
+  barangayName: string;
+  chapterId: string;
+}
+
+interface BarangayOfficerDirectoryGroup {
+  barangayId: string;
+  barangayName: string;
+  officers: PublicChapterDirectoryEntry[];
+}
+
+const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+
+function getChapterLogoSrc(photo?: string | null) {
+  const normalizedPhoto = photo?.trim() || "";
+  return normalizedPhoto ? getDisplayImageUrl(normalizedPhoto) : WEBSITE_LOGO_SRC;
+}
+
 
 export default function ChapterDashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("reports");
+  const confirmDelete = useDeleteConfirmation();
+  const [activeTab, setActiveTab] = useState(readInitialChapterTab);
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -85,9 +139,18 @@ export default function ChapterDashboard() {
   const [publicationChapterFilter, setPublicationChapterFilter] = useState<string>("all");
   const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
   const [failedPublicationImages, setFailedPublicationImages] = useState<Record<string, boolean>>({});
+  const [selectedDirectoryChapterId, setSelectedDirectoryChapterId] = useState<string | null>(null);
   const [chapterSearch, setChapterSearch] = useState("");
   const [chapterSort, setChapterSort] = useState<"asc" | "desc">("asc");
   const [reportSearch, setReportSearch] = useState("");
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [editProjectName, setEditProjectName] = useState("");
+  const [editProjectWriteup, setEditProjectWriteup] = useState("");
+  const [editPhotoUrl, setEditPhotoUrl] = useState("");
+  const [editFacebookPostLink, setEditFacebookPostLink] = useState("");
+  const [editCollaborationType, setEditCollaborationType] = useState<"NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL">("NONE");
+  const [editCollaboratingChapterId, setEditCollaboratingChapterId] = useState<string | null>(null);
+  const [editUploading, setEditUploading] = useState(false);
 
   const chapterReportsUrl = authUser?.chapterId
     ? `/api/project-reports?chapterId=${encodeURIComponent(authUser.chapterId)}`
@@ -110,6 +173,88 @@ export default function ChapterDashboard() {
   const { data: chapters = [] } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
     enabled: authenticated,
+  });
+
+  const { data: selectedChapterDirectory = [], isLoading: selectedChapterDirectoryLoading } = useQuery<PublicChapterDirectoryEntry[]>({
+    queryKey: ["/api/chapters", selectedDirectoryChapterId, "directory"],
+    queryFn: async () => {
+      if (!selectedDirectoryChapterId) {
+        return [];
+      }
+
+      const response = await fetch(`/api/chapters/${selectedDirectoryChapterId}/directory`, { credentials: "include" });
+      if (!response.ok) {
+        return [];
+      }
+
+      return response.json();
+    },
+    enabled: authenticated && !!selectedDirectoryChapterId,
+  });
+
+  const { data: selectedChapterBarangays = [], isLoading: selectedChapterBarangaysLoading } = useQuery<PublicBarangayDirectoryEntry[]>({
+    queryKey: ["/api/chapters", selectedDirectoryChapterId, "barangay-directory"],
+    queryFn: async () => {
+      if (!selectedDirectoryChapterId) {
+        return [];
+      }
+
+      const response = await fetch(`/api/chapters/${selectedDirectoryChapterId}/barangay-directory`, { credentials: "include" });
+      if (!response.ok) {
+        return [];
+      }
+
+      return response.json();
+    },
+    enabled: authenticated && !!selectedDirectoryChapterId,
+  });
+
+  const { data: selectedBarangayOfficerGroups = [], isLoading: selectedBarangayOfficerGroupsLoading } = useQuery<BarangayOfficerDirectoryGroup[]>({
+    queryKey: ["/api/chapters", selectedDirectoryChapterId, "barangay-officer-directory"],
+    queryFn: async () => {
+      if (!selectedDirectoryChapterId) {
+        return [];
+      }
+
+      const barangayResponse = await fetch(`/api/chapters/${selectedDirectoryChapterId}/barangays`, { credentials: "include" });
+      if (!barangayResponse.ok) {
+        return [];
+      }
+
+      const barangays = (await barangayResponse.json()) as ChapterBarangayOption[];
+      if (!Array.isArray(barangays) || barangays.length === 0) {
+        return [];
+      }
+
+      const groups = await Promise.all(
+        barangays.map(async (barangay) => {
+          const params = new URLSearchParams({
+            chapterId: selectedDirectoryChapterId,
+            barangayId: barangay.id,
+            level: "barangay",
+          });
+
+          const officersResponse = await fetch(`/api/chapter-officers?${params.toString()}`, { credentials: "include" });
+          if (!officersResponse.ok) {
+            return {
+              barangayId: barangay.id,
+              barangayName: barangay.barangayName,
+              officers: [],
+            };
+          }
+
+          const officers = (await officersResponse.json()) as PublicChapterDirectoryEntry[];
+          return {
+            barangayId: barangay.id,
+            barangayName: barangay.barangayName,
+            officers: Array.isArray(officers) ? officers : [],
+          };
+        }),
+      );
+
+      return groups;
+    },
+    enabled: authenticated && !!selectedDirectoryChapterId,
   });
 
   useEffect(() => {
@@ -156,6 +301,14 @@ export default function ChapterDashboard() {
     checkAuth();
   }, [setLocation]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(CHAPTER_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
+
   const submitReportMutation = useMutation({
     mutationFn: async (data: any) => {
       return await apiRequest("POST", "/api/project-reports", data);
@@ -168,6 +321,37 @@ export default function ChapterDashboard() {
       setFacebookLink("");
       setCollaborationType("NONE");
       setCollaboratingChapterId(null);
+      queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const updateReportMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      return await apiRequest("PUT", `/api/project-reports/${id}`, data);
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "Report updated successfully" });
+      resetEditReportForm();
+      queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const deleteReportMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/project-reports/${id}`, {});
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "Report deleted successfully" });
       queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
@@ -238,6 +422,80 @@ export default function ChapterDashboard() {
       facebookPostLink: facebookLink,
       collaborationType,
       collaboratingChapterId: collaborationType === "ANOTHER_CHAPTER" ? collaboratingChapterId : null
+    });
+  };
+
+  const resetEditReportForm = () => {
+    setEditingReportId(null);
+    setEditProjectName("");
+    setEditProjectWriteup("");
+    setEditPhotoUrl("");
+    setEditFacebookPostLink("");
+    setEditCollaborationType("NONE");
+    setEditCollaboratingChapterId(null);
+    setEditUploading(false);
+  };
+
+  const openEditReportForm = (report: ProjectReport) => {
+    setEditingReportId(report.id);
+    setEditProjectName(report.projectName);
+    setEditProjectWriteup(report.projectWriteup);
+    setEditPhotoUrl((report.photoUrl || "").trim());
+    setEditFacebookPostLink(report.facebookPostLink);
+    setEditCollaborationType((report.collaborationType || "NONE") as "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL");
+    setEditCollaboratingChapterId(report.collaboratingChapterId || null);
+  };
+
+  const handleEditImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setEditUploading(true);
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+        credentials: "include"
+      });
+      const data = await res.json();
+      setEditPhotoUrl(data.url);
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to upload image", variant: "destructive" });
+    } finally {
+      setEditUploading(false);
+    }
+  };
+
+  const handleUpdateReport = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!editingReportId) {
+      return;
+    }
+
+    if (!editProjectName || !editProjectWriteup || !editFacebookPostLink) {
+      toast({ title: "Error", description: "Please fill all required fields", variant: "destructive" });
+      return;
+    }
+
+    if (editCollaborationType === "ANOTHER_CHAPTER" && !editCollaboratingChapterId) {
+      toast({ title: "Error", description: "Please select the collaborating chapter", variant: "destructive" });
+      return;
+    }
+
+    updateReportMutation.mutate({
+      id: editingReportId,
+      data: {
+        projectName: editProjectName,
+        projectWriteup: editProjectWriteup,
+        photoUrl: editPhotoUrl || null,
+        facebookPostLink: editFacebookPostLink,
+        collaborationType: editCollaborationType,
+        collaboratingChapterId: editCollaborationType === "ANOTHER_CHAPTER" ? editCollaboratingChapterId : null,
+      },
     });
   };
 
@@ -342,6 +600,14 @@ export default function ChapterDashboard() {
     return `${cleaned.slice(0, maxLength).trimEnd()}...`;
   };
 
+  const handleDeleteReport = async (id: string) => {
+    if (!(await confirmDelete("Delete this report? This will also remove it from publications.", "Delete Report"))) {
+      return;
+    }
+
+    deleteReportMutation.mutate(id);
+  };
+
   const filteredChapters = chapters
     .filter(chapter => 
       chapter.name.toLowerCase().includes(chapterSearch.toLowerCase()) ||
@@ -352,6 +618,14 @@ export default function ChapterDashboard() {
         ? a.name.localeCompare(b.name) 
         : b.name.localeCompare(a.name)
     );
+
+  const selectedDirectoryChapter = useMemo(() => {
+    if (!selectedDirectoryChapterId) {
+      return null;
+    }
+
+    return chapters.find((chapter) => chapter.id === selectedDirectoryChapterId) || null;
+  }, [chapters, selectedDirectoryChapterId]);
 
   const publicationsPagination = usePagination(filteredPublications, {
     pageSize: 9,
@@ -631,6 +905,23 @@ export default function ChapterDashboard() {
                                 </CardDescription>
                               </CardHeader>
                               <CardContent className="space-y-3">
+                                {reportPhotoUrl && (
+                                  <a
+                                    href={reportPhotoUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block w-full max-w-sm"
+                                    data-testid={`preview-report-photo-${report.id}`}
+                                  >
+                                    <img
+                                      src={reportPhotoUrl}
+                                      alt={`${report.projectName} uploaded photo`}
+                                      className="w-full max-h-56 rounded-md border object-cover"
+                                      loading="lazy"
+                                      decoding="async"
+                                    />
+                                  </a>
+                                )}
                                 <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
                                   {report.projectWriteup}
                                 </p>
@@ -662,6 +953,29 @@ export default function ChapterDashboard() {
                                       View Uploaded Photo
                                     </a>
                                   )}
+                                  <div className="ml-auto flex items-center gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => openEditReportForm(report)}
+                                      data-testid={`button-edit-report-${report.id}`}
+                                    >
+                                      <Edit2 className="h-4 w-4 mr-1" />
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      size="sm"
+                                      disabled={deleteReportMutation.isPending}
+                                      onClick={() => handleDeleteReport(report.id)}
+                                      data-testid={`button-delete-report-${report.id}`}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-1" />
+                                      Delete
+                                    </Button>
+                                  </div>
                                 </div>
                               </CardContent>
                             </Card>
@@ -684,6 +998,140 @@ export default function ChapterDashboard() {
                   )}
                 </CardContent>
               </Card>
+
+              <Dialog
+                open={Boolean(editingReportId)}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    resetEditReportForm();
+                  }
+                }}
+              >
+                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Edit Project Report</DialogTitle>
+                    <DialogDescription>
+                      Update your submitted report details.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  <form onSubmit={handleUpdateReport} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="editProjectName">Project Name *</Label>
+                      <Input
+                        id="editProjectName"
+                        value={editProjectName}
+                        onChange={(e) => setEditProjectName(e.target.value)}
+                        placeholder="Enter project name"
+                        required
+                        data-testid="input-edit-project-name"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editProjectWriteup">Project Write-up *</Label>
+                      <Textarea
+                        id="editProjectWriteup"
+                        value={editProjectWriteup}
+                        onChange={(e) => setEditProjectWriteup(e.target.value)}
+                        placeholder="Describe your project..."
+                        rows={6}
+                        required
+                        data-testid="input-edit-project-writeup"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editPhoto">Photo</Label>
+                      <div className="flex items-center gap-4">
+                        <Input
+                          id="editPhoto"
+                          type="file"
+                          accept="image/*"
+                          onChange={handleEditImageUpload}
+                          className="max-w-xs"
+                          data-testid="input-edit-photo"
+                        />
+                        {editUploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
+                        {editPhotoUrl && (
+                          <img src={getDisplayImageUrl(editPhotoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="editFacebookLink">Facebook Post Link *</Label>
+                      <Input
+                        id="editFacebookLink"
+                        type="url"
+                        value={editFacebookPostLink}
+                        onChange={(e) => setEditFacebookPostLink(e.target.value)}
+                        placeholder="https://facebook.com/..."
+                        required
+                        data-testid="input-edit-facebook-link"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Collaboration (Optional)</Label>
+                      <Select
+                        value={editCollaborationType}
+                        onValueChange={(value: "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL") => {
+                          setEditCollaborationType(value);
+                          if (value !== "ANOTHER_CHAPTER") {
+                            setEditCollaboratingChapterId(null);
+                          }
+                        }}
+                      >
+                        <SelectTrigger data-testid="select-edit-collaboration-type">
+                          <SelectValue placeholder="Select collaboration type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="NONE">None</SelectItem>
+                          <SelectItem value="ANOTHER_CHAPTER">Another Chapter</SelectItem>
+                          <SelectItem value="YSP_NATIONAL">YSP National</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {editCollaborationType === "ANOTHER_CHAPTER" && (
+                      <div className="space-y-2">
+                        <Label>Collaborating Chapter *</Label>
+                        <Select
+                          value={editCollaboratingChapterId || "none"}
+                          onValueChange={(value) => setEditCollaboratingChapterId(value === "none" ? null : value)}
+                        >
+                          <SelectTrigger data-testid="select-edit-collaborating-chapter">
+                            <SelectValue placeholder="Select chapter" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Select a chapter</SelectItem>
+                            {chapters
+                              .filter(ch => ch.id !== authUser?.chapterId)
+                              .map(ch => (
+                                <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" onClick={resetEditReportForm}>
+                        Cancel
+                      </Button>
+                      <Button
+                        type="submit"
+                        disabled={updateReportMutation.isPending || editUploading}
+                        data-testid="button-save-edited-report"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        {updateReportMutation.isPending ? "Saving..." : "Save Changes"}
+                      </Button>
+                    </div>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </div>
           </TabsContent>
 
@@ -972,9 +1420,26 @@ export default function ChapterDashboard() {
               </div>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {chaptersPagination.paginatedItems.map((chapter) => (
-                  <Card key={chapter.id} data-testid={`card-chapter-${chapter.id}`}>
+                  <Card
+                    key={chapter.id}
+                    className="cursor-pointer transition-colors hover:border-muted-foreground/40"
+                    onClick={() => setSelectedDirectoryChapterId(chapter.id)}
+                    data-testid={`card-chapter-${chapter.id}`}
+                  >
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-lg">{chapter.name}</CardTitle>
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={getChapterLogoSrc(chapter.photo)}
+                          alt={`${chapter.name} logo`}
+                          className="h-14 w-14 rounded-full border bg-white object-contain p-1"
+                          loading="lazy"
+                          onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = WEBSITE_LOGO_SRC;
+                          }}
+                        />
+                        <CardTitle className="text-lg break-words">{chapter.name}</CardTitle>
+                      </div>
                       {chapter.nextgenBatch && (
                         <Badge variant="outline">{chapter.nextgenBatch}</Badge>
                       )}
@@ -991,16 +1456,21 @@ export default function ChapterDashboard() {
                       )}
                       <div className="flex items-center gap-2 text-sm">
                         <Phone className="h-4 w-4 text-muted-foreground" />
-                        <a href={`tel:${chapter.contact}`} className="text-primary hover:underline">
-                          {chapter.contact}
-                        </a>
+                        <span className="text-primary">{chapter.contact}</span>
                       </div>
+                      {chapter.email && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Mail className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-primary break-all">{chapter.email}</span>
+                        </div>
+                      )}
                       {chapter.facebookLink && (
                         <a 
                           href={chapter.facebookLink} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                          onClick={(event) => event.stopPropagation()}
                         >
                           <Facebook className="h-4 w-4" />
                           Facebook Page
@@ -1010,6 +1480,179 @@ export default function ChapterDashboard() {
                   </Card>
                 ))}
               </div>
+
+              <Dialog
+                open={Boolean(selectedDirectoryChapterId)}
+                onOpenChange={(open) => {
+                  if (!open) {
+                    setSelectedDirectoryChapterId(null);
+                  }
+                }}
+              >
+                <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {selectedDirectoryChapter
+                        ? `${selectedDirectoryChapter.name} Directory`
+                        : "Chapter Directory"}
+                    </DialogTitle>
+                    <DialogDescription>
+                      Read-only details for chapter profile, officers, barangay officers, and map location.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  {selectedDirectoryChapter && (
+                    <div className="space-y-6">
+                      <section className="space-y-3">
+                        <h4 className="text-sm font-semibold">Chapter Info</h4>
+                        <div className="rounded-lg border p-4">
+                          <div className="flex items-start gap-3">
+                            <img
+                              src={getChapterLogoSrc(selectedDirectoryChapter.photo)}
+                              alt={`${selectedDirectoryChapter.name} logo`}
+                              className="h-16 w-16 rounded-full border bg-white object-contain p-1"
+                              onError={(event) => {
+                                event.currentTarget.onerror = null;
+                                event.currentTarget.src = WEBSITE_LOGO_SRC;
+                              }}
+                            />
+                            <div className="space-y-2 text-sm">
+                              <p className="text-base font-semibold text-foreground">{selectedDirectoryChapter.name}</p>
+                              <p className="flex items-center gap-2 text-muted-foreground">
+                                <MapPin className="h-4 w-4" />
+                                <span>{selectedDirectoryChapter.location}</span>
+                              </p>
+                              <p className="flex items-center gap-2 text-muted-foreground">
+                                <Phone className="h-4 w-4" />
+                                <a href={`tel:${selectedDirectoryChapter.contact}`} className="text-primary hover:underline">
+                                  {selectedDirectoryChapter.contact}
+                                </a>
+                              </p>
+                              {selectedDirectoryChapter.email && (
+                                <p className="flex items-center gap-2 text-muted-foreground">
+                                  <Mail className="h-4 w-4" />
+                                  <a href={`mailto:${selectedDirectoryChapter.email}`} className="text-primary hover:underline break-all">
+                                    {selectedDirectoryChapter.email}
+                                  </a>
+                                </p>
+                              )}
+                              {selectedDirectoryChapter.contactPerson && (
+                                <p className="text-muted-foreground">Contact: {selectedDirectoryChapter.contactPerson}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section className="space-y-3">
+                        <h4 className="text-sm font-semibold">Map</h4>
+                        <Suspense fallback={renderTabFallback("Loading map...")}>
+                          <ChaptersMap chapters={[selectedDirectoryChapter]} />
+                        </Suspense>
+                      </section>
+
+                      <section className="space-y-3">
+                        <h4 className="text-sm font-semibold">Officer Directory</h4>
+                        {selectedChapterDirectoryLoading ? (
+                          <LoadingState label="Loading officer directory..." rows={3} compact />
+                        ) : selectedChapterDirectory.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No officer directory entries available yet.</p>
+                        ) : (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {selectedChapterDirectory.map((entry) => (
+                              <div key={entry.id} className="rounded-lg border p-3 space-y-2" data-testid={`chapter-directory-entry-${entry.id}`}>
+                                <p className="font-medium break-words">{entry.fullName}</p>
+                                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Phone className="h-4 w-4" />
+                                  <a href={`tel:${entry.contactNumber}`} className="text-primary hover:underline break-all">
+                                    {entry.contactNumber}
+                                  </a>
+                                </p>
+                                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Mail className="h-4 w-4" />
+                                  <a href={`mailto:${entry.chapterEmail}`} className="text-primary hover:underline break-all">
+                                    {entry.chapterEmail}
+                                  </a>
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="space-y-3">
+                        <h4 className="text-sm font-semibold">Barangay Directory</h4>
+                        {selectedBarangayOfficerGroupsLoading || selectedChapterBarangaysLoading ? (
+                          <LoadingState label="Loading barangay directories..." rows={3} compact />
+                        ) : selectedBarangayOfficerGroups.length === 0 && selectedChapterBarangays.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No barangay chapters available for this chapter yet.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            {selectedBarangayOfficerGroups.length > 0
+                              ? selectedBarangayOfficerGroups.map((group) => (
+                                  <div key={group.barangayId} className="rounded-lg border p-3 space-y-3" data-testid={`barangay-directory-entry-${group.barangayId}`}>
+                                    <p className="font-medium break-words">{group.barangayName}</p>
+                                    {group.officers.length === 0 ? (
+                                      <p className="text-sm text-muted-foreground">No officer directory entries yet for this barangay.</p>
+                                    ) : (
+                                      <div className="grid gap-3 md:grid-cols-2">
+                                        {group.officers.map((officer) => (
+                                          <div key={officer.id} className="rounded-md border bg-muted/20 p-3 space-y-2">
+                                            <p className="font-medium break-words">{officer.fullName}</p>
+                                            <p className="text-xs text-muted-foreground">{officer.position}</p>
+                                            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                              <Phone className="h-4 w-4" />
+                                              <a href={`tel:${officer.contactNumber}`} className="text-primary hover:underline break-all">
+                                                {officer.contactNumber}
+                                              </a>
+                                            </p>
+                                            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                              <Mail className="h-4 w-4" />
+                                              <a href={`mailto:${officer.chapterEmail}`} className="text-primary hover:underline break-all">
+                                                {officer.chapterEmail}
+                                              </a>
+                                            </p>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))
+                              : selectedChapterBarangays.map((barangayEntry) => (
+                                  <div key={barangayEntry.id} className="rounded-lg border p-3 space-y-2" data-testid={`barangay-directory-entry-${barangayEntry.id}`}>
+                                    <p className="font-medium break-words">{barangayEntry.barangayName}</p>
+                                    {barangayEntry.presidentName ? (
+                                      <>
+                                        <p className="text-sm text-muted-foreground">President: {barangayEntry.presidentName}</p>
+                                        {barangayEntry.presidentContactNumber && (
+                                          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <Phone className="h-4 w-4" />
+                                            <a href={`tel:${barangayEntry.presidentContactNumber}`} className="text-primary hover:underline break-all">
+                                              {barangayEntry.presidentContactNumber}
+                                            </a>
+                                          </p>
+                                        )}
+                                        {barangayEntry.presidentEmail && (
+                                          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <Mail className="h-4 w-4" />
+                                            <a href={`mailto:${barangayEntry.presidentEmail}`} className="text-primary hover:underline break-all">
+                                              {barangayEntry.presidentEmail}
+                                            </a>
+                                          </p>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <p className="text-sm text-muted-foreground">No barangay chapter president assigned yet.</p>
+                                    )}
+                                  </div>
+                                ))}
+                          </div>
+                        )}
+                      </section>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
 
               <PaginationControls
                 currentPage={chaptersPagination.currentPage}

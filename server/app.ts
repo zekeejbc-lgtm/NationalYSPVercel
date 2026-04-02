@@ -62,11 +62,11 @@ app.use("/uploads", (_req, res) => {
 });
 
 const createSessionStore = () => {
-  const shouldUsePgSessionStore = process.env.ENABLE_PG_SESSION_STORE === "true";
+  const shouldUsePgSessionStore = process.env.ENABLE_PG_SESSION_STORE !== "false";
 
   if (!databaseUrl || !shouldUsePgSessionStore) {
     if (databaseUrl && !shouldUsePgSessionStore) {
-      console.log("[session] using in-memory session store; set ENABLE_PG_SESSION_STORE=true to use postgres session store");
+      console.log("[session] using in-memory session store because ENABLE_PG_SESSION_STORE=false");
     }
     return undefined;
   }

@@ -129,7 +129,7 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Send className="h-5 w-5" />
@@ -139,7 +139,7 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
                 Submit requests for YSP National support for your chapter activities
               </CardDescription>
             </div>
-            <Button onClick={() => setIsDialogOpen(true)} data-testid="button-new-request">
+            <Button className="w-full sm:w-auto" onClick={() => setIsDialogOpen(true)} data-testid="button-new-request">
               <Plus className="h-4 w-4 mr-2" />
               New Request
             </Button>
@@ -158,14 +158,14 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
               {requestsPagination.paginatedItems.map((request) => (
                 <Card key={request.id} className="hover-elevate transition-all">
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4 flex-wrap">
-                      <div className="flex-1 min-w-0">
+                    <div className="flex flex-col gap-3">
+                      <div className="w-full min-w-0">
                         <div className="flex items-center gap-2 flex-wrap mb-2">
                           {getStatusBadge(request.status)}
                         </div>
-                        <h3 className="font-semibold text-lg">{request.proposedActivityName || "Unnamed Activity"}</h3>
+                        <h3 className="text-base font-semibold leading-tight break-words sm:text-lg">{request.proposedActivityName || "Unnamed Activity"}</h3>
                         {request.date && (
-                          <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
+                          <p className="mt-1 flex items-center gap-1 break-words text-sm text-muted-foreground">
                             <Calendar className="h-3 w-3" />
                             {format(new Date(request.date), "MMMM d, yyyy")}
                             {request.time && ` at ${request.time}`}
@@ -321,9 +321,10 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
                 )}
               />
 
-              <div className="flex gap-2">
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
                 <Button 
                   type="submit" 
+                  className="w-full sm:w-auto"
                   disabled={createMutation.isPending} 
                   data-testid="button-submit-request"
                 >
@@ -332,6 +333,7 @@ export default function FundingRequestPanel({ chapterId }: FundingRequestPanelPr
                 <Button 
                   type="button" 
                   variant="outline" 
+                  className="w-full sm:w-auto"
                   onClick={() => setIsDialogOpen(false)}
                   data-testid="button-cancel-request"
                 >

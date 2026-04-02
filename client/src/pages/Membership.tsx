@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import ChapterCard from "@/components/ChapterCard";
 import ChaptersMap from "@/components/ChaptersMap";
-import { ExternalLink, Map, CheckCircle2 } from "lucide-react";
+import { ExternalLink, Map, CheckCircle2, Mail, MapPin, Phone, Search, User } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
 import type { Chapter } from "@shared/schema";
 
 interface MembershipFormData {
@@ -37,6 +38,26 @@ interface BarangayOption {
   id: string;
   barangayName: string;
   chapterId: string;
+}
+
+interface PublicChapterDirectoryEntry {
+  id: string;
+  chapterId: string;
+  barangayId: string | null;
+  level: string;
+  position: string;
+  fullName: string;
+  contactNumber: string;
+  chapterEmail: string;
+}
+
+interface PublicBarangayDirectoryEntry {
+  id: string;
+  chapterId: string;
+  barangayName: string;
+  presidentName: string | null;
+  presidentContactNumber: string | null;
+  presidentEmail: string | null;
 }
 
 const SECTOR_OPTIONS = [
@@ -63,14 +84,90 @@ Your data will not be sold or shared with unauthorized third parties and will be
 
 By proceeding, you affirm that the information provided is accurate and that you agree to this Privacy Advisory and Data Consent.`;
 
+const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+
+function isUnsupportedPhotoUrl(photoUrl: string): boolean {
+  const normalized = photoUrl.toLowerCase();
+  return normalized.includes("facebook.com/") || normalized.includes("fb.com/");
+}
+
+function getChapterLogoSrc(photo?: string | null): string {
+  const normalizedPhoto = photo?.trim() || "";
+  if (!normalizedPhoto || isUnsupportedPhotoUrl(normalizedPhoto)) {
+    return WEBSITE_LOGO_SRC;
+  }
+
+  return getDisplayImageUrl(normalizedPhoto);
+}
+
 export default function Membership() {
   const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [selectedChapterId, setSelectedChapterId] = useState<string | undefined>(undefined);
+  const [chapterSearchTerm, setChapterSearchTerm] = useState("");
+  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
+  const [isChapterDetailsOpen, setIsChapterDetailsOpen] = useState(false);
 
   const { data: chapters = [] } = useQuery<Chapter[]>({ 
     queryKey: ["/api/chapters"] 
+  });
+
+  const { data: selectedChapterDirectory = [], isLoading: isDirectoryLoading } = useQuery<PublicChapterDirectoryEntry[]>({
+    queryKey: ["/api/chapters", selectedChapter?.id, "directory"],
+    queryFn: async () => {
+      if (!selectedChapter?.id) {
+        return [];
+      }
+
+      const response = await fetch(`/api/chapters/${selectedChapter.id}/directory`);
+      if (!response.ok) {
+        return [];
+      }
+
+      return response.json();
+    },
+    enabled: isChapterDetailsOpen && !!selectedChapter?.id,
+  });
+
+  const { data: selectedChapterBarangays = [], isLoading: isBarangayDirectoryLoading } = useQuery<PublicBarangayDirectoryEntry[]>({
+    queryKey: ["/api/chapters", selectedChapter?.id, "barangay-directory"],
+    queryFn: async () => {
+      if (!selectedChapter?.id) {
+        return [];
+      }
+
+      const detailedDirectoryResponse = await fetch(`/api/chapters/${selectedChapter.id}/barangay-directory`);
+      if (detailedDirectoryResponse.ok) {
+        const responseContentType = (detailedDirectoryResponse.headers.get("content-type") || "").toLowerCase();
+        if (responseContentType.includes("application/json")) {
+          const detailedDirectoryData = await detailedDirectoryResponse.json();
+          if (Array.isArray(detailedDirectoryData)) {
+            return detailedDirectoryData as PublicBarangayDirectoryEntry[];
+          }
+        }
+      }
+
+      const barangayListResponse = await fetch(`/api/chapters/${selectedChapter.id}/barangays`);
+      if (!barangayListResponse.ok) {
+        return [];
+      }
+
+      const barangayList = await barangayListResponse.json();
+      if (!Array.isArray(barangayList)) {
+        return [];
+      }
+
+      return barangayList.map((barangay: BarangayOption) => ({
+        id: barangay.id,
+        chapterId: barangay.chapterId,
+        barangayName: barangay.barangayName,
+        presidentName: null,
+        presidentContactNumber: null,
+        presidentEmail: null,
+      }));
+    },
+    enabled: isChapterDetailsOpen && !!selectedChapter?.id,
   });
 
   const { data: barangays = [] } = useQuery<BarangayOption[]>({
@@ -104,6 +201,27 @@ export default function Membership() {
   });
 
   const watchSector = form.watch("sector");
+  const normalizedChapterSearchTerm = chapterSearchTerm.trim().toLowerCase();
+  const chapterOnlyDirectoryEntries = selectedChapterDirectory.filter((entry) => {
+    const normalizedLevel = (entry.level || "").toLowerCase();
+    const normalizedPosition = entry.position.toLowerCase();
+    return !entry.barangayId && normalizedLevel !== "barangay" && normalizedPosition.includes("president") && !normalizedPosition.includes("barangay");
+  });
+  const filteredChapters = chapters.filter((chapter) => {
+    if (!normalizedChapterSearchTerm) {
+      return true;
+    }
+
+    const searchableValues = [
+      chapter.name,
+      chapter.location,
+      chapter.contact,
+      chapter.email ?? "",
+      chapter.contactPerson ?? "",
+    ];
+
+    return searchableValues.some((value) => value.toLowerCase().includes(normalizedChapterSearchTerm));
+  });
 
   const submitMutation = useMutation({
     mutationFn: async (data: MembershipFormData) => {
@@ -602,11 +720,178 @@ export default function Membership() {
             </div>
             
             <h3 className="text-xl font-semibold mb-6 text-center">All Chapters</h3>
+            <div className="max-w-xl mx-auto mb-4">
+              <div className="relative">
+                <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  value={chapterSearchTerm}
+                  onChange={(event) => setChapterSearchTerm(event.target.value)}
+                  placeholder="Search chapter by name, location, contact, or email"
+                  className="pl-10"
+                  data-testid="input-chapter-search"
+                />
+              </div>
+            </div>
+            <p className="text-center text-sm text-muted-foreground mb-6" data-testid="text-chapter-search-count">
+              Showing {filteredChapters.length} of {chapters.length} chapters
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {chapters.map((chapter) => (
-                <ChapterCard key={chapter.id} {...chapter} />
+              {filteredChapters.map((chapter) => (
+                <ChapterCard
+                  key={chapter.id}
+                  {...chapter}
+                  onSelect={() => {
+                    setSelectedChapter(chapter);
+                    setIsChapterDetailsOpen(true);
+                  }}
+                />
               ))}
             </div>
+            {filteredChapters.length === 0 && (
+              <p className="text-center text-muted-foreground mt-6" data-testid="text-no-chapter-search-results">
+                No chapter found. Try a different keyword.
+              </p>
+            )}
+
+            <Dialog
+              open={isChapterDetailsOpen}
+              onOpenChange={(open) => {
+                setIsChapterDetailsOpen(open);
+                if (!open) {
+                  setSelectedChapter(null);
+                }
+              }}
+            >
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                {selectedChapter && (
+                  <div className="space-y-6">
+                    <DialogHeader>
+                      <DialogTitle className="text-2xl">{selectedChapter.name}</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="flex items-start gap-4">
+                      <img
+                        src={getChapterLogoSrc(selectedChapter.photo)}
+                        alt={`${selectedChapter.name} logo`}
+                        className="h-20 w-20 rounded-full border bg-white object-contain p-1"
+                        onError={(event) => {
+                          event.currentTarget.onerror = null;
+                          event.currentTarget.src = WEBSITE_LOGO_SRC;
+                        }}
+                      />
+                      <div className="space-y-2 text-sm">
+                        <p className="flex items-center gap-2 text-muted-foreground">
+                          <MapPin className="h-4 w-4" />
+                          <span>{selectedChapter.location}</span>
+                        </p>
+                        <p className="flex items-center gap-2 text-muted-foreground">
+                          <Phone className="h-4 w-4" />
+                          <a href={`tel:${selectedChapter.contact}`} className="text-primary hover:underline">
+                            {selectedChapter.contact}
+                          </a>
+                        </p>
+                        {selectedChapter.email && (
+                          <p className="flex items-center gap-2 text-muted-foreground">
+                            <Mail className="h-4 w-4" />
+                            <a href={`mailto:${selectedChapter.email}`} className="text-primary hover:underline break-all">
+                              {selectedChapter.email}
+                            </a>
+                          </p>
+                        )}
+                        {selectedChapter.contactPerson && (
+                          <p className="flex items-center gap-2 text-muted-foreground">
+                            <User className="h-4 w-4" />
+                            <span>{selectedChapter.contactPerson}</span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h4 className="text-lg font-semibold">Chapter Directory</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Public contact information only. Sensitive personal details are intentionally hidden.
+                      </p>
+
+                      {isDirectoryLoading ? (
+                        <p className="text-sm text-muted-foreground" data-testid="text-loading-chapter-directory">
+                          Loading chapter directory...
+                        </p>
+                      ) : chapterOnlyDirectoryEntries.length === 0 ? (
+                        <p className="text-sm text-muted-foreground" data-testid="text-empty-chapter-directory">
+                          No directory entries available yet. Use the chapter contact details above.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {chapterOnlyDirectoryEntries.map((entry) => (
+                            <div key={entry.id} className="rounded-lg border p-3 space-y-1" data-testid={`directory-entry-${entry.id}`}>
+                              <p className="font-medium">{entry.fullName}</p>
+                              <p className="text-sm text-muted-foreground">{entry.position}</p>
+                              <p className="text-sm">
+                                <a href={`tel:${entry.contactNumber}`} className="text-primary hover:underline">
+                                  {entry.contactNumber}
+                                </a>
+                              </p>
+                              <p className="text-sm break-all">
+                                <a href={`mailto:${entry.chapterEmail}`} className="text-primary hover:underline">
+                                  {entry.chapterEmail}
+                                </a>
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <h4 className="text-lg font-semibold">Barangay Chapters</h4>
+                      <p className="text-sm text-muted-foreground">
+                        Barangay chapters under this city chapter and their barangay chapter president.
+                      </p>
+
+                      {isBarangayDirectoryLoading ? (
+                        <p className="text-sm text-muted-foreground" data-testid="text-loading-barangay-directory">
+                          Loading barangay chapters...
+                        </p>
+                      ) : selectedChapterBarangays.length === 0 ? (
+                        <p className="text-sm text-muted-foreground" data-testid="text-empty-barangay-directory">
+                          No barangay chapters available for this city chapter yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {selectedChapterBarangays.map((barangayEntry) => (
+                            <div key={barangayEntry.id} className="rounded-lg border p-3 space-y-1" data-testid={`barangay-directory-entry-${barangayEntry.id}`}>
+                              <p className="font-medium">{barangayEntry.barangayName}</p>
+                              {barangayEntry.presidentName ? (
+                                <>
+                                  <p className="text-sm text-muted-foreground">Barangay Chapter President: {barangayEntry.presidentName}</p>
+                                  {barangayEntry.presidentContactNumber && (
+                                    <p className="text-sm">
+                                      <a href={`tel:${barangayEntry.presidentContactNumber}`} className="text-primary hover:underline">
+                                        {barangayEntry.presidentContactNumber}
+                                      </a>
+                                    </p>
+                                  )}
+                                  {barangayEntry.presidentEmail && (
+                                    <p className="text-sm break-all">
+                                      <a href={`mailto:${barangayEntry.presidentEmail}`} className="text-primary hover:underline">
+                                        {barangayEntry.presidentEmail}
+                                      </a>
+                                    </p>
+                                  )}
+                                </>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">No barangay chapter president assigned yet.</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
       </section>

@@ -19,6 +19,8 @@ interface ChapterCardProps {
   email?: string | null;
   photo?: string | null;
   representative?: string | null;
+  contactPerson?: string | null;
+  onSelect?: () => void;
 }
 
 export default function ChapterCard({ 
@@ -28,8 +30,11 @@ export default function ChapterCard({
   contact, 
   email,
   photo,
-  representative 
+  representative,
+  contactPerson,
+  onSelect
 }: ChapterCardProps) {
+  const chapterRepresentative = representative ?? contactPerson;
   const normalizedPhoto = photo?.trim() || "";
   const displayPhotoUrl = normalizedPhoto && !isUnsupportedPhotoUrl(normalizedPhoto)
     ? getDisplayImageUrl(normalizedPhoto)
@@ -42,8 +47,22 @@ export default function ChapterCard({
 
   return (
     <Card 
-      className="hover-elevate transition-all h-full"
+      className={`hover-elevate transition-all h-full ${onSelect ? "cursor-pointer" : ""}`}
       data-testid={`card-chapter-${id}`}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (!onSelect) {
+          return;
+        }
+
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      tabIndex={onSelect ? 0 : undefined}
+      role={onSelect ? "button" : undefined}
+      aria-label={onSelect ? `Open chapter details for ${name}` : undefined}
     >
       <CardHeader className="pb-3">
         <div className="flex items-start gap-3">
@@ -75,10 +94,10 @@ export default function ChapterCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-2 pt-0">
-        {representative && (
+        {chapterRepresentative && (
           <div className="flex items-center gap-2 text-sm">
             <User className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">{representative}</span>
+            <span className="text-muted-foreground">{chapterRepresentative}</span>
           </div>
         )}
         <div className="flex items-center gap-2 text-sm">
@@ -87,6 +106,7 @@ export default function ChapterCard({
             href={`tel:${contact}`} 
             className="text-primary hover:underline"
             data-testid={`link-call-${id}`}
+            onClick={(event) => event.stopPropagation()}
           >
             {contact}
           </a>
@@ -98,6 +118,7 @@ export default function ChapterCard({
               href={`mailto:${email}`} 
               className="text-primary hover:underline"
               data-testid={`link-email-${id}`}
+              onClick={(event) => event.stopPropagation()}
             >
               {email}
             </a>

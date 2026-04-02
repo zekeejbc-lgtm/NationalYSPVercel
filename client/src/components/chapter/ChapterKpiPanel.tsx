@@ -242,10 +242,10 @@ function KpiItem({ template, completion, onSubmit, onMarkComplete, isPending }: 
 
   return (
     <div className={`p-4 border rounded-lg ${completion?.isCompleted ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : ''}`}>
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium">{template.name}</span>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <span className="font-medium break-normal">{template.name}</span>
             <Badge variant={template.timeframe === "quarterly" ? "secondary" : "default"}>
               {template.timeframe}
             </Badge>
@@ -253,14 +253,14 @@ function KpiItem({ template, completion, onSubmit, onMarkComplete, isPending }: 
             {completion?.isCompleted && <Badge className="bg-green-600">Completed</Badge>}
           </div>
           {template.description && (
-            <p className="text-sm text-muted-foreground mb-2">{template.description}</p>
+            <p className="text-sm text-muted-foreground mb-2 break-normal">{template.description}</p>
           )}
           
           {template.inputType === "numeric" && targetValue > 0 && (
-            <div className="flex items-center gap-2 mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <Target className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Target: {targetValue}</span>
-              <Progress value={progressPercent} className="flex-1 max-w-32" />
+              <Progress value={progressPercent} className="w-full sm:flex-1 sm:max-w-32" />
               <span className="text-sm">{progressValue} / {targetValue}</span>
             </div>
           )}
@@ -272,24 +272,24 @@ function KpiItem({ template, completion, onSubmit, onMarkComplete, isPending }: 
           )}
         </div>
         
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {!completion?.isCompleted && (
             <>
               {isEditing ? (
-                <div className="flex items-center gap-2">
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                   {template.inputType === "numeric" ? (
                     <Input
                       type="number"
                       value={value}
                       onChange={(e) => setValue(e.target.value)}
-                      className="w-24"
+                      className="w-full sm:w-24"
                       placeholder="Value"
                     />
                   ) : (
                     <Textarea
                       value={value}
                       onChange={(e) => setValue(e.target.value)}
-                      className="w-48"
+                      className="w-full sm:w-48"
                       placeholder="Enter notes..."
                     />
                   )}

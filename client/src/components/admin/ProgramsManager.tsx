@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,11 +10,26 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Edit, Plus, ImageOff } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Program } from "@shared/schema";
-import { getDisplayImageUrl, extractDriveFileId } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  extractDriveFileId,
+  getDisplayImageUrl,
+  resetImageFallback,
+} from "@/lib/driveUtils";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function ProgramsManager() {
+  const INITIAL_VISIBLE_PROGRAMS = 6;
+  const CARD_ANIMATION_MS = 220;
+
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [editingProgram, setEditingProgram] = useState<Program | null>(null);
+  const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
+  const [visibleProgramsCount, setVisibleProgramsCount] = useState(INITIAL_VISIBLE_PROGRAMS);
+  const [animatedFromIndex, setAnimatedFromIndex] = useState<number | null>(null);
+  const [isCollapsingPrograms, setIsCollapsingPrograms] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
@@ -27,6 +42,26 @@ export default function ProgramsManager() {
   const { data: programs = [], isLoading } = useQuery<Program[]>({
     queryKey: ["/api/programs"]
   });
+
+  const visiblePrograms = programs.slice(0, visibleProgramsCount);
+  const hasMorePrograms = visibleProgramsCount < programs.length;
+  const canCollapsePrograms = programs.length > INITIAL_VISIBLE_PROGRAMS;
+  const isProgramsExpanded = visibleProgramsCount > INITIAL_VISIBLE_PROGRAMS;
+  const remainingPrograms = Math.max(programs.length - visibleProgramsCount, 0);
+
+  useEffect(() => {
+    if (animatedFromIndex === null) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setAnimatedFromIndex(null);
+    }, CARD_ANIMATION_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [animatedFromIndex]);
 
   const handleAdd = () => {
     setEditingProgram(null);
@@ -137,8 +172,33 @@ export default function ProgramsManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this program?")) return;
+    if (!(await confirmDelete("Are you sure you want to delete this program?"))) return;
     deleteMutation.mutate(id);
+  };
+
+  const handleOpenDetails = (program: Program) => {
+    setSelectedProgram(program);
+  };
+
+  const handleShowMorePrograms = () => {
+    if (isCollapsingPrograms || !hasMorePrograms) {
+      return;
+    }
+
+    setAnimatedFromIndex(visibleProgramsCount);
+    setVisibleProgramsCount((prev) => Math.min(prev + INITIAL_VISIBLE_PROGRAMS, programs.length));
+  };
+
+  const handleHidePrograms = () => {
+    if (!isProgramsExpanded || isCollapsingPrograms) {
+      return;
+    }
+
+    setIsCollapsingPrograms(true);
+    window.setTimeout(() => {
+      setVisibleProgramsCount(INITIAL_VISIBLE_PROGRAMS);
+      setIsCollapsingPrograms(false);
+    }, CARD_ANIMATION_MS);
   };
 
   if (isLoading) {
@@ -170,31 +230,53 @@ export default function ProgramsManager() {
           {programs.length === 0 ? (
             <p className="text-muted-foreground">No programs yet. Add your first program!</p>
           ) : (
-            <div className="space-y-4">
-              {programs.map((program) => {
+            <>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {visiblePrograms.map((program, index) => {
                 const thumbUrl = getDisplayImageUrl(program.image);
                 return (
-                  <Card key={program.id} className="hover-elevate transition-all">
-                    <CardContent className="p-4">
-                      <div className="flex items-start gap-4">
-                        <div className="w-24 h-24 rounded-md overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
+                  <Card
+                    key={program.id}
+                    className={`hover-elevate transition-all cursor-pointer h-[18.5rem] overflow-hidden ${
+                      animatedFromIndex !== null && index >= animatedFromIndex ? "admin-card-enter" : ""
+                    } ${isCollapsingPrograms && index >= INITIAL_VISIBLE_PROGRAMS ? "admin-card-exit" : ""}`}
+                    onClick={() => handleOpenDetails(program)}
+                    data-testid={`card-program-admin-${program.id}`}
+                  >
+                    <CardContent className="p-4 h-full flex flex-col gap-3">
+                      <div className="h-32 rounded-md overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
                           {thumbUrl ? (
                             <img 
                               src={thumbUrl} 
                               alt={program.title} 
-                              className="w-full h-full object-contain"
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
+                              onLoad={(event) => {
+                                resetImageFallback(event.currentTarget);
+                              }}
+                              onError={(event) => {
+                                applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC);
+                              }}
                             />
                           ) : (
                             <ImageOff className="h-8 w-8 text-muted-foreground" />
                           )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-lg">{program.title}</h3>
-                          <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
-                            {program.description}
-                          </p>
-                        </div>
-                        <div className="flex gap-2 flex-shrink-0">
+                      </div>
+                      <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+                        <h3 className="font-semibold text-base leading-tight break-words line-clamp-2">
+                          {program.title}
+                        </h3>
+                        <p className="text-sm text-muted-foreground mt-2 break-words whitespace-pre-wrap line-clamp-3">
+                          {program.description}
+                        </p>
+                      </div>
+                      <div
+                        className="mt-auto pt-2 border-t flex items-center justify-between gap-2 flex-shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span className="text-xs text-primary">View details</span>
+                        <div className="flex gap-2">
                           <Button 
                             variant="outline" 
                             size="icon"
@@ -216,8 +298,36 @@ export default function ProgramsManager() {
                     </CardContent>
                   </Card>
                 );
-              })}
-            </div>
+                })}
+              </div>
+
+              {canCollapsePrograms && (
+                <div className="mt-4 flex justify-center">
+                  <div className="flex items-center gap-2">
+                    {hasMorePrograms && (
+                      <Button
+                        variant="outline"
+                        onClick={handleShowMorePrograms}
+                        disabled={isCollapsingPrograms}
+                        data-testid="button-show-more-programs"
+                      >
+                        {`Show More (${Math.min(INITIAL_VISIBLE_PROGRAMS, remainingPrograms)} next)`}
+                      </Button>
+                    )}
+                    {isProgramsExpanded && (
+                      <Button
+                        variant="ghost"
+                        onClick={handleHidePrograms}
+                        disabled={isCollapsingPrograms}
+                        data-testid="button-hide-programs"
+                      >
+                        {isCollapsingPrograms ? "Hiding..." : "Hide"}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
@@ -283,8 +393,13 @@ export default function ProgramsManager() {
                     src={previewUrl}
                     alt="Preview"
                     className="w-full max-h-[260px] object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
+                    onLoad={(event) => {
+                      resetImageFallback(event.currentTarget);
+                    }}
+                    onError={(event) => {
+                      if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                        event.currentTarget.style.display = "none";
+                      }
                     }}
                     data-testid="img-program-preview"
                   />
@@ -309,6 +424,51 @@ export default function ProgramsManager() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!selectedProgram} onOpenChange={(open) => !open && setSelectedProgram(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedProgram?.title}</DialogTitle>
+          </DialogHeader>
+          {selectedProgram && (
+            <div className="space-y-4">
+              <div className="rounded-md overflow-hidden border bg-muted">
+                {selectedProgram.image ? (
+                  <img
+                    src={getDisplayImageUrl(selectedProgram.image)}
+                    alt={selectedProgram.title}
+                    className="w-full max-h-[320px] object-contain"
+                    loading="lazy"
+                    decoding="async"
+                    onLoad={(event) => {
+                      resetImageFallback(event.currentTarget);
+                    }}
+                    onError={(event) => {
+                      applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC);
+                    }}
+                  />
+                ) : (
+                  <div className="h-48 flex items-center justify-center text-muted-foreground">
+                    <ImageOff className="h-8 w-8" />
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">Short Description</h4>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                  {selectedProgram.description}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <h4 className="font-semibold">Full Details</h4>
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                  {selectedProgram.fullDescription || selectedProgram.description}
+                </p>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

@@ -6,14 +6,21 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { getDisplayImageUrl } from "@/lib/driveUtils";
+import {
+  applyImageFallback,
+  DEFAULT_IMAGE_FALLBACK_SRC,
+  getDisplayImageUrl,
+  resetImageFallback,
+} from "@/lib/driveUtils";
 import { Trash2, Edit, Plus, Image } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
 import type { VolunteerOpportunity } from "@shared/schema";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function VolunteerManager() {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const [editingOpportunity, setEditingOpportunity] = useState<VolunteerOpportunity | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -188,7 +195,7 @@ export default function VolunteerManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this volunteer opportunity?")) return;
+    if (!(await confirmDelete("Are you sure you want to delete this volunteer opportunity?"))) return;
     deleteMutation.mutate(id);
   };
 
@@ -234,6 +241,16 @@ export default function VolunteerManager() {
                           src={displayPhotoUrl} 
                           alt={opportunity.eventName}
                           className="w-20 h-20 object-cover rounded-md flex-shrink-0"
+                          loading="lazy"
+                          decoding="async"
+                          onLoad={(event) => {
+                            resetImageFallback(event.currentTarget);
+                          }}
+                          onError={(event) => {
+                            if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                              event.currentTarget.style.display = "none";
+                            }
+                          }}
                           data-testid={`img-volunteer-${opportunity.id}`}
                         />
                       )}
