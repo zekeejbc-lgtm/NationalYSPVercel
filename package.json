@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index-dev.ts",
     "build": "npm run build:server && vite build",
-    "build:server": "esbuild server/app.ts --bundle --platform=node --format=esm --outfile=dist-server/server/app.js",
+    "build:server": "esbuild server/app.ts --bundle --platform=node --format=cjs --outfile=dist-server/server/app.cjs",
     "start": "cross-env NODE_ENV=production tsx server/index-prod.ts",
     "check": "tsc",
     "db:push": "drizzle-kit push"

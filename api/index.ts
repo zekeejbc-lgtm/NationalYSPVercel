@@ -1,7 +1,9 @@
 import "dotenv/config";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 12000;
+const require = createRequire(import.meta.url);
 
 type ServerAppModule = {
   app: unknown;
@@ -15,9 +17,11 @@ let appModulePromise: Promise<ServerAppModule> | null = null;
 
 async function loadAppModule() {
   if (!appModulePromise) {
-    // @ts-ignore Built during npm run build (build:server) before Vercel packages functions.
-    appModulePromise = import("../dist-server/server/app.js")
-      .then((module) => module as unknown as ServerAppModule)
+    appModulePromise = Promise.resolve()
+      .then(() => {
+        // Built during npm run build (build:server) before Vercel packages functions.
+        return require("../dist-server/server/app.cjs") as ServerAppModule;
+      })
       .catch((error) => {
         appModulePromise = null;
         throw error;
