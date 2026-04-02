@@ -3,16 +3,25 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 12000;
 
+type ServerAppModule = {
+  app: unknown;
+  initializeRoutes: () => Promise<unknown>;
+  attachErrorHandler: () => void;
+};
+
 let serverlessBootstrapPromise: Promise<void> | null = null;
 let appHandler: ((req: IncomingMessage, res: ServerResponse) => void) | null = null;
-let appModulePromise: Promise<typeof import("../server/app")> | null = null;
+let appModulePromise: Promise<ServerAppModule> | null = null;
 
 async function loadAppModule() {
   if (!appModulePromise) {
-    appModulePromise = import("../server/app").catch((error) => {
-      appModulePromise = null;
-      throw error;
-    });
+    // @ts-ignore Built during npm run build (build:server) before Vercel packages functions.
+    appModulePromise = import("../dist-server/server/app.js")
+      .then((module) => module as unknown as ServerAppModule)
+      .catch((error) => {
+        appModulePromise = null;
+        throw error;
+      });
   }
 
   return appModulePromise;

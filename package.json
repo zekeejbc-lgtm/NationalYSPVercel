@@ -5,7 +5,8 @@
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx server/index-dev.ts",
-    "build": "vite build",
+    "build": "npm run build:server && vite build",
+    "build:server": "esbuild server/app.ts --bundle --platform=node --format=esm --outfile=dist-server/server/app.js",
     "start": "cross-env NODE_ENV=production tsx server/index-prod.ts",
     "check": "tsc",
     "db:push": "drizzle-kit push"
