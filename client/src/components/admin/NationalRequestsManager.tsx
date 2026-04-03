@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import LoadingState from "@/components/ui/loading-state";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -101,10 +102,7 @@ export default function NationalRequestsManager() {
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="space-y-3" role="status" aria-label="Loading requests">
-            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-          </div>
+          <LoadingState label="Loading requests..." rows={2} compact />
         </CardContent>
       </Card>
     );

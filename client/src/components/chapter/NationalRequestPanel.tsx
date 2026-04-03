@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import LoadingState from "@/components/ui/loading-state";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -81,10 +82,7 @@ export default function NationalRequestPanel({ senderType }: NationalRequestPane
     return (
       <Card>
         <CardContent className="p-6">
-          <div className="space-y-3" role="status" aria-label="Loading messages">
-            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-          </div>
+          <LoadingState label="Loading messages..." rows={2} compact />
         </CardContent>
       </Card>
     );

@@ -2,17 +2,23 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import LoadingState from "@/components/ui/loading-state";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { createPdfExportContract } from "@/lib/export/pdfContract";
+import { reportPdfFallbackRequest } from "@/lib/export/pdfFallback";
+import { createSafeFileToken, formatManilaDateTime, getIsoDateFileStamp } from "@/lib/export/pdfStandards";
+import { createYspPdfReport } from "@/lib/pdfReport";
 import { usePagination } from "@/hooks/use-pagination";
-import { UserCheck, Plus, Save, Trash2, Edit2, Phone, Mail, Calendar } from "lucide-react";
+import { UserCheck, Plus, Save, Trash2, Edit2, Phone, Mail, Calendar, FileDown } from "lucide-react";
 import type { ChapterOfficer } from "@shared/schema";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
@@ -49,24 +55,22 @@ const BARANGAY_OFFICER_POSITIONS = [
   "Membership and Internal Affairs Officer"
 ];
 
-function formatManilaDateTime(value: Date | string | null | undefined) {
-  if (!value) return "-";
+type OfficersExportSections = {
+  scope: boolean;
+  chapterTable: boolean;
+  barangayTable: boolean;
+};
 
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return typeof value === "string" ? value : "-";
-  }
+type OfficersExportColumns = {
+  barangay: boolean;
+  name: boolean;
+  position: boolean;
+  contact: boolean;
+  email: boolean;
+  joinedDate: boolean;
+};
 
-  return new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(parsed);
-}
+type ExportPreset = "minimal" | "standard" | "full";
 
 function toDateInputValue(value: Date | string | null | undefined) {
   if (!value) return "";
@@ -86,6 +90,24 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
   const { toast } = useToast();
   const confirmDelete = useDeleteConfirmation();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [officersExportReportTitle, setOfficersExportReportTitle] = useState(
+    level === "chapter" ? "Officers Directory Report" : "Barangay Officers Report",
+  );
+  const [officersExportSections, setOfficersExportSections] = useState<OfficersExportSections>({
+    scope: true,
+    chapterTable: true,
+    barangayTable: true,
+  });
+  const [officersExportColumns, setOfficersExportColumns] = useState<OfficersExportColumns>({
+    barangay: true,
+    name: true,
+    position: true,
+    contact: true,
+    email: true,
+    joinedDate: true,
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     position: "",
@@ -274,10 +296,253 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     deleteMutation.mutate(officerId);
   };
 
+  const getOfficerDisplayPosition = (officer: ChapterOfficer, useBarangayLabel = false) => {
+    if ((level === "barangay" || useBarangayLabel) && officer.position === "City/Municipality President") {
+      return "Barangay President";
+    }
+
+    return officer.position;
+  };
+
+  const toggleOfficersExportSection = (key: keyof OfficersExportSections, checked: boolean) => {
+    setOfficersExportSections((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const toggleOfficersExportColumn = (key: keyof OfficersExportColumns, checked: boolean) => {
+    setOfficersExportColumns((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const applyOfficersExportPreset = (preset: ExportPreset) => {
+    if (preset === "minimal") {
+      setOfficersExportSections({
+        scope: true,
+        chapterTable: level === "chapter",
+        barangayTable: level !== "chapter",
+      });
+      setOfficersExportColumns({
+        barangay: false,
+        name: true,
+        position: true,
+        contact: true,
+        email: false,
+        joinedDate: false,
+      });
+      return;
+    }
+
+    if (preset === "standard") {
+      setOfficersExportSections({
+        scope: true,
+        chapterTable: level === "chapter",
+        barangayTable: true,
+      });
+      setOfficersExportColumns({
+        barangay: level === "chapter",
+        name: true,
+        position: true,
+        contact: true,
+        email: true,
+        joinedDate: false,
+      });
+      return;
+    }
+
+    setOfficersExportSections({
+      scope: true,
+      chapterTable: level === "chapter",
+      barangayTable: true,
+    });
+    setOfficersExportColumns({
+      barangay: level === "chapter",
+      name: true,
+      position: true,
+      contact: true,
+      email: true,
+      joinedDate: true,
+    });
+  };
+
+  const createChapterFileToken = () => createSafeFileToken(chapterName || "chapter", "chapter");
+
+  const handleExportOfficersPdf = async () => {
+    if (isExportingPdf) {
+      return;
+    }
+
+    const includeScopeSection = officersExportSections.scope;
+    const includeChapterTable = level === "chapter" && officersExportSections.chapterTable;
+    const includeBarangayTable = officersExportSections.barangayTable;
+
+    if (!includeScopeSection && !includeChapterTable && !includeBarangayTable) {
+      toast({
+        title: "Select at least one section",
+        description: "Choose at least one report section before exporting the PDF.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingPdf(true);
+
+    let exportContract: ReturnType<typeof createPdfExportContract> | null = null;
+
+    try {
+      exportContract = createPdfExportContract({
+        reportId: "chapter-officers-directory",
+        purpose: "chapter_and_barangay_officer_directory",
+        title:
+          officersExportReportTitle.trim() ||
+          (level === "chapter" ? "Officers Directory Report" : "Barangay Officers Report"),
+        subtitle: chapterName
+          ? `${chapterName} | ${level === "chapter" ? "Chapter and barangay officers" : "Barangay officers"}`
+          : level === "chapter"
+            ? "Chapter and barangay officers"
+            : "Barangay officers",
+        selectedSections: officersExportSections,
+        selectedColumns: officersExportColumns,
+        filters: {
+          chapterName: chapterName || "-",
+          level,
+          chapterOfficers: chapterOfficers.length,
+          barangayOfficers: barangayOfficers.length,
+          totalOfficers: officers.length,
+        },
+        filenamePolicy: {
+          prefix: "YSP-Officers",
+          includeChapterToken: true,
+          includeDateStamp: true,
+        },
+        snapshotMetadata: {
+          actorRole: level === "chapter" ? "chapter" : "barangay",
+          chapterId,
+          barangayId,
+        },
+      });
+
+      const report = await createYspPdfReport({
+        reportTitle: exportContract.title,
+        reportSubtitle: exportContract.subtitle,
+      });
+
+      if (includeScopeSection) {
+        report.addSectionTitle("Report Scope");
+        report.addMetricRow("Chapter", chapterName || "-");
+        report.addMetricRow(
+          "Officer Level",
+          level === "chapter" ? "Chapter + Barangay Officers" : "Barangay Officers Only",
+        );
+        if (level === "chapter") {
+          report.addMetricRow("Chapter Officers", String(chapterOfficers.length));
+          report.addMetricRow("Barangay Officers", String(barangayOfficers.length));
+        } else {
+          report.addMetricRow("Total Officers", String(officers.length));
+        }
+        report.addSpacer(8);
+      }
+
+      if (includeChapterTable) {
+        const selectedChapterColumns: Array<{ header: string; key: string; width: number }> = [];
+        if (officersExportColumns.name) selectedChapterColumns.push({ header: "Name", key: "name", width: 2.2 });
+        if (officersExportColumns.position) selectedChapterColumns.push({ header: "Position", key: "position", width: 2.1 });
+        if (officersExportColumns.contact) selectedChapterColumns.push({ header: "Contact Number", key: "contact", width: 1.6 });
+        if (officersExportColumns.email) selectedChapterColumns.push({ header: "Email", key: "email", width: 2 });
+        if (officersExportColumns.joinedDate) selectedChapterColumns.push({ header: "Joined Date", key: "joinedDate", width: 1.3 });
+
+        report.addSectionTitle("Chapter Officers Table");
+        if (selectedChapterColumns.length === 0) {
+          report.addTextBlock("No chapter officer columns selected.", "muted");
+          report.addSpacer(6);
+        } else {
+          const rows = chapterOfficers.map((officer) => {
+            const row: Record<string, string> = {};
+            if (officersExportColumns.name) row.name = officer.fullName || "-";
+            if (officersExportColumns.position) row.position = getOfficerDisplayPosition(officer);
+            if (officersExportColumns.contact) row.contact = officer.contactNumber || "-";
+            if (officersExportColumns.email) row.email = officer.chapterEmail || "-";
+            if (officersExportColumns.joinedDate) row.joinedDate = formatManilaDateTime(String(officer.createdAt || officer.birthdate || ""));
+
+            return row;
+          });
+
+          report.addTable(selectedChapterColumns, rows, { emptyMessage: "No chapter-level officers yet." });
+        }
+      }
+
+      if (includeBarangayTable) {
+        const selectedBarangayColumns: Array<{ header: string; key: string; width: number }> = [];
+        if (level === "chapter" && officersExportColumns.barangay) {
+          selectedBarangayColumns.push({ header: "Barangay", key: "barangay", width: 1.7 });
+        }
+        if (officersExportColumns.name) selectedBarangayColumns.push({ header: "Name", key: "name", width: 2 });
+        if (officersExportColumns.position) selectedBarangayColumns.push({ header: "Position", key: "position", width: 1.9 });
+        if (officersExportColumns.contact) selectedBarangayColumns.push({ header: "Contact Number", key: "contact", width: 1.5 });
+        if (officersExportColumns.email) selectedBarangayColumns.push({ header: "Email", key: "email", width: 1.9 });
+        if (officersExportColumns.joinedDate) selectedBarangayColumns.push({ header: "Joined Date", key: "joinedDate", width: 1.2 });
+
+        report.addSectionTitle(level === "chapter" ? "Barangay Officers Table" : "Officers Table");
+        if (selectedBarangayColumns.length === 0) {
+          report.addTextBlock("No barangay officer columns selected.", "muted");
+          report.addSpacer(6);
+        } else if (level === "chapter") {
+          const rows = barangayOfficers.map((officer) => {
+            const row: Record<string, string> = {};
+            if (officersExportColumns.barangay) {
+              row.barangay = officer.barangayId ? barangayNameById.get(officer.barangayId) || "Unknown Barangay" : "Unassigned Barangay";
+            }
+            if (officersExportColumns.name) row.name = officer.fullName || "-";
+            if (officersExportColumns.position) row.position = getOfficerDisplayPosition(officer, true);
+            if (officersExportColumns.contact) row.contact = officer.contactNumber || "-";
+            if (officersExportColumns.email) row.email = officer.chapterEmail || "-";
+            if (officersExportColumns.joinedDate) row.joinedDate = formatManilaDateTime(String(officer.createdAt || officer.birthdate || ""));
+
+            return row;
+          });
+
+          report.addTable(selectedBarangayColumns, rows, { emptyMessage: "No barangay officer records yet." });
+        } else {
+          const rows = officers.map((officer) => {
+            const row: Record<string, string> = {};
+            if (officersExportColumns.name) row.name = officer.fullName || "-";
+            if (officersExportColumns.position) row.position = getOfficerDisplayPosition(officer, true);
+            if (officersExportColumns.contact) row.contact = officer.contactNumber || "-";
+            if (officersExportColumns.email) row.email = officer.chapterEmail || "-";
+            if (officersExportColumns.joinedDate) row.joinedDate = formatManilaDateTime(String(officer.createdAt || officer.birthdate || ""));
+
+            return row;
+          });
+
+          report.addTable(selectedBarangayColumns, rows, { emptyMessage: "No officers recorded." });
+        }
+      }
+
+      const fileDate = getIsoDateFileStamp();
+      report.save(`YSP-Officers-${createChapterFileToken()}-${level}-${fileDate}.pdf`);
+
+      setExportDialogOpen(false);
+      toast({ title: "PDF Exported", description: "Officers PDF report downloaded successfully." });
+    } catch (error) {
+      if (exportContract) {
+        void reportPdfFallbackRequest(exportContract, error);
+      }
+      console.error("Failed to export officers PDF report", error);
+      toast({
+        title: "Export failed",
+        description: "Unable to generate officers PDF report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   const renderOfficerRow = (officer: ChapterOfficer, useBarangayLabel = false, showActions = true) => {
-    const displayPosition = ((level === "barangay" || useBarangayLabel) && officer.position === "City/Municipality President")
-      ? "Barangay President"
-      : officer.position;
+    const displayPosition = getOfficerDisplayPosition(officer, useBarangayLabel);
 
     return (
       <div key={officer.id} className="p-4 border rounded-lg hover-elevate">
@@ -351,24 +616,37 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Badge variant={summaryOfficers.length === positions.length ? "default" : "outline"}>
             {summaryOfficers.length} / {positions.length} positions filled
           </Badge>
-          {!isFormOpen && summaryOfficers.length < positions.length && (
-            <Button onClick={openAddForm} data-testid="button-add-officer">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Officer
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setExportDialogOpen(true)}
+              disabled={isExportingPdf}
+              data-testid="button-export-officers-pdf"
+            >
+              <FileDown className="h-4 w-4 mr-2" />
+              {isExportingPdf ? "Generating PDF..." : "Export PDF"}
             </Button>
-          )}
+            {!isFormOpen && summaryOfficers.length < positions.length && (
+              <Button onClick={openAddForm} data-testid="button-add-officer">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Officer
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+          <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+          <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
         </div>
 
         {isLoading ? (
-          <div className="space-y-2 py-2" role="status" aria-label="Loading officers">
-            <div className="h-4 w-full rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-4 w-5/6 rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-4 w-2/3 rounded-md bg-muted skeleton-shimmer" />
-          </div>
+          <LoadingState label="Loading officers..." rows={2} compact />
         ) : officers.length === 0 ? (
           <p className="text-center text-muted-foreground py-4">
             No officers added yet. Click "Add Officer" to get started.
@@ -482,6 +760,184 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
             </div>
           </div>
         )}
+
+        <Dialog
+          open={exportDialogOpen}
+          onOpenChange={(open) => {
+            if (isExportingPdf) {
+              return;
+            }
+            setExportDialogOpen(open);
+          }}
+        >
+          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Export Officers PDF</DialogTitle>
+              <DialogDescription>
+                Customize what to include in the officers report before downloading the PDF.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="officers-export-report-title">Report Title</Label>
+                <Input
+                  id="officers-export-report-title"
+                  value={officersExportReportTitle}
+                  onChange={(event) => setOfficersExportReportTitle(event.target.value)}
+                  placeholder={level === "chapter" ? "Officers Directory Report" : "Barangay Officers Report"}
+                  data-testid="input-officers-export-report-title"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Quick Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyOfficersExportPreset("minimal")}
+                    disabled={isExportingPdf}
+                    data-testid="button-officers-export-preset-minimal"
+                  >
+                    Minimal
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyOfficersExportPreset("standard")}
+                    disabled={isExportingPdf}
+                    data-testid="button-officers-export-preset-standard"
+                  >
+                    Standard
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyOfficersExportPreset("full")}
+                    disabled={isExportingPdf}
+                    data-testid="button-officers-export-preset-full"
+                  >
+                    Full
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sections to Include</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportSections.scope}
+                      onCheckedChange={(checked) => toggleOfficersExportSection("scope", checked === true)}
+                      data-testid="checkbox-officers-export-section-scope"
+                    />
+                    Report Scope Summary
+                  </label>
+
+                  {level === "chapter" ? (
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={officersExportSections.chapterTable}
+                        onCheckedChange={(checked) => toggleOfficersExportSection("chapterTable", checked === true)}
+                        data-testid="checkbox-officers-export-section-chapter-table"
+                      />
+                      Chapter Officers Table
+                    </label>
+                  ) : null}
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportSections.barangayTable}
+                      onCheckedChange={(checked) => toggleOfficersExportSection("barangayTable", checked === true)}
+                      data-testid="checkbox-officers-export-section-barangay-table"
+                    />
+                    {level === "chapter" ? "Barangay Officers Table" : "Officers Table"}
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Officer Table Columns</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {level === "chapter" ? (
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={officersExportColumns.barangay}
+                        onCheckedChange={(checked) => toggleOfficersExportColumn("barangay", checked === true)}
+                        data-testid="checkbox-officers-export-column-barangay"
+                      />
+                      Barangay
+                    </label>
+                  ) : null}
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportColumns.name}
+                      onCheckedChange={(checked) => toggleOfficersExportColumn("name", checked === true)}
+                      data-testid="checkbox-officers-export-column-name"
+                    />
+                    Name
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportColumns.position}
+                      onCheckedChange={(checked) => toggleOfficersExportColumn("position", checked === true)}
+                      data-testid="checkbox-officers-export-column-position"
+                    />
+                    Position
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportColumns.contact}
+                      onCheckedChange={(checked) => toggleOfficersExportColumn("contact", checked === true)}
+                      data-testid="checkbox-officers-export-column-contact"
+                    />
+                    Contact Number
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={officersExportColumns.email}
+                      onCheckedChange={(checked) => toggleOfficersExportColumn("email", checked === true)}
+                      data-testid="checkbox-officers-export-column-email"
+                    />
+                    Email
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm md:col-span-2">
+                    <Checkbox
+                      checked={officersExportColumns.joinedDate}
+                      onCheckedChange={(checked) => toggleOfficersExportColumn("joinedDate", checked === true)}
+                      data-testid="checkbox-officers-export-column-joined-date"
+                    />
+                    Joined Date
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+                <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setExportDialogOpen(false)} disabled={isExportingPdf}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleExportOfficersPdf} disabled={isExportingPdf} data-testid="button-download-officers-export-pdf">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  {isExportingPdf ? "Generating PDF..." : "Download PDF"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={isFormOpen}

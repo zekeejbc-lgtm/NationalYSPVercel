@@ -1257,7 +1257,7 @@ export default function ChapterDashboard() {
           <TabsContent value="volunteer">
             <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
               {authUser?.chapterId && (
-                <VolunteerOpportunityPanel chapterId={authUser.chapterId} />
+                <VolunteerOpportunityPanel chapterId={authUser.chapterId} role="chapter" />
               )}
             </Suspense>
           </TabsContent>
@@ -1538,7 +1538,7 @@ export default function ChapterDashboard() {
                         <img
                           src={getChapterLogoSrc(chapter.photo)}
                           alt={`${chapter.name} logo`}
-                          className="h-14 w-14 rounded-full border bg-white object-contain p-1"
+                          className="h-14 w-14 rounded-full border bg-card object-contain p-1"
                           loading="lazy"
                           onError={(event) => {
                             event.currentTarget.onerror = null;
@@ -1630,7 +1630,7 @@ export default function ChapterDashboard() {
                             <img
                               src={getChapterLogoSrc(selectedDirectoryChapter.photo)}
                               alt={`${selectedDirectoryChapter.name} logo`}
-                              className="h-16 w-16 rounded-full border bg-white object-contain p-1"
+                              className="h-16 w-16 rounded-full border bg-card object-contain p-1"
                               onError={(event) => {
                                 event.currentTarget.onerror = null;
                                 event.currentTarget.src = WEBSITE_LOGO_SRC;

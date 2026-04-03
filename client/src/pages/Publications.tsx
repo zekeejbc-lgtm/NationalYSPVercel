@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar, Facebook, ExternalLink, Image, ImageOff, X } from "lucide-react";
+import { Calendar, ChevronDown, Facebook, ExternalLink, Image, ImageOff, X } from "lucide-react";
 import { format } from "date-fns";
 import type { Publication } from "@shared/schema";
 import {
@@ -15,6 +16,37 @@ import {
 } from "@/lib/driveUtils";
 
 const PUBLICATIONS_BATCH_SIZE = 3;
+
+function PublicationCardSkeleton({ isAlternatingRow }: { isAlternatingRow: boolean }) {
+  return (
+    <Card className="overflow-hidden" aria-hidden="true">
+      <div className="grid gap-0 md:grid-cols-2">
+        <div className={`relative min-h-[220px] bg-muted ${isAlternatingRow ? "md:order-2" : "md:order-1"}`}>
+          <Skeleton className="h-full min-h-[220px] w-full rounded-none" />
+        </div>
+
+        <CardContent className={`p-6 md:p-8 md:flex md:flex-col md:justify-center ${isAlternatingRow ? "md:order-1" : "md:order-2"}`}>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+
+            <Skeleton className="h-8 w-11/12" />
+
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-10/12" />
+            </div>
+
+            <Skeleton className="h-10 w-40" />
+          </div>
+        </CardContent>
+      </div>
+    </Card>
+  );
+}
 
 export default function Publications() {
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
@@ -47,7 +79,7 @@ export default function Publications() {
   };
 
   const handleHide = () => {
-    setVisibleCount(PUBLICATIONS_BATCH_SIZE);
+    setVisibleCount((current) => Math.max(PUBLICATIONS_BATCH_SIZE, current - PUBLICATIONS_BATCH_SIZE));
   };
 
   return (
@@ -66,12 +98,12 @@ export default function Publications() {
       </section>
 
       <section className="py-12 md:py-20 flex-1">
-        <div className="max-w-4xl mx-auto px-4 md:px-8">
+        <div className="max-w-5xl mx-auto px-4 md:px-8">
           {isLoading ? (
-            <div className="space-y-8 py-8" role="status" aria-label="Loading publications">
-              <div className="h-8 w-56 rounded-md bg-muted skeleton-shimmer mx-auto" />
-              <div className="h-56 w-full rounded-xl bg-muted skeleton-shimmer" />
-              <div className="h-56 w-full rounded-xl bg-muted skeleton-shimmer" />
+            <div className="space-y-8" role="status" aria-label="Loading publications">
+              {Array.from({ length: PUBLICATIONS_BATCH_SIZE }).map((_, index) => (
+                <PublicationCardSkeleton key={`publication-skeleton-${index}`} isAlternatingRow={index % 2 === 1} />
+              ))}
             </div>
           ) : isError ? (
             <div className="text-center py-16">
@@ -91,6 +123,7 @@ export default function Publications() {
                 const photoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
                 const usesFallbackImage = Boolean(fallbackImages[publication.id]);
                 const hasImageError = Boolean(failedImages[publication.id]);
+                const isAlternatingRow = index % 2 === 1;
                 const cardImageSrc = hasImageError
                   ? ""
                   : usesFallbackImage
@@ -98,8 +131,8 @@ export default function Publications() {
                     : photoUrl;
 
                 return (
-                <Card 
-                  key={publication.id} 
+                <Card
+                  key={publication.id}
                   className="overflow-hidden hover-elevate transition-all cursor-pointer focus-within:ring-2 focus-within:ring-ring"
                   data-testid={`card-publication-${publication.id}`}
                   role="button"
@@ -112,98 +145,123 @@ export default function Publications() {
                     }
                   }}
                 >
-                  {cardImageSrc ? (
-                    <div className="relative w-full aspect-video">
-                      <img
-                        src={cardImageSrc}
-                        alt={publication.title}
-                        className="w-full h-full object-cover"
-                        onLoad={(event) => {
-                          resetImageFallback(event.currentTarget);
-                        }}
-                        onError={(event) => {
-                          if (!usesFallbackImage && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
-                            setFallbackImages((prev) => ({ ...prev, [publication.id]: true }));
-                            return;
-                          }
+                  <div className="grid gap-0 md:grid-cols-2">
+                    {cardImageSrc ? (
+                      <div className={`relative min-h-[220px] bg-muted ${isAlternatingRow ? "md:order-2" : "md:order-1"}`}>
+                        <img
+                          src={cardImageSrc}
+                          alt={publication.title}
+                          className="w-full h-full object-cover"
+                          onLoad={(event) => {
+                            resetImageFallback(event.currentTarget);
+                          }}
+                          onError={(event) => {
+                            if (!usesFallbackImage && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                              setFallbackImages((prev) => ({ ...prev, [publication.id]: true }));
+                              return;
+                            }
 
-                          setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
-                          if (IMAGE_DEBUG_ENABLED) {
-                            console.error("[Image Debug] Publication image failed", {
-                              publicationId: publication.id,
-                              title: publication.title,
-                              photoUrl,
-                              attemptedFallback: usesFallbackImage,
-                            });
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : photoUrl ? (
-                    <div className="relative w-full aspect-video bg-muted flex items-center justify-center">
-                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                        <ImageOff className="h-8 w-8" />
-                        <span className="text-sm">Image unavailable</span>
+                            setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
+                            if (IMAGE_DEBUG_ENABLED) {
+                              console.error("[Image Debug] Publication image failed", {
+                                publicationId: publication.id,
+                                title: publication.title,
+                                photoUrl,
+                                attemptedFallback: usesFallbackImage,
+                              });
+                            }
+                          }}
+                        />
                       </div>
-                    </div>
-                  ) : null}
-                  <CardContent className="p-6 md:p-8">
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4 flex-wrap">
-                      <span className="flex items-center gap-1.5">
-                        <Calendar className="h-4 w-4" />
-                        {format(new Date(publication.publishedAt), "MMMM d, yyyy 'at' h:mm a")}
-                      </span>
-                      {index === 0 && (
-                        <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded">
-                          Latest
-                        </span>
-                      )}
-                    </div>
-                    
-                    <h2 className="text-2xl md:text-3xl font-bold mb-4">
-                      {publication.title}
-                    </h2>
-                    
-                    <p className="text-muted-foreground leading-relaxed mb-6 break-words text-justify">
-                      {truncateText(publication.content, 260)}
-                    </p>
-                    
-                    {publication.facebookLink && (
-                      <div className="pt-4 border-t">
-                        <Button
-                          variant="outline"
-                          asChild
-                          className="gap-2"
-                        >
-                          <a
-                            href={publication.facebookLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(event) => event.stopPropagation()}
-                            data-testid={`link-facebook-${publication.id}`}
-                          >
-                            <Facebook className="h-4 w-4" />
-                            View on Facebook
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </Button>
+                    ) : photoUrl ? (
+                      <div className={`relative min-h-[220px] bg-muted flex items-center justify-center ${isAlternatingRow ? "md:order-2" : "md:order-1"}`}>
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageOff className="h-8 w-8" />
+                          <span className="text-sm">Image unavailable</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`relative min-h-[220px] bg-muted flex items-center justify-center ${isAlternatingRow ? "md:order-2" : "md:order-1"}`}>
+                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <ImageOff className="h-8 w-8" />
+                          <span className="text-sm">No image available</span>
+                        </div>
                       </div>
                     )}
-                  </CardContent>
+
+                    <CardContent className={`p-6 md:p-8 md:flex md:flex-col md:justify-center ${isAlternatingRow ? "md:order-1" : "md:order-2"}`}>
+                      <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4 flex-wrap">
+                        <span className="flex items-center gap-1.5">
+                          <Calendar className="h-4 w-4" />
+                          {format(new Date(publication.publishedAt), "MMMM d, yyyy 'at' h:mm a")}
+                        </span>
+                        {index === 0 && (
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-medium rounded">
+                            Latest
+                          </span>
+                        )}
+                      </div>
+
+                      <h2 className="text-2xl md:text-3xl font-bold mb-4">
+                        {publication.title}
+                      </h2>
+
+                      <p className="text-muted-foreground leading-relaxed mb-6 break-words text-justify">
+                        {truncateText(publication.content, 260)}
+                      </p>
+
+                      {publication.facebookLink && (
+                        <div className="pt-4 border-t">
+                          <Button
+                            variant="outline"
+                            asChild
+                            className="gap-2"
+                          >
+                            <a
+                              href={publication.facebookLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(event) => event.stopPropagation()}
+                              data-testid={`link-facebook-${publication.id}`}
+                            >
+                              <Facebook className="h-4 w-4" />
+                              View on Facebook
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </div>
                 </Card>
                 );
               })}
 
               {(canShowMore || canHide) && (
-                <div className="pt-1 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={canShowMore ? handleShowMore : handleHide}
-                    className="text-sm text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus-visible:underline"
-                    data-testid="button-publications-toggle"
-                  >
-                    {canShowMore ? "Show more" : "Hide"}
-                  </button>
+                <div className="pt-1 flex justify-center gap-2">
+                  {canShowMore && (
+                    <button
+                      type="button"
+                      onClick={handleShowMore}
+                      className="group inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background px-4 py-1.5 text-sm text-muted-foreground shadow-sm transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/40 hover:text-foreground hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:translate-y-0"
+                      data-testid="button-publications-toggle"
+                    >
+                      <span>Show more</span>
+                      <ChevronDown className="h-4 w-4 transition-transform duration-200 group-hover:translate-y-0.5" />
+                    </button>
+                  )}
+
+                  {canHide && (
+                    <button
+                      type="button"
+                      onClick={handleHide}
+                      className="group inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background px-4 py-1.5 text-sm text-muted-foreground shadow-sm transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/40 hover:text-foreground hover:shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:translate-y-0"
+                      data-testid="button-publications-hide"
+                    >
+                      <span>Hide</span>
+                      <ChevronDown className="h-4 w-4 rotate-180 transition-transform duration-200 group-hover:-translate-y-0.5" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>

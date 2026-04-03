@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import LoadingState from "@/components/ui/loading-state";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -172,10 +173,7 @@ export default function BarangayAccountsManager() {
         {selectedChapterId && (
           <div className="space-y-4 mt-4">
             {usersLoading ? (
-              <div className="space-y-3" role="status" aria-label="Loading barangay accounts">
-                <div className="h-5 w-56 rounded-md bg-muted skeleton-shimmer" />
-                <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-              </div>
+              <LoadingState label="Loading barangay accounts..." rows={2} compact />
             ) : barangayUsers.length === 0 ? (
               <p className="text-muted-foreground">No barangay accounts for this chapter yet.</p>
             ) : (

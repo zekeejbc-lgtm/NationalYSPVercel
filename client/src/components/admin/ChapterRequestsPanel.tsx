@@ -1,5 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import LoadingState from "@/components/ui/loading-state";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -69,13 +70,7 @@ export default function ChapterRequestsPanel() {
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-3" role="status" aria-label="Loading chapter requests">
-        <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-        <div className="h-20 w-full rounded-lg bg-muted skeleton-shimmer" />
-        <div className="h-20 w-full rounded-lg bg-muted skeleton-shimmer" />
-      </div>
-    );
+    return <LoadingState label="Loading chapter requests..." rows={3} compact />;
   }
 
   return (

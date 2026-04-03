@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import LoadingState from "@/components/ui/loading-state";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -157,11 +158,7 @@ export default function AccountManagementPanel() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-3 py-2" role="status" aria-label="Loading accounts">
-            <div className="h-5 w-44 rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-            <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-          </div>
+          <LoadingState label="Loading accounts..." rows={3} compact />
         ) : filteredAccounts.length === 0 ? (
           <p className="text-muted-foreground py-4">No accounts found.</p>
         ) : (

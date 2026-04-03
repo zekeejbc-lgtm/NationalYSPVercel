@@ -13,10 +13,21 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { createPdfExportContract } from "@/lib/export/pdfContract";
+import { reportPdfFallbackRequest } from "@/lib/export/pdfFallback";
+import { formatManilaDateTime12h, ORGANIZATION_REPORT_INFO } from "@/lib/export/pdfStandards";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin, Trophy, TrendingUp, CheckCircle2, Clock3, Users, Search, Copy, FileDown } from "lucide-react";
 import type { Chapter, KpiTemplate, KpiCompletion } from "@shared/schema";
+import {
+  createDefaultKpiDependencyRule,
+  parseKpiDependencyConfig,
+  serializeKpiDependencyConfig,
+  summarizeKpiDependencyConfig,
+  type KpiDependencyRule,
+} from "@shared/kpi-dependencies";
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import KpiDependencyEditor from "@/components/kpi/KpiDependencyEditor";
 
 interface BarangayUser {
   id: string;
@@ -72,28 +83,6 @@ const SCOPE_OPTIONS = [
   { value: "selected_barangays", label: "Selected Barangays" },
 ];
 
-const ORGANIZATION_REPORT_INFO = {
-  name: "Youth Service PH",
-  fullGovernmentName: "Youth Service to the Filipino Youth, Inc.",
-  motto: "Empowering Filipino Youth Through Community Service",
-  secRegistryNumber: "2023010080782-00",
-  facebook: "/YOUTHSERVICEPHILIPPINES",
-  website: "youthserviceph.org",
-  email: "national@youthserviceph.org",
-  logoPath: "/images/ysp-logo.png",
-};
-
-const formatManilaDateTime12h = (date: Date) =>
-  new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "long",
-    day: "2-digit",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
-
 export default function KpiManager() {
   const { toast } = useToast();
   const currentYear = new Date().getFullYear();
@@ -135,7 +124,10 @@ export default function KpiManager() {
     targetValue: null as number | null,
     isActive: true,
     scope: "all_chapters_and_barangays",
-    selectedEntityIds: [] as string[]
+    selectedEntityIds: [] as string[],
+    dependencyEnabled: false,
+    dependencyAggregation: "all" as "all" | "any",
+    dependencyRules: [] as KpiDependencyRule[]
   });
 
   const { data: chapters = [] } = useQuery<Chapter[]>({
@@ -344,12 +336,16 @@ export default function KpiManager() {
       targetValue: null,
       isActive: true,
       scope: "all_chapters_and_barangays",
-      selectedEntityIds: []
+      selectedEntityIds: [],
+      dependencyEnabled: false,
+      dependencyAggregation: "all",
+      dependencyRules: []
     });
   };
 
   const handleEdit = async (template: KpiTemplate) => {
     setEditingId(template.id);
+    const dependencyConfig = parseKpiDependencyConfig(template.linkedEntityId);
     
     let entityIds: string[] = [];
     if (template.scope === "selected_chapters" || template.scope === "selected_barangays") {
@@ -374,7 +370,10 @@ export default function KpiManager() {
       targetValue: template.targetValue,
       isActive: template.isActive,
       scope: template.scope || "all_chapters_and_barangays",
-      selectedEntityIds: entityIds
+      selectedEntityIds: entityIds,
+      dependencyEnabled: Boolean(dependencyConfig),
+      dependencyAggregation: dependencyConfig?.aggregation || "all",
+      dependencyRules: dependencyConfig?.rules || []
     });
     setIsCreating(true);
   };
@@ -391,17 +390,45 @@ export default function KpiManager() {
       return;
     }
 
+    if (formData.dependencyEnabled && formData.dependencyRules.length === 0) {
+      toast({ title: "Error", description: "Add at least one dependency rule", variant: "destructive" });
+      return;
+    }
+
+    const hasInvalidRuleTarget = formData.dependencyRules.some(
+      (rule) => !Number.isFinite(rule.targetValue) || rule.targetValue < 0,
+    );
+    if (formData.dependencyEnabled && hasInvalidRuleTarget) {
+      toast({ title: "Error", description: "Dependency targets must be zero or greater", variant: "destructive" });
+      return;
+    }
+
+    const serializedDependencyConfig = formData.dependencyEnabled
+      ? serializeKpiDependencyConfig({
+          version: 1,
+          mode: "auto",
+          aggregation: formData.dependencyAggregation,
+          rules: formData.dependencyRules,
+        })
+      : null;
+
+    const resolvedInputType = formData.dependencyEnabled ? "numeric" : formData.inputType;
+    const dependencyDerivedTarget = formData.dependencyEnabled
+      ? formData.dependencyRules[0]?.targetValue ?? null
+      : null;
+
     const submitData = {
       name: formData.name,
       description: formData.description,
       timeframe: formData.timeframe,
-      inputType: formData.inputType,
+      inputType: resolvedInputType,
       year: formData.year,
       quarter: formData.timeframe === "quarterly" || formData.timeframe === "both" ? formData.quarter : null,
-      targetValue: formData.inputType === "numeric" ? formData.targetValue : null,
+      targetValue: resolvedInputType === "numeric" ? (dependencyDerivedTarget ?? formData.targetValue) : null,
       isActive: formData.isActive,
       scope: formData.scope,
-      selectedEntityIds: formData.selectedEntityIds
+      selectedEntityIds: formData.selectedEntityIds,
+      linkedEntityId: serializedDependencyConfig
     };
 
     if (editingId) {
@@ -454,6 +481,15 @@ export default function KpiManager() {
     return inputType === "numeric" 
       ? <Badge variant="outline">Numeric</Badge>
       : <Badge variant="outline">Text</Badge>;
+  };
+
+  const getTemplateDependencySummary = (template: KpiTemplate) => {
+    const config = parseKpiDependencyConfig(template.linkedEntityId);
+    if (!config) {
+      return null;
+    }
+
+    return summarizeKpiDependencyConfig(config);
   };
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
@@ -697,7 +733,32 @@ export default function KpiManager() {
 
     setIsExportingPdf(true);
 
+    let exportContract: ReturnType<typeof createPdfExportContract> | null = null;
+
     try {
+      const contract = createPdfExportContract({
+        reportId: "admin-kpi-summary",
+        purpose: "admin_kpi_summary_reporting",
+        title: exportReportTitle || "KPI Summary Report",
+        subtitle: selectedQuarter ? `Q${selectedQuarter} ${selectedYear}` : `Year ${selectedYear}`,
+        selectedSections: pdfSectionOptions,
+        selectedColumns: pdfChartOptions,
+        filters: {
+          year: selectedYear,
+          quarter: selectedQuarter || "all",
+          selectedTemplateIds: selectedPdfTemplateIds.join(","),
+        },
+        filenamePolicy: {
+          prefix: "YSP-KPI-Summary",
+          includeYear: true,
+          includeQuarter: Boolean(selectedQuarter),
+        },
+        snapshotMetadata: {
+          actorRole: "admin",
+        },
+      });
+      exportContract = contract;
+
       const [{ jsPDF }, html2canvasModule] = await Promise.all([import("jspdf"), import("html2canvas")]);
       const html2canvas = html2canvasModule.default;
 
@@ -833,7 +894,7 @@ export default function KpiManager() {
           doc.setFont("helvetica", "bold");
           doc.setFontSize(13);
           doc.setTextColor(pdfTheme.accent[0], pdfTheme.accent[1], pdfTheme.accent[2]);
-          doc.text(exportReportTitle || "KPI Summary Report", marginX, 111);
+          doc.text(contract.title, marginX, 111);
 
           doc.setLineWidth(0.8);
           doc.setDrawColor(pdfTheme.border[0], pdfTheme.border[1], pdfTheme.border[2]);
@@ -1192,6 +1253,9 @@ export default function KpiManager() {
       setIsExportDialogOpen(false);
       toast({ title: "PDF Exported", description: "KPI summary PDF report downloaded successfully." });
     } catch (error) {
+      if (exportContract) {
+        void reportPdfFallbackRequest(exportContract, error);
+      }
       console.error("Failed to export KPI PDF report", error);
       toast({
         title: "Export failed",
@@ -1288,7 +1352,7 @@ export default function KpiManager() {
                   <div className="space-y-2">
                     <Label htmlFor="inputType">Input Type *</Label>
                     <Select value={formData.inputType} onValueChange={(v) => setFormData({ ...formData, inputType: v })}>
-                      <SelectTrigger data-testid="select-input-type">
+                      <SelectTrigger data-testid="select-input-type" disabled={formData.dependencyEnabled}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1327,14 +1391,21 @@ export default function KpiManager() {
                   )}
                   {formData.inputType === "numeric" && (
                     <div className="space-y-2">
-                      <Label htmlFor="targetValue">Target Value (optional)</Label>
+                      <Label htmlFor="targetValue">
+                        {formData.dependencyEnabled ? "Target Value (from first dependency rule)" : "Target Value (optional)"}
+                      </Label>
                       <Input
                         id="targetValue"
                         type="number"
                         min="0"
-                        value={formData.targetValue || ""}
+                        value={
+                          formData.dependencyEnabled
+                            ? (formData.dependencyRules[0]?.targetValue ?? "")
+                            : (formData.targetValue || "")
+                        }
                         onChange={(e) => setFormData({ ...formData, targetValue: e.target.value ? parseInt(e.target.value) : null })}
                         placeholder="e.g., 100"
+                        disabled={formData.dependencyEnabled}
                         data-testid="input-target-value"
                       />
                     </div>
@@ -1350,6 +1421,41 @@ export default function KpiManager() {
                     data-testid="input-kpi-description"
                   />
                 </div>
+
+                <KpiDependencyEditor
+                  enabled={formData.dependencyEnabled}
+                  onEnabledChange={(enabled) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      dependencyEnabled: enabled,
+                      inputType: enabled ? "numeric" : prev.inputType,
+                      dependencyRules: enabled && prev.dependencyRules.length === 0
+                        ? [createDefaultKpiDependencyRule()]
+                        : prev.dependencyRules,
+                    }));
+                  }}
+                  aggregation={formData.dependencyAggregation}
+                  onAggregationChange={(aggregation) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      dependencyAggregation: aggregation,
+                    }))
+                  }
+                  rules={formData.dependencyRules}
+                  onRulesChange={(rules) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      dependencyRules: rules,
+                    }))
+                  }
+                  dataTestIdPrefix="admin-kpi-dependency"
+                />
+
+                {formData.dependencyEnabled && (
+                  <p className="text-xs text-muted-foreground">
+                    Auto-tracked KPI templates are completed automatically based on dependency rules.
+                  </p>
+                )}
 
                 <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
                   <div className="space-y-2">
@@ -1470,47 +1576,55 @@ export default function KpiManager() {
                   No KPI templates found for {selectedYear}. Create one to get started.
                 </p>
               ) : (
-                kpiTemplates.map((template) => (
-                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className="font-medium break-words">{template.name}</span>
-                        {getTimeframeBadge(template.timeframe)}
-                        {getInputTypeBadge(template.inputType)}
-                        {!template.isActive && <Badge variant="destructive">Inactive</Badge>}
-                      </div>
-                      {template.description && (
-                        <p className="text-sm text-muted-foreground">{template.description}</p>
-                      )}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1 whitespace-nowrap">
-                          <Calendar className="h-3 w-3" />
-                          {template.year}{template.quarter && ` Q${template.quarter}`}
-                        </span>
-                        {template.targetValue && (
-                          <span className="flex items-center gap-1 whitespace-nowrap">
-                            <Target className="h-3 w-3" />
-                            Target: {template.targetValue}
-                          </span>
+                kpiTemplates.map((template) => {
+                  const dependencySummary = getTemplateDependencySummary(template);
+
+                  return (
+                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <span className="font-medium break-words">{template.name}</span>
+                          {getTimeframeBadge(template.timeframe)}
+                          {getInputTypeBadge(template.inputType)}
+                          {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
+                          {!template.isActive && <Badge variant="destructive">Inactive</Badge>}
+                        </div>
+                        {template.description && (
+                          <p className="text-sm text-muted-foreground">{template.description}</p>
                         )}
+                        {dependencySummary && (
+                          <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                          <span className="flex items-center gap-1 whitespace-nowrap">
+                            <Calendar className="h-3 w-3" />
+                            {template.year}{template.quarter && ` Q${template.quarter}`}
+                          </span>
+                          {template.targetValue && (
+                            <span className="flex items-center gap-1 whitespace-nowrap">
+                              <Target className="h-3 w-3" />
+                              Target: {template.targetValue}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)} data-testid={`button-edit-${template.id}`}>
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => deleteMutation.mutate(template.id)}
+                          disabled={deleteMutation.isPending}
+                          data-testid={`button-delete-${template.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                      <Button size="icon" variant="ghost" onClick={() => handleEdit(template)} data-testid={`button-edit-${template.id}`}>
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        size="icon" 
-                        variant="ghost" 
-                        onClick={() => deleteMutation.mutate(template.id)}
-                        disabled={deleteMutation.isPending}
-                        data-testid={`button-delete-${template.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </TabsContent>
@@ -1522,28 +1636,36 @@ export default function KpiManager() {
                   No quarterly KPI templates found.
                 </p>
               ) : (
-                groupedTemplates.quarterly.map((template) => (
-                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className="font-medium break-words">{template.name}</span>
-                        {template.quarter && <Badge variant="outline">Q{template.quarter}</Badge>}
-                        {getInputTypeBadge(template.inputType)}
+                groupedTemplates.quarterly.map((template) => {
+                  const dependencySummary = getTemplateDependencySummary(template);
+
+                  return (
+                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <span className="font-medium break-words">{template.name}</span>
+                          {template.quarter && <Badge variant="outline">Q{template.quarter}</Badge>}
+                          {getInputTypeBadge(template.inputType)}
+                          {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
+                        </div>
+                        {template.description && (
+                          <p className="text-sm text-muted-foreground">{template.description}</p>
+                        )}
+                        {dependencySummary && (
+                          <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                        )}
                       </div>
-                      {template.description && (
-                        <p className="text-sm text-muted-foreground">{template.description}</p>
-                      )}
+                      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                      <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </TabsContent>
@@ -1555,34 +1677,42 @@ export default function KpiManager() {
                   No yearly KPI templates found.
                 </p>
               ) : (
-                [...groupedTemplates.yearly, ...groupedTemplates.both].map((template) => (
-                  <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className="font-medium break-words">{template.name}</span>
-                        {getTimeframeBadge(template.timeframe)}
-                        {getInputTypeBadge(template.inputType)}
-                      </div>
-                      {template.description && (
-                        <p className="text-sm text-muted-foreground">{template.description}</p>
-                      )}
-                      {template.targetValue && (
-                        <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground whitespace-nowrap">
-                          <Target className="h-3 w-3" />
-                          Target: {template.targetValue}
+                [...groupedTemplates.yearly, ...groupedTemplates.both].map((template) => {
+                  const dependencySummary = getTemplateDependencySummary(template);
+
+                  return (
+                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <span className="font-medium break-words">{template.name}</span>
+                          {getTimeframeBadge(template.timeframe)}
+                          {getInputTypeBadge(template.inputType)}
+                          {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
                         </div>
-                      )}
+                        {template.description && (
+                          <p className="text-sm text-muted-foreground">{template.description}</p>
+                        )}
+                        {dependencySummary && (
+                          <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                        )}
+                        {template.targetValue && (
+                          <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground whitespace-nowrap">
+                            <Target className="h-3 w-3" />
+                            Target: {template.targetValue}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                      <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </TabsContent>

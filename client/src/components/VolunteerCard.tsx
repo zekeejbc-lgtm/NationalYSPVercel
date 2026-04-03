@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   applyImageFallback,
@@ -7,7 +8,8 @@ import {
   getDisplayImageUrl,
   resetImageFallback,
 } from "@/lib/driveUtils";
-import { Calendar, MapPin, Phone, Mail } from "lucide-react";
+import { formatManilaDateTime12, isPastDateTime } from "@/lib/manilaTime";
+import { Calendar, MapPin, Phone, Mail, Clock3, ExternalLink } from "lucide-react";
 import { format } from "date-fns";
 
 interface VolunteerCardProps {
@@ -19,6 +21,10 @@ interface VolunteerCardProps {
   contactName: string;
   contactPhone: string;
   contactEmail?: string;
+  description?: string | null;
+  learnMoreUrl?: string | null;
+  applyUrl?: string | null;
+  deadlineAt?: string | Date | null;
   photoUrl?: string | null;
 }
 
@@ -51,10 +57,15 @@ export default function VolunteerCard({
   contactName,
   contactPhone,
   contactEmail,
+  description,
+  learnMoreUrl,
+  applyUrl,
+  deadlineAt,
   photoUrl,
 }: VolunteerCardProps) {
   const displayPhotoUrl = photoUrl ? getDisplayImageUrl(photoUrl) : "";
   const [currentPhotoSrc, setCurrentPhotoSrc] = useState(displayPhotoUrl);
+  const isDone = isPastDateTime(deadlineAt);
 
   useEffect(() => {
     setCurrentPhotoSrc(displayPhotoUrl);
@@ -88,7 +99,10 @@ export default function VolunteerCard({
         </div>
       )}
       <CardHeader>
-        <h3 className="text-lg font-semibold">{eventName}</h3>
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-lg font-semibold">{eventName}</h3>
+          <Badge variant={isDone ? "secondary" : "default"}>{isDone ? "Done" : "Open"}</Badge>
+        </div>
         <div className="flex flex-wrap gap-2 mt-2">
           <div className="flex items-center gap-1 text-sm text-muted-foreground">
             <Calendar className="h-4 w-4" />
@@ -98,9 +112,18 @@ export default function VolunteerCard({
             <MapPin className="h-4 w-4" />
             <span>{chapter}</span>
           </div>
+          {deadlineAt && (
+            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+              <Clock3 className="h-4 w-4" />
+              <span>Deadline: {formatManilaDateTime12(deadlineAt)}</span>
+            </div>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {description && (
+          <p className="text-sm text-muted-foreground">{description}</p>
+        )}
         {sdgs.length > 0 && (
           <div>
             <p className="text-sm font-medium mb-2">SDGs Impacted:</p>
@@ -134,7 +157,7 @@ export default function VolunteerCard({
               <div className="flex items-center gap-2 text-sm">
                 <Mail className="h-3.5 w-3.5 text-muted-foreground" />
                 <a 
-                  href={`mailto:contactEmail`} 
+                  href={`mailto:${contactEmail}`} 
                   className="text-primary hover:underline"
                   data-testid={`link-email-${id}`}
                 >
@@ -144,6 +167,26 @@ export default function VolunteerCard({
             )}
           </div>
         </div>
+        {(learnMoreUrl || applyUrl) && (
+          <div className="pt-2 border-t flex flex-wrap gap-2">
+            {learnMoreUrl && (
+              <Button asChild size="sm" variant="outline">
+                <a href={learnMoreUrl} target="_blank" rel="noopener noreferrer">
+                  Learn More
+                  <ExternalLink className="h-3.5 w-3.5 ml-1" />
+                </a>
+              </Button>
+            )}
+            {applyUrl && (
+              <Button asChild size="sm">
+                <a href={applyUrl} target="_blank" rel="noopener noreferrer">
+                  Apply Here
+                  <ExternalLink className="h-3.5 w-3.5 ml-1" />
+                </a>
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

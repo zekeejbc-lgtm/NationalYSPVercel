@@ -10,6 +10,11 @@ import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+interface MyProfileProps {
+  embedded?: boolean;
+  hideEmbeddedHeading?: boolean;
+}
+
 type AuthRole = "admin" | "chapter" | "barangay";
 
 interface ProfileResponse {
@@ -73,7 +78,7 @@ function getDashboardPath(role: AuthRole) {
   return "/chapter-dashboard";
 }
 
-export default function MyProfile() {
+export default function MyProfile({ embedded = false, hideEmbeddedHeading = false }: MyProfileProps) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -249,6 +254,14 @@ export default function MyProfile() {
   };
 
   if (loading) {
+    if (embedded) {
+      return (
+        <div className="w-full">
+          <LoadingState label="Loading profile..." rows={3} compact />
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
         <div className="w-full max-w-2xl">
@@ -260,6 +273,158 @@ export default function MyProfile() {
 
   if (!profile) {
     return null;
+  }
+
+  const profileContent = (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserRound className="h-5 w-5" />
+            Account Information
+          </CardTitle>
+          <CardDescription>
+            Update your account details. Changes apply to your next session checks immediately.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleProfileSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="profile-role">Role</Label>
+              <Input id="profile-role" value={profile.role} readOnly className="bg-muted" />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="profile-username">Username</Label>
+              <Input
+                id="profile-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                minLength={3}
+                required
+                data-testid="input-profile-username"
+              />
+            </div>
+
+            {profile.chapterName && (
+              <div className="space-y-2">
+                <Label htmlFor="profile-chapter">Chapter</Label>
+                <Input id="profile-chapter" value={profile.chapterName} readOnly className="bg-muted" />
+              </div>
+            )}
+
+            {profile.role === "barangay" && (
+              <div className="space-y-2">
+                <Label htmlFor="profile-barangay-name">Barangay Name</Label>
+                <Input
+                  id="profile-barangay-name"
+                  value={barangayName}
+                  onChange={(e) => setBarangayName(e.target.value)}
+                  required
+                  data-testid="input-profile-barangay-name"
+                />
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={updateProfileMutation.isPending}
+              data-testid="button-save-profile"
+            >
+              {updateProfileMutation.isPending ? "Saving..." : "Save Profile"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5" />
+            Change Password
+          </CardTitle>
+          <CardDescription>
+            Set a new password for your account. Use at least 8 characters.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handlePasswordSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">New Password</Label>
+              <div className="relative">
+                <Input
+                  id="newPassword"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className="pr-12"
+                  data-testid="input-new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                  aria-label={showNewPassword ? "Hide new password" : "Show new password"}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-new-password"
+                >
+                  {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <div className="relative">
+                <Input
+                  id="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  className="pr-12"
+                  data-testid="input-confirm-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-confirm-password"
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              disabled={changePasswordMutation.isPending}
+              data-testid="button-change-password"
+            >
+              {changePasswordMutation.isPending ? "Updating..." : "Update Password"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="space-y-6">
+        {!hideEmbeddedHeading && (
+          <div>
+            <h2 className="text-lg font-semibold">My Profile</h2>
+            <p className="text-sm text-muted-foreground">Manage your account information and password</p>
+          </div>
+        )}
+        <div className="space-y-6" data-testid="panel-my-profile-modal">
+          {profileContent}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -280,139 +445,7 @@ export default function MyProfile() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6 space-y-6 max-w-3xl">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserRound className="h-5 w-5" />
-              Account Information
-            </CardTitle>
-            <CardDescription>
-              Update your account details. Changes apply to your next session checks immediately.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleProfileSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="profile-role">Role</Label>
-                <Input id="profile-role" value={profile.role} readOnly className="bg-muted" />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="profile-username">Username</Label>
-                <Input
-                  id="profile-username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  minLength={3}
-                  required
-                  data-testid="input-profile-username"
-                />
-              </div>
-
-              {profile.chapterName && (
-                <div className="space-y-2">
-                  <Label htmlFor="profile-chapter">Chapter</Label>
-                  <Input id="profile-chapter" value={profile.chapterName} readOnly className="bg-muted" />
-                </div>
-              )}
-
-              {profile.role === "barangay" && (
-                <div className="space-y-2">
-                  <Label htmlFor="profile-barangay-name">Barangay Name</Label>
-                  <Input
-                    id="profile-barangay-name"
-                    value={barangayName}
-                    onChange={(e) => setBarangayName(e.target.value)}
-                    required
-                    data-testid="input-profile-barangay-name"
-                  />
-                </div>
-              )}
-
-              <Button
-                type="submit"
-                disabled={updateProfileMutation.isPending}
-                data-testid="button-save-profile"
-              >
-                {updateProfileMutation.isPending ? "Saving..." : "Save Profile"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <KeyRound className="h-5 w-5" />
-              Change Password
-            </CardTitle>
-            <CardDescription>
-              Set a new password for your account. Use at least 8 characters.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handlePasswordSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="newPassword">New Password</Label>
-                <div className="relative">
-                  <Input
-                    id="newPassword"
-                    type={showNewPassword ? "text" : "password"}
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                    minLength={8}
-                    className="pr-12"
-                    data-testid="input-new-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowNewPassword((prev) => !prev)}
-                    aria-label={showNewPassword ? "Hide new password" : "Show new password"}
-                    className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                    data-testid="button-toggle-new-password"
-                  >
-                    {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="confirmPassword">Confirm Password</Label>
-                <div className="relative">
-                  <Input
-                    id="confirmPassword"
-                    type={showConfirmPassword ? "text" : "password"}
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    required
-                    className="pr-12"
-                    data-testid="input-confirm-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword((prev) => !prev)}
-                    aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
-                    className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                    data-testid="button-toggle-confirm-password"
-                  >
-                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                disabled={changePasswordMutation.isPending}
-                data-testid="button-change-password"
-              >
-                {changePasswordMutation.isPending ? "Updating..." : "Update Password"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </main>
+      <main className="container mx-auto px-4 py-6 space-y-6 max-w-3xl">{profileContent}</main>
     </div>
   );
 }

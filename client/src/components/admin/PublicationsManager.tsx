@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -234,13 +235,7 @@ export default function PublicationsManager() {
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-3" role="status" aria-label="Loading publications">
-        <div className="h-5 w-56 rounded-md bg-muted skeleton-shimmer" />
-        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
-        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
-      </div>
-    );
+    return <LoadingState label="Loading publications..." rows={3} compact />;
   }
 
   return (

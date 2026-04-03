@@ -2,24 +2,36 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import LoadingState from "@/components/ui/loading-state";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { applyImageFallback, getDisplayImageUrl, resetImageFallback } from "@/lib/driveUtils";
-import { Users, Phone, Calendar, Plus, Check, X, Search, Loader2, GitMerge, Trash2 } from "lucide-react";
+import { createPdfExportContract } from "@/lib/export/pdfContract";
+import { reportPdfFallbackRequest } from "@/lib/export/pdfFallback";
+import { createSafeFileToken, formatManilaDateTime, getIsoDateFileStamp } from "@/lib/export/pdfStandards";
+import { createYspPdfReport } from "@/lib/pdfReport";
+import { getDisplayImageUrl } from "@/lib/driveUtils";
+import { Users, Phone, Calendar, Plus, Check, X, Search, Loader2, GitMerge, Trash2, FileDown } from "lucide-react";
 import { format } from "date-fns";
 import { usePagination } from "@/hooks/use-pagination";
 import PaginationControls from "@/components/ui/pagination-controls";
 import ViewModeToggle, { type ViewMode } from "@/components/ui/view-mode-toggle";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
+import MemberAnalyticsTab from "@/components/chapter/MemberAnalyticsTab";
+import { getComparisonColor } from "@/lib/chartColors";
 import type { Member } from "@shared/schema";
 import { useForm } from "react-hook-form";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 
 export interface MemberDashboardPanelProps {
   chapterId: string;
@@ -37,6 +49,16 @@ interface AddMemberFormData {
   registeredVoter: boolean;
   facebookLink?: string;
   isActive: boolean;
+}
+
+interface DirectoryEditFormState {
+  fullName: string;
+  age: string;
+  birthdate: string;
+  contactNumber: string;
+  email: string;
+  facebookLink: string;
+  barangayId: string;
 }
 
 interface BarangayOption {
@@ -84,6 +106,107 @@ interface DuplicateActionContext {
   deleteLabel: string;
   mergeLabel: string;
   helperText: string;
+}
+
+const applicationAnalyticsChartConfig = {
+  applications: {
+    label: "Applications",
+    color: "hsl(var(--chart-1))",
+  },
+} satisfies ChartConfig;
+
+type MergeFieldSource = "primary" | "duplicate";
+type MergeSelectableField = "fullName" | "contactNumber" | "email" | "facebookLink" | "birthdate" | "age" | "barangayId" | "photoUrl";
+type ApplicationScopeFilter = "all" | "chapter-direct" | "barangay-only";
+type ApplicationVoterFilter = "all" | "registered-voter" | "not-registered-voter";
+type ApplicationsExportSectionKey = "scope" | "applicationsTable" | "originByBarangay";
+type DirectoryExportSectionKey = "scope" | "directoryTable";
+
+type ApplicationsExportSections = Record<ApplicationsExportSectionKey, boolean>;
+type ApplicationsExportColumns = {
+  name: boolean;
+  referenceId: boolean;
+  type: boolean;
+  barangay: boolean;
+  contact: boolean;
+  submitted: boolean;
+  directoryCheck: boolean;
+  duplicateCheck: boolean;
+};
+
+type DirectoryExportSections = Record<DirectoryExportSectionKey, boolean>;
+type DirectoryExportColumns = {
+  name: boolean;
+  type: boolean;
+  barangay: boolean;
+  age: boolean;
+  household: boolean;
+  contact: boolean;
+  voter: boolean;
+  active: boolean;
+  dateAdded: boolean;
+};
+
+type ExportPreset = "minimal" | "standard" | "full";
+
+type MemberUpdatePayload = Omit<Partial<Member>, "birthdate" | "email" | "facebookLink" | "barangayId"> & {
+  birthdate?: string | null;
+  email?: string | null;
+  facebookLink?: string | null;
+  barangayId?: string | null;
+};
+
+const defaultDirectoryEditFormState: DirectoryEditFormState = {
+  fullName: "",
+  age: "",
+  birthdate: "",
+  contactNumber: "",
+  email: "",
+  facebookLink: "",
+  barangayId: "chapter-direct",
+};
+
+const MEMBER_PHOTO_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+const MERGE_SELECTABLE_FIELDS: ReadonlyArray<{ key: MergeSelectableField; label: string }> = [
+  { key: "fullName", label: "Name" },
+  { key: "contactNumber", label: "Contact" },
+  { key: "email", label: "Email" },
+  { key: "facebookLink", label: "Facebook" },
+  { key: "birthdate", label: "Birthdate" },
+  { key: "age", label: "Age" },
+  { key: "barangayId", label: "Barangay" },
+  { key: "photoUrl", label: "Photo" },
+];
+
+function hasMeaningfulMergeValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return true;
+}
+
+function getDefaultMergeFieldSource(primaryValue: unknown, duplicateValue: unknown): MergeFieldSource {
+  if (hasMeaningfulMergeValue(primaryValue)) {
+    return "primary";
+  }
+
+  if (hasMeaningfulMergeValue(duplicateValue)) {
+    return "duplicate";
+  }
+
+  return "primary";
 }
 
 function normalizeLooseText(value?: string | null) {
@@ -281,43 +404,56 @@ function formatProbability(probability: number) {
   return `${Math.round(probability * 100)}%`;
 }
 
-function formatManilaDateTime(value: Date | string | null | undefined) {
-  if (!value) return "-";
-
-  const parsed = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return typeof value === "string" ? value : "-";
-  }
-
-  return new Intl.DateTimeFormat("en-PH", {
-    timeZone: "Asia/Manila",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(parsed);
-}
-
-function getMemberPhotoSrc(photoUrl: string | null | undefined) {
+function getMemberProfilePhotoSrc(photoUrl: string | null | undefined) {
   const normalizedPhotoUrl = (photoUrl || "").trim();
   if (!normalizedPhotoUrl) {
-    return "/images/ysp-logo.png";
+    return undefined;
   }
 
   return getDisplayImageUrl(normalizedPhotoUrl);
 }
 
+function getMemberInitials(fullName: string | null | undefined) {
+  const normalizedName = (fullName || "").trim();
+  if (!normalizedName) {
+    return "NA";
+  }
+
+  const nameParts = normalizedName.split(/\s+/).filter(Boolean);
+  const initials = nameParts
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+
+  return initials || "NA";
+}
+
+function toDirectoryEditFormState(member: MemberWithLifecycle): DirectoryEditFormState {
+  return {
+    fullName: member.fullName || "",
+    age: String(member.age ?? ""),
+    birthdate: toDateKey(member.birthdate),
+    contactNumber: member.contactNumber || "",
+    email: member.email || "",
+    facebookLink: member.facebookLink || "",
+    barangayId: member.barangayId || "chapter-direct",
+  };
+}
+
 export default function MemberDashboardPanel({ chapterId, chapterName, barangayId }: MemberDashboardPanelProps) {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const isMobile = useIsMobile();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [applicationSearchTerm, setApplicationSearchTerm] = useState("");
+  const [applicationScopeFilter, setApplicationScopeFilter] = useState<ApplicationScopeFilter>("all");
+  const [applicationBarangayFilter, setApplicationBarangayFilter] = useState<string>("all");
+  const [applicationVoterFilter, setApplicationVoterFilter] = useState<ApplicationVoterFilter>("all");
   const [selectedBarangayFilter, setSelectedBarangayFilter] = useState("all");
   const [memberScopeFilter, setMemberScopeFilter] = useState("all");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
-  const [memberSubTab, setMemberSubTab] = useState<"applications" | "directory">("applications");
+  const [memberSubTab, setMemberSubTab] = useState<"applications" | "directory" | "analytics">("applications");
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
   const [applicantDetailsOpen, setApplicantDetailsOpen] = useState(false);
   const [selectedApplicant, setSelectedApplicant] = useState<MemberWithLifecycle | null>(null);
@@ -325,6 +461,53 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
   const [selectedPrimaryApplication, setSelectedPrimaryApplication] = useState<MemberWithLifecycle | null>(null);
   const [selectedDuplicateCandidates, setSelectedDuplicateCandidates] = useState<DuplicateCandidate[]>([]);
   const [selectedComparisonCandidateId, setSelectedComparisonCandidateId] = useState<string | null>(null);
+  const [mergeFieldSelectionByKey, setMergeFieldSelectionByKey] = useState<Partial<Record<MergeSelectableField, MergeFieldSource>>>({});
+  const [directoryDetailsOpen, setDirectoryDetailsOpen] = useState(false);
+  const [selectedDirectoryMemberId, setSelectedDirectoryMemberId] = useState<string | null>(null);
+  const [directoryHouseholdSizeInput, setDirectoryHouseholdSizeInput] = useState("1");
+  const [directoryEditRegisteredVoter, setDirectoryEditRegisteredVoter] = useState(false);
+  const [directoryEditIsActive, setDirectoryEditIsActive] = useState(false);
+  const [directoryPhotoFile, setDirectoryPhotoFile] = useState<File | null>(null);
+  const [directoryPhotoPreviewUrl, setDirectoryPhotoPreviewUrl] = useState<string | null>(null);
+  const [directoryPhotoMarkedForRemoval, setDirectoryPhotoMarkedForRemoval] = useState(false);
+  const [isEditingDirectoryInfo, setIsEditingDirectoryInfo] = useState(false);
+  const [directoryEditForm, setDirectoryEditForm] = useState<DirectoryEditFormState>(defaultDirectoryEditFormState);
+  const [isExportingApplicationsPdf, setIsExportingApplicationsPdf] = useState(false);
+  const [isExportingDirectoryPdf, setIsExportingDirectoryPdf] = useState(false);
+  const [applicationsExportDialogOpen, setApplicationsExportDialogOpen] = useState(false);
+  const [directoryExportDialogOpen, setDirectoryExportDialogOpen] = useState(false);
+  const [applicationsExportReportTitle, setApplicationsExportReportTitle] = useState("Member Applications Report");
+  const [directoryExportReportTitle, setDirectoryExportReportTitle] = useState("Member Directory Report");
+  const [applicationsExportSections, setApplicationsExportSections] = useState<ApplicationsExportSections>({
+    scope: true,
+    applicationsTable: true,
+    originByBarangay: true,
+  });
+  const [applicationsExportColumns, setApplicationsExportColumns] = useState<ApplicationsExportColumns>({
+    name: true,
+    referenceId: true,
+    type: true,
+    barangay: true,
+    contact: true,
+    submitted: true,
+    directoryCheck: true,
+    duplicateCheck: true,
+  });
+  const [directoryExportSections, setDirectoryExportSections] = useState<DirectoryExportSections>({
+    scope: true,
+    directoryTable: true,
+  });
+  const [directoryExportColumns, setDirectoryExportColumns] = useState<DirectoryExportColumns>({
+    name: true,
+    type: true,
+    barangay: true,
+    age: true,
+    household: true,
+    contact: true,
+    voter: true,
+    active: true,
+    dateAdded: true,
+  });
 
   useEffect(() => {
     if (isMobile) {
@@ -392,12 +575,27 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: Partial<Member> }) => {
+    mutationFn: async ({ id, data }: { id: string; data: MemberUpdatePayload }) => {
       setUpdatingMemberId(id);
       return await apiRequest("PATCH", `/api/members/${id}`, data);
     },
-    onSuccess: () => {
+    onSuccess: (updatedMember: MemberWithLifecycle) => {
       toast({ title: "Success", description: "Member updated successfully" });
+      queryClient.setQueriesData({ queryKey: ["/api/members"] }, (currentData: unknown) => {
+        if (!Array.isArray(currentData)) {
+          return currentData;
+        }
+
+        return currentData.map((member) => {
+          if (!member || typeof member !== "object") {
+            return member;
+          }
+
+          return (member as { id?: string }).id === updatedMember.id
+            ? { ...(member as Record<string, unknown>), ...updatedMember }
+            : member;
+        });
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/members"] });
       setUpdatingMemberId(null);
     },
@@ -405,6 +603,23 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
       toast({ title: "Error", description: error.message, variant: "destructive" });
       setUpdatingMemberId(null);
     }
+  });
+
+  const deleteMemberMutation = useMutation({
+    mutationFn: async (memberId: string) => {
+      return await apiRequest("DELETE", `/api/members/${memberId}`, {});
+    },
+    onSuccess: (_result, memberId) => {
+      toast({ title: "Success", description: "Member deleted successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/members"] });
+
+      if (selectedDirectoryMemberId === memberId) {
+        setDirectoryDetailsOpen(false);
+      }
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message || "Failed to delete member", variant: "destructive" });
+    },
   });
 
   const deleteDuplicateMutation = useMutation({
@@ -442,8 +657,19 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
   });
 
   const mergeDuplicateMutation = useMutation({
-    mutationFn: async ({ primaryId, duplicateId }: { primaryId: string; duplicateId: string }) => {
-      return await apiRequest("POST", `/api/members/${primaryId}/merge`, { duplicateMemberId: duplicateId });
+    mutationFn: async ({
+      primaryId,
+      duplicateId,
+      fieldSources,
+    }: {
+      primaryId: string;
+      duplicateId: string;
+      fieldSources?: Partial<Record<MergeSelectableField, string>>;
+    }) => {
+      return await apiRequest("POST", `/api/members/${primaryId}/merge`, {
+        duplicateMemberId: duplicateId,
+        fieldSources,
+      });
     },
     onSuccess: (_result, variables) => {
       toast({ title: "Success", description: "Applications merged successfully." });
@@ -475,11 +701,13 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
     },
   });
 
-  const barangayNameById = new Map(
-    barangays
-      .filter((barangay) => Boolean(barangay.id))
-      .map((barangay) => [barangay.id, barangay.barangayName] as const)
-  );
+  const barangayNameById = useMemo(() => {
+    return new Map(
+      barangays
+        .filter((barangay) => Boolean(barangay.id))
+        .map((barangay) => [barangay.id, barangay.barangayName] as const)
+    );
+  }, [barangays]);
 
   const getBarangayLabel = (member: MemberWithLifecycle) => {
     if (!member.barangayId) return "Chapter Direct";
@@ -502,7 +730,54 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
     return member.isActive ? "approved" : "pending";
   };
 
-  const approvedDirectoryMembers = members.filter((member) => resolveMemberApplicationStatus(member) === "approved");
+  const approvedDirectoryMembers = useMemo(
+    () => members.filter((member) => resolveMemberApplicationStatus(member) === "approved"),
+    [members],
+  );
+
+  const selectedDirectoryMember = useMemo(() => {
+    if (!selectedDirectoryMemberId) {
+      return null;
+    }
+
+    return approvedDirectoryMembers.find((member) => member.id === selectedDirectoryMemberId) || null;
+  }, [approvedDirectoryMembers, selectedDirectoryMemberId]);
+
+  useEffect(() => {
+    if (!selectedDirectoryMemberId) {
+      return;
+    }
+
+    const currentMember = approvedDirectoryMembers.find((member) => member.id === selectedDirectoryMemberId);
+    if (!currentMember) {
+      return;
+    }
+
+    setDirectoryHouseholdSizeInput(String(currentMember.householdSize ?? 1));
+    setDirectoryEditRegisteredVoter(Boolean(currentMember.registeredVoter));
+    setDirectoryEditIsActive(Boolean(currentMember.isActive));
+    setDirectoryPhotoFile(null);
+    setDirectoryPhotoMarkedForRemoval(false);
+    setDirectoryPhotoPreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      return null;
+    });
+    setDirectoryEditForm(toDirectoryEditFormState(currentMember));
+    setIsEditingDirectoryInfo(false);
+  }, [approvedDirectoryMembers, selectedDirectoryMemberId]);
+
+  useEffect(() => {
+    return () => {
+      setDirectoryPhotoPreviewUrl((currentPreviewUrl) => {
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+        return null;
+      });
+    };
+  }, []);
 
   const filteredMembers = approvedDirectoryMembers.filter(member => {
     if (!searchTerm) return true;
@@ -616,6 +891,58 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
   };
 
   const pendingApplications = members.filter((member) => getMemberApplicationStatus(member) === "pending");
+
+  const getApplicationBarangayFilterKeyForMember = (member: MemberWithLifecycle) => {
+    if (!member.barangayId) {
+      return "chapter-direct";
+    }
+
+    if (!barangayNameById.has(member.barangayId)) {
+      return "unknown-barangay";
+    }
+
+    return `barangay:${member.barangayId}`;
+  };
+
+  const filteredPendingApplications = useMemo(() => {
+    const normalizedSearch = applicationSearchTerm.trim().toLowerCase();
+
+    return pendingApplications.filter((member) => {
+      const barangayLabel = getBarangayLabel(member);
+      const barangayFilterKey = getApplicationBarangayFilterKeyForMember(member);
+
+      const matchesSearch = !normalizedSearch || (
+        member.fullName.toLowerCase().includes(normalizedSearch) ||
+        (member.email || "").toLowerCase().includes(normalizedSearch) ||
+        (member.contactNumber || "").toLowerCase().includes(normalizedSearch) ||
+        (member.applicationReferenceId || "").toLowerCase().includes(normalizedSearch) ||
+        barangayLabel.toLowerCase().includes(normalizedSearch)
+      );
+
+      const matchesScope =
+        applicationScopeFilter === "all" ||
+        (applicationScopeFilter === "chapter-direct" && !member.barangayId) ||
+        (applicationScopeFilter === "barangay-only" && Boolean(member.barangayId));
+
+      const matchesBarangay =
+        applicationBarangayFilter === "all" ||
+        barangayFilterKey === applicationBarangayFilter;
+
+      const matchesVoter =
+        applicationVoterFilter === "all" ||
+        (applicationVoterFilter === "registered-voter" && member.registeredVoter) ||
+        (applicationVoterFilter === "not-registered-voter" && !member.registeredVoter);
+
+      return matchesSearch && matchesScope && matchesBarangay && matchesVoter;
+    });
+  }, [
+    applicationBarangayFilter,
+    applicationScopeFilter,
+    applicationSearchTerm,
+    applicationVoterFilter,
+    barangayNameById,
+    pendingApplications,
+  ]);
   const duplicateComparisonPool = members.filter((member) => getMemberApplicationStatus(member) !== "rejected");
   const chapterDirectMembers = approvedDirectoryMembers.filter((member) => !member.barangayId).length;
   const barangayBasedMembers = approvedDirectoryMembers.length - chapterDirectMembers;
@@ -650,9 +977,142 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
     };
   };
 
-  const applicationsPagination = usePagination(pendingApplications, {
+  const uniqueApplicantIdentityCount = useMemo(() => {
+    const uniqueIdentities = new Set<string>();
+    for (const member of pendingApplications) {
+      uniqueIdentities.add(buildMemberIdentityKey(member));
+    }
+
+    return uniqueIdentities.size;
+  }, [pendingApplications]);
+
+  const chapterDirectPendingApplicationsCount = pendingApplications.filter((member) => !member.barangayId).length;
+  const barangayBasedPendingApplicationsCount = pendingApplications.length - chapterDirectPendingApplicationsCount;
+
+  const pendingApplicationsByBarangay = useMemo(() => {
+    const counts = new Map<string, { filterKey: string; barangay: string; applications: number }>();
+
+    for (const member of pendingApplications) {
+      const filterKey = getApplicationBarangayFilterKeyForMember(member);
+      const barangayLabel = getBarangayLabel(member);
+
+      if (!counts.has(filterKey)) {
+        counts.set(filterKey, {
+          filterKey,
+          barangay: barangayLabel,
+          applications: 0,
+        });
+      }
+
+      const currentEntry = counts.get(filterKey);
+      if (currentEntry) {
+        currentEntry.applications += 1;
+      }
+    }
+
+    return Array.from(counts.values()).sort((a, b) => b.applications - a.applications || a.barangay.localeCompare(b.barangay));
+  }, [pendingApplications]);
+
+  const chartPendingApplicationsByBarangay = useMemo(() => {
+    const counts = new Map<string, { filterKey: string; barangay: string; applications: number }>();
+
+    for (const member of filteredPendingApplications) {
+      const filterKey = getApplicationBarangayFilterKeyForMember(member);
+      const barangayLabel = member.barangayId
+        ? barangayNameById.get(member.barangayId) || "Unknown Barangay"
+        : "Chapter Direct";
+
+      if (!counts.has(filterKey)) {
+        counts.set(filterKey, {
+          filterKey,
+          barangay: barangayLabel,
+          applications: 0,
+        });
+      }
+
+      const currentEntry = counts.get(filterKey);
+      if (currentEntry) {
+        currentEntry.applications += 1;
+      }
+    }
+
+    return Array.from(counts.values()).sort((a, b) => b.applications - a.applications || a.barangay.localeCompare(b.barangay));
+  }, [barangayNameById, filteredPendingApplications]);
+
+  const selectableApplicationBarangayOptions = useMemo(() => {
+    return pendingApplicationsByBarangay.filter((entry) => entry.filterKey.startsWith("barangay:"));
+  }, [pendingApplicationsByBarangay]);
+
+  const unknownBarangayPendingApplicationsCount = useMemo(() => {
+    return pendingApplicationsByBarangay.find((entry) => entry.filterKey === "unknown-barangay")?.applications || 0;
+  }, [pendingApplicationsByBarangay]);
+
+  const pendingApplicationsScopeData = useMemo(() => {
+    const filteredChapterDirectCount = filteredPendingApplications.filter((member) => !member.barangayId).length;
+    const filteredBarangayCount = filteredPendingApplications.length - filteredChapterDirectCount;
+
+    return [
+      { scope: "Chapter Direct", applications: filteredChapterDirectCount, filterKey: "chapter-direct" as const },
+      { scope: "Barangay Member", applications: filteredBarangayCount, filterKey: "barangay-only" as const },
+    ].filter((entry) => entry.applications > 0);
+  }, [filteredPendingApplications]);
+
+  const pendingApplicationsVoterData = useMemo(() => {
+    const registeredVoterCount = filteredPendingApplications.filter((member) => member.registeredVoter).length;
+
+    return [
+      { label: "Registered Voter", applications: registeredVoterCount, filterKey: "registered-voter" as const },
+      { label: "Not Registered", applications: filteredPendingApplications.length - registeredVoterCount, filterKey: "not-registered-voter" as const },
+    ].filter((entry) => entry.applications > 0);
+  }, [filteredPendingApplications]);
+
+  const originChartHeight = Math.min(520, Math.max(240, chartPendingApplicationsByBarangay.length * 44));
+
+  const getApplicationBarangayFilterLabel = (filterKey: string) => {
+    if (filterKey === "all") {
+      return "All Application Barangays";
+    }
+
+    if (filterKey === "chapter-direct") {
+      return "Chapter Direct";
+    }
+
+    if (filterKey === "unknown-barangay") {
+      return "Unknown Barangay";
+    }
+
+    return pendingApplicationsByBarangay.find((entry) => entry.filterKey === filterKey)?.barangay || "Selected Barangay";
+  };
+
+  const clearApplicationFilters = () => {
+    setApplicationSearchTerm("");
+    setApplicationScopeFilter("all");
+    setApplicationBarangayFilter("all");
+    setApplicationVoterFilter("all");
+  };
+
+  const applyApplicationBarangayFilter = (nextFilter: string, syncScopeWhenAll = false) => {
+    const normalizedFilter = nextFilter || "all";
+    setApplicationBarangayFilter(normalizedFilter);
+
+    if (normalizedFilter === "chapter-direct") {
+      setApplicationScopeFilter("chapter-direct");
+      return;
+    }
+
+    if (normalizedFilter !== "all") {
+      setApplicationScopeFilter("barangay-only");
+      return;
+    }
+
+    if (syncScopeWhenAll) {
+      setApplicationScopeFilter("all");
+    }
+  };
+
+  const applicationsPagination = usePagination(filteredPendingApplications, {
     pageSize: 10,
-    resetKey: `${chapterId}|${barangayId || "all"}|${pendingApplications.length}`,
+    resetKey: `${chapterId}|${barangayId || "all"}|${applicationSearchTerm}|${applicationScopeFilter}|${applicationBarangayFilter}|${applicationVoterFilter}|${filteredPendingApplications.length}`,
   });
 
   const duplicateAnalysisByMemberId = useMemo(() => {
@@ -700,6 +1160,18 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
     return analysisMap;
   }, [duplicateComparisonPool, pendingApplications]);
 
+  const duplicateFlaggedApplicationsCount = useMemo(() => {
+    let flaggedCount = 0;
+
+    for (const analysis of Array.from(duplicateAnalysisByMemberId.values())) {
+      if (analysis.candidates.length > 0) {
+        flaggedCount += 1;
+      }
+    }
+
+    return flaggedCount;
+  }, [duplicateAnalysisByMemberId]);
+
   const selectedComparisonCandidate = useMemo(() => {
     if (selectedDuplicateCandidates.length === 0) {
       return null;
@@ -710,6 +1182,115 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
       selectedDuplicateCandidates[0]
     );
   }, [selectedComparisonCandidateId, selectedDuplicateCandidates]);
+
+  useEffect(() => {
+    if (!selectedPrimaryApplication || !selectedComparisonCandidate) {
+      setMergeFieldSelectionByKey({});
+      return;
+    }
+
+    setMergeFieldSelectionByKey({
+      fullName: getDefaultMergeFieldSource(selectedPrimaryApplication.fullName, selectedComparisonCandidate.member.fullName),
+      contactNumber: getDefaultMergeFieldSource(selectedPrimaryApplication.contactNumber, selectedComparisonCandidate.member.contactNumber),
+      email: getDefaultMergeFieldSource(selectedPrimaryApplication.email, selectedComparisonCandidate.member.email),
+      facebookLink: getDefaultMergeFieldSource(selectedPrimaryApplication.facebookLink, selectedComparisonCandidate.member.facebookLink),
+      birthdate: getDefaultMergeFieldSource(selectedPrimaryApplication.birthdate, selectedComparisonCandidate.member.birthdate),
+      age: getDefaultMergeFieldSource(selectedPrimaryApplication.age, selectedComparisonCandidate.member.age),
+      barangayId: getDefaultMergeFieldSource(selectedPrimaryApplication.barangayId, selectedComparisonCandidate.member.barangayId),
+      photoUrl: getDefaultMergeFieldSource(selectedPrimaryApplication.photoUrl, selectedComparisonCandidate.member.photoUrl),
+    });
+  }, [selectedComparisonCandidate, selectedPrimaryApplication]);
+
+  const getMergeFieldDisplayValue = (member: MemberWithLifecycle, fieldKey: MergeSelectableField) => {
+    if (fieldKey === "birthdate") {
+      return member.birthdate ? formatManilaDateTime(member.birthdate) : "-";
+    }
+
+    if (fieldKey === "age") {
+      return typeof member.age === "number" ? String(member.age) : "-";
+    }
+
+    if (fieldKey === "barangayId") {
+      return getBarangayLabel(member);
+    }
+
+    if (fieldKey === "photoUrl") {
+      return hasMeaningfulMergeValue(member.photoUrl) ? "Photo available" : "No photo";
+    }
+
+    const rawValue = member[fieldKey as keyof MemberWithLifecycle];
+    if (typeof rawValue === "string") {
+      const trimmed = rawValue.trim();
+      return trimmed || "-";
+    }
+
+    if (rawValue === null || rawValue === undefined) {
+      return "-";
+    }
+
+    return String(rawValue);
+  };
+
+  const getMergeFieldComparableValue = (member: MemberWithLifecycle, fieldKey: MergeSelectableField) => {
+    if (fieldKey === "birthdate") {
+      return toDateKey(member.birthdate);
+    }
+
+    if (fieldKey === "age") {
+      return typeof member.age === "number" ? String(member.age) : "";
+    }
+
+    if (fieldKey === "contactNumber") {
+      return normalizePhone(member.contactNumber);
+    }
+
+    if (fieldKey === "email") {
+      return normalizeLooseText(member.email);
+    }
+
+    if (fieldKey === "facebookLink") {
+      return normalizeUrl(member.facebookLink);
+    }
+
+    if (fieldKey === "barangayId") {
+      return (member.barangayId || "").trim().toLowerCase();
+    }
+
+    if (fieldKey === "photoUrl") {
+      return (member.photoUrl || "").trim();
+    }
+
+    return normalizeLooseText(member.fullName);
+  };
+
+  const mergeFieldsWithDiscrepancy = useMemo<ReadonlyArray<{ key: MergeSelectableField; label: string }>>(() => {
+    if (!selectedPrimaryApplication || !selectedComparisonCandidate) {
+      return [];
+    }
+
+    return MERGE_SELECTABLE_FIELDS.filter(({ key }) => {
+      const primaryComparableValue = getMergeFieldComparableValue(selectedPrimaryApplication, key);
+      const duplicateComparableValue = getMergeFieldComparableValue(selectedComparisonCandidate.member, key);
+      return primaryComparableValue !== duplicateComparableValue;
+    });
+  }, [selectedComparisonCandidate, selectedPrimaryApplication]);
+
+  const mergeFieldSourcesPayload = useMemo<Partial<Record<MergeSelectableField, string>>>(() => {
+    if (!selectedPrimaryApplication || !selectedComparisonCandidate) {
+      return {};
+    }
+
+    const payload: Partial<Record<MergeSelectableField, string>> = {};
+
+    for (const { key } of mergeFieldsWithDiscrepancy) {
+      const selectedSource = mergeFieldSelectionByKey[key] || "primary";
+      payload[key] = selectedSource === "primary"
+        ? selectedPrimaryApplication.id
+        : selectedComparisonCandidate.member.id;
+    }
+
+    return payload;
+  }, [mergeFieldSelectionByKey, mergeFieldsWithDiscrepancy, selectedComparisonCandidate, selectedPrimaryApplication]);
 
   const selectedDuplicateActionContext = useMemo<DuplicateActionContext | null>(() => {
     if (!selectedPrimaryApplication || !selectedComparisonCandidate) {
@@ -759,6 +1340,680 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
   const openApplicantDetailsDialog = (member: Member) => {
     setSelectedApplicant(member);
     setApplicantDetailsOpen(true);
+  };
+
+  const openDirectoryMemberDetailsDialog = (member: MemberWithLifecycle) => {
+    setSelectedDirectoryMemberId(member.id);
+    setDirectoryHouseholdSizeInput(String(member.householdSize ?? 1));
+    setDirectoryDetailsOpen(true);
+  };
+
+  const clearDirectoryPhotoSelection = (markForRemoval = false) => {
+    setDirectoryPhotoFile(null);
+    setDirectoryPhotoMarkedForRemoval(markForRemoval);
+    setDirectoryPhotoPreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      return null;
+    });
+  };
+
+  const handleDirectoryPhotoFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!MEMBER_PHOTO_ALLOWED_MIME_TYPES.has(file.type.toLowerCase())) {
+      toast({
+        title: "Invalid image type",
+        description: "Please upload a JPG, PNG, GIF, or WEBP image.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please upload an image smaller than 5MB.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    const nextPreviewUrl = URL.createObjectURL(file);
+    setDirectoryPhotoFile(file);
+    setDirectoryPhotoMarkedForRemoval(false);
+    setDirectoryPhotoPreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      return nextPreviewUrl;
+    });
+    event.target.value = "";
+  };
+
+  const submitDirectoryMemberInfoUpdate = async () => {
+    if (!selectedDirectoryMember) {
+      return;
+    }
+
+    const normalizedName = directoryEditForm.fullName.trim();
+    const normalizedContact = directoryEditForm.contactNumber.trim();
+    const normalizedEmail = directoryEditForm.email.trim().toLowerCase();
+    const normalizedFacebook = directoryEditForm.facebookLink.trim();
+    const normalizedBirthdate = directoryEditForm.birthdate.trim();
+    const parsedAge = Number(directoryEditForm.age);
+    const parsedHouseholdSize = Number(directoryHouseholdSizeInput);
+
+    if (!normalizedName) {
+      toast({
+        title: "Name is required",
+        description: "Please enter the member's full name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!Number.isInteger(parsedAge) || parsedAge < 1) {
+      toast({
+        title: "Invalid age",
+        description: "Age must be a whole number of at least 1.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!normalizedContact) {
+      toast({
+        title: "Contact number is required",
+        description: "Please provide a contact number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!Number.isInteger(parsedHouseholdSize) || parsedHouseholdSize < 1) {
+      toast({
+        title: "Invalid household size",
+        description: "Household size must be a whole number of at least 1.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      toast({
+        title: "Invalid email address",
+        description: "Please enter a valid email address or leave it blank.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const payload: MemberUpdatePayload = {};
+
+    if (normalizedName !== selectedDirectoryMember.fullName) {
+      payload.fullName = normalizedName;
+    }
+
+    if (parsedAge !== selectedDirectoryMember.age) {
+      payload.age = parsedAge;
+    }
+
+    if (normalizedContact !== selectedDirectoryMember.contactNumber) {
+      payload.contactNumber = normalizedContact;
+    }
+
+    const currentEmail = (selectedDirectoryMember.email || "").trim().toLowerCase();
+    if (normalizedEmail !== currentEmail) {
+      payload.email = normalizedEmail || null;
+    }
+
+    const currentFacebook = (selectedDirectoryMember.facebookLink || "").trim();
+    if (normalizedFacebook !== currentFacebook) {
+      payload.facebookLink = normalizedFacebook || null;
+    }
+
+    if (parsedHouseholdSize !== (selectedDirectoryMember.householdSize ?? 1)) {
+      payload.householdSize = parsedHouseholdSize;
+    }
+
+    if (directoryEditRegisteredVoter !== Boolean(selectedDirectoryMember.registeredVoter)) {
+      payload.registeredVoter = directoryEditRegisteredVoter;
+    }
+
+    if (directoryEditIsActive !== Boolean(selectedDirectoryMember.isActive)) {
+      payload.isActive = directoryEditIsActive;
+    }
+
+    const currentBirthdate = toDateKey(selectedDirectoryMember.birthdate);
+    if (normalizedBirthdate !== currentBirthdate) {
+      payload.birthdate = normalizedBirthdate || null;
+    }
+
+    if (!barangayId) {
+      const nextBarangayId = directoryEditForm.barangayId === "chapter-direct"
+        ? null
+        : directoryEditForm.barangayId;
+      const currentBarangayId = selectedDirectoryMember.barangayId || null;
+      if (nextBarangayId !== currentBarangayId) {
+        payload.barangayId = nextBarangayId;
+      }
+    }
+
+    if (directoryPhotoFile) {
+      try {
+        const uploadFormData = new FormData();
+        uploadFormData.append("image", directoryPhotoFile);
+
+        const uploadResponse = await fetch("/api/upload/member-photo", {
+          method: "POST",
+          body: uploadFormData,
+        });
+
+        const uploadPayload = await uploadResponse.json().catch(() => null);
+        if (!uploadResponse.ok) {
+          const uploadError = typeof uploadPayload?.error === "string"
+            ? uploadPayload.error
+            : "Failed to upload profile photo.";
+          throw new Error(uploadError);
+        }
+
+        if (typeof uploadPayload?.url !== "string" || !uploadPayload.url.trim()) {
+          throw new Error("Failed to upload profile photo.");
+        }
+
+        payload.photoUrl = uploadPayload.url.trim();
+      } catch (error: any) {
+        toast({
+          title: "Upload failed",
+          description: error?.message || "Failed to upload profile photo.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (directoryPhotoMarkedForRemoval && selectedDirectoryMember.photoUrl) {
+      payload.photoUrl = null;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      toast({ title: "No changes detected" });
+      setIsEditingDirectoryInfo(false);
+      return;
+    }
+
+    updateMutation.mutate(
+      {
+        id: selectedDirectoryMember.id,
+        data: payload,
+      },
+      {
+        onSuccess: (updatedMember: MemberWithLifecycle) => {
+          clearDirectoryPhotoSelection(false);
+          setDirectoryEditForm(toDirectoryEditFormState(updatedMember));
+          setDirectoryHouseholdSizeInput(String(updatedMember.householdSize ?? 1));
+          setDirectoryEditRegisteredVoter(Boolean(updatedMember.registeredVoter));
+          setDirectoryEditIsActive(Boolean(updatedMember.isActive));
+          setIsEditingDirectoryInfo(false);
+        },
+      },
+    );
+  };
+
+  const deleteDirectoryMember = async () => {
+    if (!selectedDirectoryMember) {
+      return;
+    }
+
+    const confirmed = await confirmDelete(
+      `Are you sure you want to delete ${selectedDirectoryMember.fullName}? This action cannot be undone.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    deleteMemberMutation.mutate(selectedDirectoryMember.id);
+  };
+
+  const getDirectoryCheckLabel = (insights: { hasApprovedDirectoryRecord: boolean; inOfficialDirectory: boolean }) => {
+    if (insights.hasApprovedDirectoryRecord) {
+      return "Official Directory (Approved Member)";
+    }
+
+    if (insights.inOfficialDirectory) {
+      return "Directory Record (Pending Application, Not Yet Member)";
+    }
+
+    return "No Directory Record Yet";
+  };
+
+  const getMemberScopeFilterLabel = () => {
+    if (memberScopeFilter === "chapter") {
+      return "Chapter Direct Members";
+    }
+
+    if (memberScopeFilter === "barangay") {
+      return "Barangay-Based Members";
+    }
+
+    return "All Members";
+  };
+
+  const getBarangayFilterLabel = () => {
+    if (selectedBarangayFilter === "all") {
+      return "All Barangays";
+    }
+
+    if (selectedBarangayFilter === "chapter-direct") {
+      return "Chapter Direct (No Barangay)";
+    }
+
+    return barangayNameById.get(selectedBarangayFilter) || "Unknown Barangay";
+  };
+
+  const toggleApplicationsExportSection = (key: ApplicationsExportSectionKey, checked: boolean) => {
+    setApplicationsExportSections((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const toggleApplicationsExportColumn = (key: keyof ApplicationsExportColumns, checked: boolean) => {
+    setApplicationsExportColumns((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const toggleDirectoryExportSection = (key: DirectoryExportSectionKey, checked: boolean) => {
+    setDirectoryExportSections((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const toggleDirectoryExportColumn = (key: keyof DirectoryExportColumns, checked: boolean) => {
+    setDirectoryExportColumns((prev) => ({
+      ...prev,
+      [key]: checked,
+    }));
+  };
+
+  const applyApplicationsExportPreset = (preset: ExportPreset) => {
+    if (preset === "minimal") {
+      setApplicationsExportSections({
+        scope: true,
+        applicationsTable: true,
+        originByBarangay: false,
+      });
+      setApplicationsExportColumns({
+        name: true,
+        referenceId: true,
+        type: true,
+        barangay: true,
+        contact: false,
+        submitted: true,
+        directoryCheck: false,
+        duplicateCheck: false,
+      });
+      return;
+    }
+
+    if (preset === "standard") {
+      setApplicationsExportSections({
+        scope: true,
+        applicationsTable: true,
+        originByBarangay: true,
+      });
+      setApplicationsExportColumns({
+        name: true,
+        referenceId: true,
+        type: true,
+        barangay: true,
+        contact: true,
+        submitted: true,
+        directoryCheck: true,
+        duplicateCheck: false,
+      });
+      return;
+    }
+
+    setApplicationsExportSections({
+      scope: true,
+      applicationsTable: true,
+      originByBarangay: true,
+    });
+    setApplicationsExportColumns({
+      name: true,
+      referenceId: true,
+      type: true,
+      barangay: true,
+      contact: true,
+      submitted: true,
+      directoryCheck: true,
+      duplicateCheck: true,
+    });
+  };
+
+  const applyDirectoryExportPreset = (preset: ExportPreset) => {
+    if (preset === "minimal") {
+      setDirectoryExportSections({
+        scope: true,
+        directoryTable: true,
+      });
+      setDirectoryExportColumns({
+        name: true,
+        type: true,
+        barangay: true,
+        age: false,
+        household: false,
+        contact: true,
+        voter: false,
+        active: false,
+        dateAdded: true,
+      });
+      return;
+    }
+
+    if (preset === "standard") {
+      setDirectoryExportSections({
+        scope: true,
+        directoryTable: true,
+      });
+      setDirectoryExportColumns({
+        name: true,
+        type: true,
+        barangay: true,
+        age: true,
+        household: false,
+        contact: true,
+        voter: true,
+        active: true,
+        dateAdded: true,
+      });
+      return;
+    }
+
+    setDirectoryExportSections({
+      scope: true,
+      directoryTable: true,
+    });
+    setDirectoryExportColumns({
+      name: true,
+      type: true,
+      barangay: true,
+      age: true,
+      household: true,
+      contact: true,
+      voter: true,
+      active: true,
+      dateAdded: true,
+    });
+  };
+
+  const createChapterFileToken = () => createSafeFileToken(chapterName || "chapter", "chapter");
+
+  const handleExportApplicationsPdf = async () => {
+    if (isExportingApplicationsPdf) {
+      return;
+    }
+
+    if (!Object.values(applicationsExportSections).some(Boolean)) {
+      toast({
+        title: "Select at least one section",
+        description: "Choose at least one report section before exporting the PDF.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingApplicationsPdf(true);
+
+    let exportContract: ReturnType<typeof createPdfExportContract> | null = null;
+
+    try {
+      exportContract = createPdfExportContract({
+        reportId: "chapter-member-applications",
+        purpose: "chapter_membership_application_review",
+        title: applicationsExportReportTitle.trim() || "Member Applications Report",
+        subtitle: chapterName ? `${chapterName} | Pending application records` : "Pending application records",
+        selectedSections: applicationsExportSections,
+        selectedColumns: applicationsExportColumns,
+        filters: {
+          chapterName: chapterName || "-",
+          search: applicationSearchTerm.trim() || "",
+          pendingApplications: filteredPendingApplications.length,
+        },
+        filenamePolicy: {
+          prefix: "YSP-Applications",
+          includeChapterToken: true,
+          includeDateStamp: true,
+        },
+        snapshotMetadata: {
+          actorRole: "chapter",
+          chapterId,
+          barangayId,
+        },
+      });
+
+      const report = await createYspPdfReport({
+        reportTitle: exportContract.title,
+        reportSubtitle: exportContract.subtitle,
+      });
+
+      if (applicationsExportSections.scope) {
+        report.addSectionTitle("Report Scope");
+        report.addMetricRow("Chapter", chapterName || "-");
+        report.addMetricRow("Pending Applications", String(filteredPendingApplications.length));
+        report.addMetricRow("Search Filter", applicationSearchTerm.trim() || "None");
+        report.addMetricRow("Unique Applicants", String(uniqueApplicantIdentityCount));
+        report.addMetricRow("Duplicate Alerts", String(duplicateFlaggedApplicationsCount));
+        report.addMetricRow(
+          "Applicant Type Mix",
+          `${chapterDirectPendingApplicationsCount} Chapter Direct / ${barangayBasedPendingApplicationsCount} Barangay`,
+        );
+        report.addSpacer(8);
+      }
+
+      if (applicationsExportSections.applicationsTable) {
+        report.addSectionTitle("Pending Applications Table");
+
+        const selectedColumns: Array<{ header: string; key: string; width: number }> = [];
+        if (applicationsExportColumns.name) selectedColumns.push({ header: "Name", key: "name", width: 2.2 });
+        if (applicationsExportColumns.referenceId) selectedColumns.push({ header: "Reference ID", key: "referenceId", width: 1.8 });
+        if (applicationsExportColumns.type) selectedColumns.push({ header: "Type", key: "type", width: 1.2 });
+        if (applicationsExportColumns.barangay) selectedColumns.push({ header: "Barangay", key: "barangay", width: 1.5 });
+        if (applicationsExportColumns.contact) selectedColumns.push({ header: "Contact", key: "contact", width: 1.4 });
+        if (applicationsExportColumns.submitted) selectedColumns.push({ header: "Submitted", key: "submitted", width: 1.2 });
+        if (applicationsExportColumns.directoryCheck) selectedColumns.push({ header: "Directory Check", key: "directoryCheck", width: 1.7 });
+        if (applicationsExportColumns.duplicateCheck) selectedColumns.push({ header: "Duplicate Check", key: "duplicateCheck", width: 1.6 });
+
+        if (selectedColumns.length === 0) {
+          report.addTextBlock("No application table columns selected.", "muted");
+          report.addSpacer(6);
+        } else {
+          const rows = filteredPendingApplications.map((member) => {
+            const applicationInsights = getPendingApplicationInsights(member);
+            const duplicateAnalysis = duplicateAnalysisByMemberId.get(member.id);
+            const duplicateCheckLabel = duplicateAnalysis && duplicateAnalysis.candidates.length > 0
+              ? `${duplicateAnalysis.riskLevel.toUpperCase()} ${formatProbability(duplicateAnalysis.topProbability)} (${duplicateAnalysis.candidates.length})`
+              : "No Duplicate";
+
+            const row: Record<string, string | number> = {};
+            if (applicationsExportColumns.name) row.name = member.fullName || "-";
+            if (applicationsExportColumns.referenceId) row.referenceId = member.applicationReferenceId || "-";
+            if (applicationsExportColumns.type) row.type = member.barangayId ? "Barangay Member" : "Chapter Member";
+            if (applicationsExportColumns.barangay) row.barangay = getBarangayLabel(member);
+            if (applicationsExportColumns.contact) row.contact = member.contactNumber || "-";
+            if (applicationsExportColumns.submitted) row.submitted = format(new Date(member.createdAt), "MMM d, yyyy");
+            if (applicationsExportColumns.directoryCheck) row.directoryCheck = getDirectoryCheckLabel(applicationInsights);
+            if (applicationsExportColumns.duplicateCheck) row.duplicateCheck = duplicateCheckLabel;
+
+            return row;
+          });
+
+          report.addTable(selectedColumns, rows, { emptyMessage: "No pending applications in this workspace." });
+        }
+      }
+
+      if (applicationsExportSections.originByBarangay) {
+        report.addSectionTitle("Applicant Origin by Barangay");
+        report.addTable(
+          [
+            { header: "Barangay", key: "barangay", width: 2.5 },
+            { header: "Applications", key: "applications", width: 1, align: "right" },
+          ],
+          pendingApplicationsByBarangay.map((entry) => ({
+            barangay: entry.barangay,
+            applications: entry.applications,
+          })),
+          { emptyMessage: "No barangay application data yet." },
+        );
+      }
+
+      const fileDate = getIsoDateFileStamp();
+      report.save(`YSP-Applications-${createChapterFileToken()}-${fileDate}.pdf`);
+
+      setApplicationsExportDialogOpen(false);
+      toast({ title: "PDF Exported", description: "Applications PDF report downloaded successfully." });
+    } catch (error) {
+      if (exportContract) {
+        void reportPdfFallbackRequest(exportContract, error);
+      }
+      console.error("Failed to export applications PDF report", error);
+      toast({
+        title: "Export failed",
+        description: "Unable to generate applications PDF report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingApplicationsPdf(false);
+    }
+  };
+
+  const handleExportDirectoryPdf = async () => {
+    if (isExportingDirectoryPdf) {
+      return;
+    }
+
+    if (!Object.values(directoryExportSections).some(Boolean)) {
+      toast({
+        title: "Select at least one section",
+        description: "Choose at least one report section before exporting the PDF.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsExportingDirectoryPdf(true);
+
+    let exportContract: ReturnType<typeof createPdfExportContract> | null = null;
+
+    try {
+      exportContract = createPdfExportContract({
+        reportId: "chapter-member-directory",
+        purpose: "chapter_member_directory",
+        title: directoryExportReportTitle.trim() || "Member Directory Report",
+        subtitle: chapterName ? `${chapterName} | Directory records` : "Directory records",
+        selectedSections: directoryExportSections,
+        selectedColumns: directoryExportColumns,
+        filters: {
+          chapterName: chapterName || "-",
+          memberScopeFilter: getMemberScopeFilterLabel(),
+          barangayFilter: getBarangayFilterLabel(),
+          search: searchTerm.trim() || "",
+          viewMode,
+          includedRecords: filteredMembers.length,
+        },
+        filenamePolicy: {
+          prefix: "YSP-Directory",
+          includeChapterToken: true,
+          includeDateStamp: true,
+        },
+        snapshotMetadata: {
+          actorRole: "chapter",
+          chapterId,
+          barangayId,
+        },
+      });
+
+      const report = await createYspPdfReport({
+        reportTitle: exportContract.title,
+        reportSubtitle: exportContract.subtitle,
+      });
+
+      if (directoryExportSections.scope) {
+        report.addSectionTitle("Report Scope");
+        report.addMetricRow("Chapter", chapterName || "-");
+        report.addMetricRow("Directory Records Included", String(filteredMembers.length));
+        report.addMetricRow("Member Scope Filter", getMemberScopeFilterLabel());
+        report.addMetricRow("Barangay Filter", getBarangayFilterLabel());
+        report.addMetricRow("Search Filter", searchTerm.trim() || "None");
+        report.addMetricRow("View Mode", viewMode === "table" ? "Table" : "Tile");
+        report.addSpacer(8);
+      }
+
+      if (directoryExportSections.directoryTable) {
+        report.addSectionTitle("Directory Table");
+
+        const selectedColumns: Array<{ header: string; key: string; width: number; align?: "left" | "center" | "right" }> = [];
+        if (directoryExportColumns.name) selectedColumns.push({ header: "Name", key: "name", width: 2.2 });
+        if (directoryExportColumns.type) selectedColumns.push({ header: "Type", key: "type", width: 1.2 });
+        if (directoryExportColumns.barangay) selectedColumns.push({ header: "Barangay", key: "barangay", width: 1.5 });
+        if (directoryExportColumns.age) selectedColumns.push({ header: "Age", key: "age", width: 0.8, align: "right" });
+        if (directoryExportColumns.household) selectedColumns.push({ header: "Household", key: "household", width: 1, align: "right" });
+        if (directoryExportColumns.contact) selectedColumns.push({ header: "Contact", key: "contact", width: 1.4 });
+        if (directoryExportColumns.voter) selectedColumns.push({ header: "Registered Voter", key: "voter", width: 1.1, align: "center" });
+        if (directoryExportColumns.active) selectedColumns.push({ header: "Active", key: "active", width: 0.9, align: "center" });
+        if (directoryExportColumns.dateAdded) selectedColumns.push({ header: "Date Added", key: "dateAdded", width: 1.2 });
+
+        if (selectedColumns.length === 0) {
+          report.addTextBlock("No directory table columns selected.", "muted");
+          report.addSpacer(6);
+        } else {
+          const rows = filteredMembers.map((member) => {
+            const row: Record<string, string | number> = {};
+            if (directoryExportColumns.name) row.name = member.fullName || "-";
+            if (directoryExportColumns.type) row.type = member.barangayId ? "Barangay Member" : "Chapter Member";
+            if (directoryExportColumns.barangay) row.barangay = getBarangayLabel(member);
+            if (directoryExportColumns.age) row.age = member.age ?? "-";
+            if (directoryExportColumns.household) row.household = member.householdSize ?? 1;
+            if (directoryExportColumns.contact) row.contact = member.contactNumber || "-";
+            if (directoryExportColumns.voter) row.voter = member.registeredVoter ? "Yes" : "No";
+            if (directoryExportColumns.active) row.active = member.isActive ? "Yes" : "No";
+            if (directoryExportColumns.dateAdded) row.dateAdded = format(new Date(member.createdAt), "MMM d, yyyy");
+
+            return row;
+          });
+
+          report.addTable(selectedColumns, rows, { emptyMessage: "No members found for the selected filters." });
+        }
+      }
+
+      const fileDate = getIsoDateFileStamp();
+      report.save(`YSP-Directory-${createChapterFileToken()}-${fileDate}.pdf`);
+
+      setDirectoryExportDialogOpen(false);
+      toast({ title: "PDF Exported", description: "Directory PDF report downloaded successfully." });
+    } catch (error) {
+      if (exportContract) {
+        void reportPdfFallbackRequest(exportContract, error);
+      }
+      console.error("Failed to export directory PDF report", error);
+      toast({
+        title: "Export failed",
+        description: "Unable to generate directory PDF report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExportingDirectoryPdf(false);
+    }
   };
 
   const selectedApplicantDuplicateAnalysis = selectedApplicant
@@ -990,7 +2245,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           </Card>
         </div>
 
-        <Tabs value={memberSubTab} onValueChange={(value) => setMemberSubTab(value as "applications" | "directory")} className="space-y-4">
+        <Tabs value={memberSubTab} onValueChange={(value) => setMemberSubTab(value as "applications" | "directory" | "analytics")} className="space-y-4">
           <TabsList className="w-full justify-start" data-testid="tabs-chapter-member-subpages">
             <TabsTrigger value="applications" data-testid="tab-chapter-member-applications-subpage">
               Applications
@@ -998,28 +2253,353 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
             <TabsTrigger value="directory" data-testid="tab-chapter-member-directory-subpage">
               Directory
             </TabsTrigger>
+            {!barangayId && (
+              <TabsTrigger value="analytics" data-testid="tab-chapter-member-analytics-subpage">
+                Analytics
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="applications" className="space-y-4">
             <Card data-testid="card-chapter-member-applications">
               <CardHeader className="pb-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle className="text-lg">Member Applications</CardTitle>
-                  <Badge variant={pendingApplications.length > 0 ? "default" : "secondary"}>
-                    {pendingApplications.length} Pending
-                  </Badge>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CardTitle className="text-lg">Member Applications</CardTitle>
+                    <Badge variant={pendingApplications.length > 0 ? "default" : "secondary"}>
+                      {pendingApplications.length} Pending
+                    </Badge>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setApplicationsExportDialogOpen(true)}
+                    disabled={isExportingApplicationsPdf}
+                    data-testid="button-export-chapter-applications-pdf"
+                  >
+                    <FileDown className="h-4 w-4 mr-2" />
+                    {isExportingApplicationsPdf ? "Generating PDF..." : "Export PDF"}
+                  </Button>
                 </div>
                 <CardDescription>
                   Applications submitted from the public membership form stay here until approved.
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                  <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+                  <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+                </div>
+
                 {pendingApplications.length === 0 ? (
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                     No pending applications in this workspace.
                   </div>
                 ) : (
                   <>
+                    <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-md border p-3">
+                          <p className="text-xs text-muted-foreground">Unique Applicants</p>
+                          <p className="text-xl font-semibold">{uniqueApplicantIdentityCount}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {Math.max(pendingApplications.length - uniqueApplicantIdentityCount, 0)} possible duplicate entries
+                          </p>
+                        </div>
+
+                        <div className="rounded-md border p-3">
+                          <p className="text-xs text-muted-foreground">Duplicate Alerts</p>
+                          <p className="text-xl font-semibold">{duplicateFlaggedApplicationsCount}</p>
+                          <p className="text-xs text-muted-foreground">Applications with high/medium/low duplicate risk</p>
+                        </div>
+
+                        <div className="rounded-md border p-3">
+                          <p className="text-xs text-muted-foreground">Top Applicant Category</p>
+                          <p className="text-lg font-semibold break-words">
+                            {pendingApplicationsByBarangay[0]?.barangay || "-"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {pendingApplicationsByBarangay[0]?.applications || 0} applicants
+                          </p>
+                        </div>
+
+                        <div className="rounded-md border p-3">
+                          <p className="text-xs text-muted-foreground">Applicant Type Mix</p>
+                          <p className="text-lg font-semibold">
+                            {chapterDirectPendingApplicationsCount} Chapter Direct / {barangayBasedPendingApplicationsCount} Barangay
+                          </p>
+                          <p className="text-xs text-muted-foreground">Source of submitted applications</p>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-md border p-3 min-w-0 overflow-hidden lg:col-span-2">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">Applicant Origin by Barangay</p>
+                            <p className="text-xs text-muted-foreground">Tap a bar to apply/remove barangay filter</p>
+                          </div>
+
+                          {chartPendingApplicationsByBarangay.length === 0 ? (
+                            <div className="h-[240px] w-full rounded-md border border-dashed flex items-center justify-center text-sm text-muted-foreground">
+                              No barangay application data yet.
+                            </div>
+                          ) : (
+                            <div className="max-h-[420px] overflow-y-auto pr-1">
+                              <div style={{ height: originChartHeight }} className="w-full min-w-0">
+                                <ChartContainer config={applicationAnalyticsChartConfig} className="h-full w-full min-w-0 aspect-auto">
+                                  <BarChart
+                                    layout="vertical"
+                                    data={chartPendingApplicationsByBarangay}
+                                    margin={{ left: 2, right: 8, top: 8, bottom: 8 }}
+                                  >
+                                    <CartesianGrid horizontal={false} />
+                                    <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                                    <YAxis
+                                      type="category"
+                                      dataKey="barangay"
+                                      tickLine={false}
+                                      axisLine={false}
+                                      width={isMobile ? 130 : 200}
+                                      tick={{ fontSize: 11 }}
+                                      interval={0}
+                                    />
+                                    <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                                    <Bar dataKey="applications" radius={6} maxBarSize={22}>
+                                      {chartPendingApplicationsByBarangay.map((entry, index) => {
+                                        const isActive = applicationBarangayFilter === "all" || applicationBarangayFilter === entry.filterKey;
+                                        return (
+                                          <Cell
+                                            key={`application-origin-bar-${entry.filterKey}`}
+                                            fill={isActive ? getComparisonColor(index) : "hsl(var(--muted-foreground) / 0.2)"}
+                                            style={{ cursor: "pointer" }}
+                                            onClick={() => {
+                                              const nextFilter = applicationBarangayFilter === entry.filterKey ? "all" : entry.filterKey;
+                                              applyApplicationBarangayFilter(nextFilter, true);
+                                            }}
+                                          />
+                                        );
+                                      })}
+                                    </Bar>
+                                  </BarChart>
+                                </ChartContainer>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-md border p-3 min-w-0 overflow-hidden">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">Applicant Scope Mix</p>
+                            <p className="text-xs text-muted-foreground">Tap bars to filter scope</p>
+                          </div>
+
+                          {pendingApplicationsScopeData.length === 0 ? (
+                            <div className="h-[220px] w-full rounded-md border border-dashed flex items-center justify-center text-sm text-muted-foreground">
+                              No scope data yet.
+                            </div>
+                          ) : (
+                            <ChartContainer config={applicationAnalyticsChartConfig} className="h-[240px] w-full min-w-0 aspect-auto">
+                              <BarChart data={pendingApplicationsScopeData} margin={{ left: 4, right: 4, top: 8, bottom: 8 }}>
+                                <CartesianGrid vertical={false} />
+                                <XAxis dataKey="scope" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} interval={0} />
+                                <YAxis allowDecimals={false} width={30} tick={{ fontSize: 11 }} />
+                                <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                                <Bar dataKey="applications" radius={6} maxBarSize={60}>
+                                  {pendingApplicationsScopeData.map((entry, index) => {
+                                    const isActive = applicationScopeFilter === "all" || applicationScopeFilter === entry.filterKey;
+                                    return (
+                                      <Cell
+                                        key={`application-scope-bar-${entry.scope}-${index}`}
+                                        fill={isActive ? getComparisonColor(index) : "hsl(var(--muted-foreground) / 0.2)"}
+                                        style={{ cursor: "pointer" }}
+                                        onClick={() => {
+                                          const nextScope = applicationScopeFilter === entry.filterKey ? "all" : entry.filterKey;
+                                          setApplicationScopeFilter(nextScope);
+
+                                          if (nextScope === "chapter-direct") {
+                                            setApplicationBarangayFilter("chapter-direct");
+                                          } else if (nextScope === "barangay-only" && applicationBarangayFilter === "chapter-direct") {
+                                            setApplicationBarangayFilter("all");
+                                          } else if (nextScope === "all" && applicationBarangayFilter === "chapter-direct") {
+                                            setApplicationBarangayFilter("all");
+                                          }
+                                        }}
+                                      />
+                                    );
+                                  })}
+                                </Bar>
+                              </BarChart>
+                            </ChartContainer>
+                          )}
+                        </div>
+
+                        <div className="rounded-md border p-3 min-w-0 overflow-hidden">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">Voter Count</p>
+                            <p className="text-xs text-muted-foreground">Tap bars to filter by voter status</p>
+                          </div>
+
+                          {pendingApplicationsVoterData.length === 0 ? (
+                            <div className="h-[220px] w-full rounded-md border border-dashed flex items-center justify-center text-sm text-muted-foreground">
+                              No voter data yet.
+                            </div>
+                          ) : (
+                            <ChartContainer config={applicationAnalyticsChartConfig} className="h-[240px] w-full min-w-0 aspect-auto">
+                              <BarChart data={pendingApplicationsVoterData} margin={{ left: 4, right: 4, top: 8, bottom: 8 }}>
+                                <CartesianGrid vertical={false} />
+                                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} interval={0} />
+                                <YAxis allowDecimals={false} width={30} tick={{ fontSize: 11 }} />
+                                <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
+                                <Bar dataKey="applications" radius={6} maxBarSize={60}>
+                                  {pendingApplicationsVoterData.map((entry, index) => {
+                                    const isActive = applicationVoterFilter === "all" || applicationVoterFilter === entry.filterKey;
+                                    return (
+                                      <Cell
+                                        key={`application-voter-bar-${entry.label}-${index}`}
+                                        fill={isActive ? getComparisonColor(index) : "hsl(var(--muted-foreground) / 0.2)"}
+                                        style={{ cursor: "pointer" }}
+                                        onClick={() => {
+                                          setApplicationVoterFilter((currentFilter) => (
+                                            currentFilter === entry.filterKey ? "all" : entry.filterKey
+                                          ));
+                                        }}
+                                      />
+                                    );
+                                  })}
+                                </Bar>
+                              </BarChart>
+                            </ChartContainer>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          value={applicationSearchTerm}
+                          onChange={(event) => setApplicationSearchTerm(event.target.value)}
+                          placeholder="Search applications by name, email, phone, reference ID, or barangay..."
+                          className="pl-10"
+                          data-testid="input-search-chapter-applications"
+                        />
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-4">
+                        <div>
+                          <Label className="mb-1.5 block text-xs text-muted-foreground">Applicant Scope</Label>
+                          <Select
+                            value={applicationScopeFilter}
+                            onValueChange={(value) => {
+                              const nextScope = value as ApplicationScopeFilter;
+                              setApplicationScopeFilter(nextScope);
+
+                              if (nextScope === "chapter-direct") {
+                                setApplicationBarangayFilter("chapter-direct");
+                              } else if (nextScope === "barangay-only" && applicationBarangayFilter === "chapter-direct") {
+                                setApplicationBarangayFilter("all");
+                              } else if (nextScope === "all" && applicationBarangayFilter === "chapter-direct") {
+                                setApplicationBarangayFilter("all");
+                              }
+                            }}
+                          >
+                            <SelectTrigger data-testid="select-application-scope-filter">
+                              <SelectValue placeholder="Filter by scope" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All Applications</SelectItem>
+                              <SelectItem value="chapter-direct">Chapter Direct Only</SelectItem>
+                              <SelectItem value="barangay-only">Barangay Applicants Only</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label className="mb-1.5 block text-xs text-muted-foreground">Barangay</Label>
+                          <Select
+                            value={applicationBarangayFilter}
+                            onValueChange={(value) => applyApplicationBarangayFilter(value)}
+                          >
+                            <SelectTrigger data-testid="select-application-barangay-filter">
+                              <SelectValue placeholder="Filter by barangay" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All Application Barangays</SelectItem>
+                              <SelectItem value="chapter-direct">Chapter Direct</SelectItem>
+                              {unknownBarangayPendingApplicationsCount > 0 && (
+                                <SelectItem value="unknown-barangay">Unknown Barangay</SelectItem>
+                              )}
+                              {selectableApplicationBarangayOptions.map((entry) => (
+                                <SelectItem key={entry.filterKey} value={entry.filterKey}>
+                                  {entry.barangay}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <Label className="mb-1.5 block text-xs text-muted-foreground">Voter Status</Label>
+                          <Select
+                            value={applicationVoterFilter}
+                            onValueChange={(value) => setApplicationVoterFilter(value as ApplicationVoterFilter)}
+                          >
+                            <SelectTrigger data-testid="select-application-voter-filter">
+                              <SelectValue placeholder="Filter by voter status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All Applicants</SelectItem>
+                              <SelectItem value="registered-voter">Registered Voters</SelectItem>
+                              <SelectItem value="not-registered-voter">Not Registered Voters</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full"
+                            onClick={clearApplicationFilters}
+                            disabled={
+                              applicationSearchTerm.length === 0 &&
+                              applicationScopeFilter === "all" &&
+                              applicationBarangayFilter === "all" &&
+                              applicationVoterFilter === "all"
+                            }
+                            data-testid="button-clear-application-filters"
+                          >
+                            Clear Filters
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline">Filtered: {filteredPendingApplications.length}</Badge>
+                        {applicationScopeFilter !== "all" && (
+                          <Badge variant="secondary">
+                            Scope: {applicationScopeFilter === "chapter-direct" ? "Chapter Direct" : "Barangay Applicants"}
+                          </Badge>
+                        )}
+                        {applicationBarangayFilter !== "all" && (
+                          <Badge variant="secondary">Barangay: {getApplicationBarangayFilterLabel(applicationBarangayFilter)}</Badge>
+                        )}
+                        {applicationVoterFilter !== "all" && (
+                          <Badge variant="secondary">
+                            Voter: {applicationVoterFilter === "registered-voter" ? "Registered" : "Not Registered"}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {unknownBarangayPendingApplicationsCount > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Unknown Barangay appears when an application references a barangay ID that is no longer in this chapter barangay list.
+                        </p>
+                      )}
+                    </div>
+
                     <div className="rounded-md border overflow-x-auto">
                       <table className="w-full min-w-[1260px]">
                         <thead>
@@ -1036,95 +2616,101 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                           </tr>
                         </thead>
                         <tbody>
-                          {applicationsPagination.paginatedItems.map((member) => {
-                            const applicationInsights = getPendingApplicationInsights(member);
-                            const duplicateAnalysis = duplicateAnalysisByMemberId.get(member.id);
+                          {applicationsPagination.paginatedItems.length === 0 ? (
+                            <tr className="border-t">
+                              <td colSpan={9} className="p-6 text-center text-sm text-muted-foreground">
+                                No applications found. Try adjusting your search.
+                              </td>
+                            </tr>
+                          ) : (
+                            applicationsPagination.paginatedItems.map((member) => {
+                              const applicationInsights = getPendingApplicationInsights(member);
+                              const duplicateAnalysis = duplicateAnalysisByMemberId.get(member.id);
 
-                            return (
-                              <tr
-                                key={member.id}
-                                className="border-t cursor-pointer hover:bg-muted/30"
-                                onClick={() => openApplicantDetailsDialog(member)}
-                                data-testid={`row-chapter-application-${member.id}`}
-                              >
-                                <td className="p-3">
-                                  <div className="flex items-center gap-3">
-                                    <img
-                                      src={getMemberPhotoSrc(member.photoUrl)}
-                                      alt={`${member.fullName} profile`}
-                                      className="h-10 w-10 rounded-md border object-cover"
-                                      onError={(event) => {
-                                        applyImageFallback(event.currentTarget, "/images/ysp-logo.png");
-                                      }}
-                                      onLoad={(event) => {
-                                        resetImageFallback(event.currentTarget);
-                                      }}
-                                    />
-                                    <div>
-                                      <p className="font-medium">{member.fullName}</p>
-                                      <p className="text-xs text-muted-foreground">{member.email || "No email provided"}</p>
+                              return (
+                                <tr
+                                  key={member.id}
+                                  className="border-t cursor-pointer hover:bg-muted/30"
+                                  onClick={() => openApplicantDetailsDialog(member)}
+                                  data-testid={`row-chapter-application-${member.id}`}
+                                >
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-3">
+                                      <Avatar className="h-10 w-10 border">
+                                        <AvatarImage
+                                          src={getMemberProfilePhotoSrc(member.photoUrl)}
+                                          alt={`${member.fullName} profile`}
+                                        />
+                                        <AvatarFallback className="bg-primary/10 text-primary text-xs font-semibold">
+                                          {getMemberInitials(member.fullName)}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div>
+                                        <p className="font-medium">{member.fullName}</p>
+                                        <p className="text-xs text-muted-foreground">{member.email || "No email provided"}</p>
+                                      </div>
                                     </div>
-                                  </div>
-                                </td>
-                                <td className="p-3 text-xs font-mono text-muted-foreground">
-                                  {member.applicationReferenceId || "-"}
-                                </td>
-                                <td className="p-3">
-                                  <Badge variant="outline">{member.barangayId ? "Barangay Member" : "Chapter Member"}</Badge>
-                                </td>
-                                <td className="p-3 text-sm text-muted-foreground">{getBarangayLabel(member)}</td>
-                                <td className="p-3 text-sm text-muted-foreground">{member.contactNumber}</td>
-                                <td className="p-3 text-sm text-muted-foreground">
-                                  {format(new Date(member.createdAt), "MMM d, yyyy")}
-                                </td>
-                                <td className="p-3">
-                                  {applicationInsights.hasApprovedDirectoryRecord ? (
-                                    <Badge variant="default">Official Directory (Approved)</Badge>
-                                  ) : applicationInsights.inOfficialDirectory ? (
-                                    <Badge variant="outline">In Directory (Pending)</Badge>
-                                  ) : (
-                                    <Badge variant="secondary">Not Yet in Directory</Badge>
-                                  )}
-                                </td>
-                                <td className="p-3">
-                                  {duplicateAnalysis && duplicateAnalysis.candidates.length > 0 ? (
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant={duplicateAnalysis.riskLevel === "high" ? "destructive" : "outline"}
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openDuplicateReviewDialog(member);
-                                      }}
-                                      data-testid={`button-open-duplicate-review-${member.id}`}
-                                    >
-                                      {duplicateAnalysis.riskLevel === "high"
-                                        ? "High"
-                                        : duplicateAnalysis.riskLevel === "medium"
-                                          ? "Medium"
-                                          : "Low"}{" "}
-                                      {formatProbability(duplicateAnalysis.topProbability)} ({duplicateAnalysis.candidates.length})
-                                    </Button>
-                                  ) : (
-                                    <Badge variant="secondary">No Duplicate</Badge>
-                                  )}
-                                </td>
-                                <td className="p-3 text-right">
-                                  <div className="flex items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => openApplicantDetailsDialog(member)}
-                                      data-testid={`button-view-chapter-application-${member.id}`}
-                                    >
-                                      View
-                                    </Button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                                  </td>
+                                  <td className="p-3 text-xs font-mono text-muted-foreground">
+                                    {member.applicationReferenceId || "-"}
+                                  </td>
+                                  <td className="p-3">
+                                    <Badge variant="outline">{member.barangayId ? "Barangay Member" : "Chapter Member"}</Badge>
+                                  </td>
+                                  <td className="p-3 text-sm text-muted-foreground">{getBarangayLabel(member)}</td>
+                                  <td className="p-3 text-sm text-muted-foreground">{member.contactNumber}</td>
+                                  <td className="p-3 text-sm text-muted-foreground">
+                                    {format(new Date(member.createdAt), "MMM d, yyyy")}
+                                  </td>
+                                  <td className="p-3">
+                                    {applicationInsights.hasApprovedDirectoryRecord ? (
+                                      <Badge variant="default">Official Directory (Approved Member)</Badge>
+                                    ) : applicationInsights.inOfficialDirectory ? (
+                                      <Badge variant="outline">Directory Record (Pending, Not Yet Member)</Badge>
+                                    ) : (
+                                      <Badge variant="secondary">No Directory Record Yet</Badge>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    {duplicateAnalysis && duplicateAnalysis.candidates.length > 0 ? (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant={duplicateAnalysis.riskLevel === "high" ? "destructive" : "outline"}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openDuplicateReviewDialog(member);
+                                        }}
+                                        data-testid={`button-open-duplicate-review-${member.id}`}
+                                      >
+                                        {duplicateAnalysis.riskLevel === "high"
+                                          ? "High"
+                                          : duplicateAnalysis.riskLevel === "medium"
+                                            ? "Medium"
+                                            : "Low"}{" "}
+                                        {formatProbability(duplicateAnalysis.topProbability)} ({duplicateAnalysis.candidates.length})
+                                      </Button>
+                                    ) : (
+                                      <Badge variant="secondary">No Duplicate</Badge>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <div className="flex items-center justify-end gap-2" onClick={(event) => event.stopPropagation()}>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openApplicantDetailsDialog(member)}
+                                        data-testid={`button-view-chapter-application-${member.id}`}
+                                      >
+                                        View
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1189,17 +2775,16 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                   <div className="space-y-4">
                     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
                       <div className="rounded-md border p-3 space-y-3">
-                        <img
-                          src={getMemberPhotoSrc(selectedApplicant.photoUrl)}
-                          alt={`${selectedApplicant.fullName} submitted 1x1`}
-                          className="aspect-square w-full rounded-md border object-cover"
-                          onError={(event) => {
-                            applyImageFallback(event.currentTarget, "/images/ysp-logo.png");
-                          }}
-                          onLoad={(event) => {
-                            resetImageFallback(event.currentTarget);
-                          }}
-                        />
+                        <Avatar className="aspect-square h-auto w-full border">
+                          <AvatarImage
+                            src={getMemberProfilePhotoSrc(selectedApplicant.photoUrl)}
+                            alt={`${selectedApplicant.fullName} submitted 1x1`}
+                            className="object-cover"
+                          />
+                          <AvatarFallback className="bg-primary/10 text-primary text-3xl font-semibold">
+                            {getMemberInitials(selectedApplicant.fullName)}
+                          </AvatarFallback>
+                        </Avatar>
                         <div className="space-y-1">
                           <p className="text-xs text-muted-foreground">Application Reference</p>
                           <p className="font-mono text-sm">{selectedApplicant.applicationReferenceId || "-"}</p>
@@ -1276,10 +2861,10 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                             <p className="text-xs text-muted-foreground">Directory Check</p>
                             <p className="text-sm font-medium">
                               {selectedApplicantInsights?.hasApprovedDirectoryRecord
-                                ? "Official Directory (Approved)"
+                                ? "Official Directory (Approved Member)"
                                 : selectedApplicantInsights?.inOfficialDirectory
-                                  ? "In Directory (Pending)"
-                                  : "Not Yet in Directory"}
+                                  ? "Directory Record (Pending Application, Not Yet Member)"
+                                  : "No Directory Record Yet"}
                             </p>
                           </div>
                           <div>
@@ -1463,6 +3048,69 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                           <p>Facebook: {formatProbability(selectedComparisonCandidate.scores.facebook)}</p>
                         </div>
 
+                        <div className="rounded-md border p-3 space-y-3">
+                          <div>
+                            <p className="text-sm font-semibold">Choose Data To Keep On Merge</p>
+                            <p className="text-xs text-muted-foreground">
+                              Pick per field whether to keep the value from the Primary Application or the Duplicate Candidate.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            {mergeFieldsWithDiscrepancy.length === 0 ? (
+                              <div className="rounded-md border border-dashed p-2 text-[11px] text-muted-foreground">
+                                No discrepancies detected across merge fields. No manual field selection is required.
+                              </div>
+                            ) : (
+                              mergeFieldsWithDiscrepancy.map((fieldConfig) => {
+                                const selectedSource = mergeFieldSelectionByKey[fieldConfig.key] || "primary";
+
+                                return (
+                                  <div key={fieldConfig.key} className="rounded-md border p-2">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                      <p className="text-xs font-medium">{fieldConfig.label}</p>
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant={selectedSource === "primary" ? "default" : "outline"}
+                                          className="h-7 px-2 text-[11px]"
+                                          onClick={() => {
+                                            setMergeFieldSelectionByKey((prev) => ({
+                                              ...prev,
+                                              [fieldConfig.key]: "primary",
+                                            }));
+                                          }}
+                                        >
+                                          Keep 1st
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant={selectedSource === "duplicate" ? "default" : "outline"}
+                                          className="h-7 px-2 text-[11px]"
+                                          onClick={() => {
+                                            setMergeFieldSelectionByKey((prev) => ({
+                                              ...prev,
+                                              [fieldConfig.key]: "duplicate",
+                                            }));
+                                          }}
+                                        >
+                                          Keep 2nd
+                                        </Button>
+                                      </div>
+                                    </div>
+                                    <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                      <p className="break-words"><span className="font-medium text-foreground">1st:</span> {getMergeFieldDisplayValue(selectedPrimaryApplication, fieldConfig.key)}</p>
+                                      <p className="break-words"><span className="font-medium text-foreground">2nd:</span> {getMergeFieldDisplayValue(selectedComparisonCandidate.member, fieldConfig.key)}</p>
+                                    </div>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+
                         {selectedDuplicateActionContext && (
                           <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
                             {selectedDuplicateActionContext.helperText}
@@ -1494,6 +3142,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                               mergeDuplicateMutation.mutate({
                                 primaryId: selectedDuplicateActionContext.mergePrimaryMemberId,
                                 duplicateId: selectedDuplicateActionContext.mergeDuplicateMemberId,
+                                fieldSources: mergeFieldSourcesPayload,
                               });
                             }}
                             disabled={!selectedDuplicateActionContext || mergeDuplicateMutation.isPending || deleteDuplicateMutation.isPending}
@@ -1575,12 +3224,29 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           </div>
         )}
 
-        <div className="flex items-center justify-end">
-          <ViewModeToggle
-            value={viewMode}
-            onChange={setViewMode}
-            testIdPrefix="chapter-members-view-mode"
-          />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+            <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+            <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDirectoryExportDialogOpen(true)}
+              disabled={isExportingDirectoryPdf}
+              data-testid="button-export-chapter-directory-pdf"
+            >
+              <FileDown className="h-4 w-4 mr-2" />
+              {isExportingDirectoryPdf ? "Generating PDF..." : "Export PDF"}
+            </Button>
+            <ViewModeToggle
+              value={viewMode}
+              onChange={setViewMode}
+              testIdPrefix="chapter-members-view-mode"
+            />
+          </div>
         </div>
 
         {viewMode === "table" ? (
@@ -1604,11 +3270,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                 {isLoading ? (
                   <tr>
                     <td colSpan={10} className="p-6">
-                      <div className="space-y-2" role="status" aria-label="Loading members">
-                        <div className="h-4 w-full rounded-md bg-muted skeleton-shimmer" />
-                        <div className="h-4 w-5/6 rounded-md bg-muted skeleton-shimmer" />
-                        <div className="h-4 w-2/3 rounded-md bg-muted skeleton-shimmer" />
-                      </div>
+                      <LoadingState label="Loading members..." rows={1} compact />
                     </td>
                   </tr>
                 ) : filteredMembers.length === 0 ? (
@@ -1619,7 +3281,19 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                   </tr>
                 ) : (
                   memberPagination.paginatedItems.map((member) => (
-                    <tr key={member.id} className="border-t hover-elevate">
+                    <tr
+                      key={member.id}
+                      className="border-t cursor-pointer transition-colors hover:bg-muted/30"
+                      onClick={() => openDirectoryMemberDetailsDialog(member)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openDirectoryMemberDetailsDialog(member);
+                        }
+                      }}
+                      tabIndex={0}
+                      data-testid={`row-chapter-member-directory-${member.id}`}
+                    >
                       <td className="p-4">
                         <div className="font-medium">{member.fullName}</div>
                         {member.email && (
@@ -1631,6 +3305,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-xs text-primary hover:underline"
+                            onClick={(event) => event.stopPropagation()}
                           >
                             Facebook Profile
                           </a>
@@ -1644,21 +3319,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                       <td className="p-4 text-sm text-muted-foreground">{getBarangayLabel(member)}</td>
                       <td className="p-4">{member.age}</td>
                       <td className="p-4">
-                        <Input
-                          type="number"
-                          min={1}
-                          defaultValue={member.householdSize ?? 1}
-                          onBlur={(e) => updateHouseholdSize(member, e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              e.currentTarget.blur();
-                            }
-                          }}
-                          className="h-8 w-24"
-                          disabled={updatingMemberId === member.id}
-                          data-testid={`input-chapter-member-household-size-${member.id}`}
-                        />
+                        <span className="text-sm">{member.householdSize ?? 1}</span>
                       </td>
                       <td className="p-4">
                         {member.birthdate ? (
@@ -1677,40 +3338,14 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                         </div>
                       </td>
                       <td className="p-4 text-center">
-                        <Button
-                          size="sm"
-                          variant={member.registeredVoter ? "default" : "outline"}
-                          onClick={() => updateMutation.mutate({
-                            id: member.id,
-                            data: { registeredVoter: !member.registeredVoter }
-                          })}
-                          disabled={updatingMemberId === member.id}
-                          data-testid={`button-toggle-chapter-voter-${member.id}`}
-                        >
-                          {member.registeredVoter ? (
-                            <><Check className="h-3 w-3 mr-1" /> Yes</>
-                          ) : (
-                            <><X className="h-3 w-3 mr-1" /> No</>
-                          )}
-                        </Button>
+                        <Badge variant={member.registeredVoter ? "default" : "secondary"}>
+                          {member.registeredVoter ? "Yes" : "No"}
+                        </Badge>
                       </td>
                       <td className="p-4 text-center">
-                        <Button
-                          size="sm"
-                          variant={member.isActive ? "default" : "outline"}
-                          onClick={() => updateMutation.mutate({
-                            id: member.id,
-                            data: { isActive: !member.isActive }
-                          })}
-                          disabled={updatingMemberId === member.id}
-                          data-testid={`button-toggle-chapter-active-${member.id}`}
-                        >
-                          {member.isActive ? (
-                            <><Check className="h-3 w-3 mr-1" /> Yes</>
-                          ) : (
-                            <><X className="h-3 w-3 mr-1" /> No</>
-                          )}
-                        </Button>
+                        <Badge variant={member.isActive ? "default" : "secondary"}>
+                          {member.isActive ? "Yes" : "No"}
+                        </Badge>
                       </td>
                       <td className="p-4">
                         <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -1729,11 +3364,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
             {isLoading ? (
               <Card className="sm:col-span-2">
                 <CardContent className="p-4">
-                  <div className="space-y-2" role="status" aria-label="Loading members">
-                    <div className="h-4 w-full rounded-md bg-muted skeleton-shimmer" />
-                    <div className="h-4 w-5/6 rounded-md bg-muted skeleton-shimmer" />
-                    <div className="h-4 w-2/3 rounded-md bg-muted skeleton-shimmer" />
-                  </div>
+                  <LoadingState label="Loading members..." rows={1} compact />
                 </CardContent>
               </Card>
             ) : filteredMembers.length === 0 ? (
@@ -1849,6 +3480,398 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           </div>
         )}
 
+        <Dialog
+          open={directoryDetailsOpen}
+          onOpenChange={(open) => {
+            setDirectoryDetailsOpen(open);
+            if (!open) {
+              setSelectedDirectoryMemberId(null);
+              setDirectoryHouseholdSizeInput("1");
+              setDirectoryEditForm(defaultDirectoryEditFormState);
+              setDirectoryEditRegisteredVoter(false);
+              setDirectoryEditIsActive(false);
+              clearDirectoryPhotoSelection(false);
+              setIsEditingDirectoryInfo(false);
+            }
+          }}
+        >
+          <DialogContent className="w-[calc(100vw-2rem)] max-w-3xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Member Details</DialogTitle>
+              <DialogDescription>
+                Review complete member information, then use the action buttons below to update this member.
+              </DialogDescription>
+            </DialogHeader>
+
+            {!selectedDirectoryMember ? (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                No member selected.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-16 w-16 border">
+                      <AvatarImage
+                        src={
+                          isEditingDirectoryInfo
+                            ? (directoryPhotoMarkedForRemoval
+                                ? undefined
+                                : (directoryPhotoPreviewUrl || getMemberProfilePhotoSrc(selectedDirectoryMember.photoUrl)))
+                            : getMemberProfilePhotoSrc(selectedDirectoryMember.photoUrl)
+                        }
+                        alt={`${selectedDirectoryMember.fullName} profile photo`}
+                      />
+                      <AvatarFallback className="bg-primary/10 text-primary text-lg font-semibold">
+                        {getMemberInitials(selectedDirectoryMember.fullName)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm font-semibold">{selectedDirectoryMember.fullName}</p>
+                      <p className="text-xs text-muted-foreground">{selectedDirectoryMember.email || "No email provided"}</p>
+                      <p className="text-xs text-muted-foreground">{getBarangayLabel(selectedDirectoryMember)}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {isEditingDirectoryInfo ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setDirectoryEditForm(toDirectoryEditFormState(selectedDirectoryMember));
+                            setDirectoryHouseholdSizeInput(String(selectedDirectoryMember.householdSize ?? 1));
+                            setDirectoryEditRegisteredVoter(Boolean(selectedDirectoryMember.registeredVoter));
+                            setDirectoryEditIsActive(Boolean(selectedDirectoryMember.isActive));
+                            clearDirectoryPhotoSelection(false);
+                            setIsEditingDirectoryInfo(false);
+                          }}
+                          disabled={updatingMemberId === selectedDirectoryMember.id}
+                          data-testid={`button-cancel-directory-member-edit-${selectedDirectoryMember.id}`}
+                        >
+                          Cancel Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={submitDirectoryMemberInfoUpdate}
+                          disabled={updatingMemberId === selectedDirectoryMember.id}
+                          data-testid={`button-save-directory-member-edit-${selectedDirectoryMember.id}`}
+                        >
+                          Save Info
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsEditingDirectoryInfo(true)}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`button-edit-directory-member-info-${selectedDirectoryMember.id}`}
+                      >
+                        Edit Info
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Full Name</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        value={directoryEditForm.fullName}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, fullName: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`input-directory-member-edit-full-name-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">{selectedDirectoryMember.fullName}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Type</p>
+                    <p className="text-sm font-medium">{selectedDirectoryMember.barangayId ? "Barangay Member" : "Chapter Member"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Barangay</p>
+                    {isEditingDirectoryInfo && !barangayId ? (
+                      <Select
+                        value={directoryEditForm.barangayId}
+                        onValueChange={(value) => setDirectoryEditForm((prev) => ({ ...prev, barangayId: value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                      >
+                        <SelectTrigger data-testid={`select-directory-member-edit-barangay-${selectedDirectoryMember.id}`}>
+                          <SelectValue placeholder="Select barangay" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="chapter-direct">Chapter Direct</SelectItem>
+                          {barangays.map((barangay) => (
+                            <SelectItem key={barangay.id} value={barangay.id}>
+                              {barangay.barangayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="text-sm font-medium">{getBarangayLabel(selectedDirectoryMember)}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Contact Number</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        value={directoryEditForm.contactNumber}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, contactNumber: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`input-directory-member-edit-contact-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">{selectedDirectoryMember.contactNumber || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Email</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        type="email"
+                        value={directoryEditForm.email}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, email: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        placeholder="No email"
+                        data-testid={`input-directory-member-edit-email-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium break-all">{selectedDirectoryMember.email || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Age</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        type="number"
+                        min={1}
+                        value={directoryEditForm.age}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, age: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`input-directory-member-edit-age-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">{selectedDirectoryMember.age || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Birthdate</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        type="date"
+                        value={directoryEditForm.birthdate}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, birthdate: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`input-directory-member-edit-birthdate-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">
+                        {selectedDirectoryMember.birthdate ? formatManilaDateTime(selectedDirectoryMember.birthdate) : "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Date Added</p>
+                    <p className="text-sm font-medium">{format(new Date(selectedDirectoryMember.createdAt), "MMM d, yyyy")}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Registered Voter</p>
+                    <p className="text-sm font-medium">{selectedDirectoryMember.registeredVoter ? "Yes" : "No"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Active</p>
+                    <p className="text-sm font-medium">{selectedDirectoryMember.isActive ? "Yes" : "No"}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-xs text-muted-foreground">Facebook</p>
+                    {isEditingDirectoryInfo ? (
+                      <Input
+                        value={directoryEditForm.facebookLink}
+                        onChange={(event) => setDirectoryEditForm((prev) => ({ ...prev, facebookLink: event.target.value }))}
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        placeholder="Facebook profile link"
+                        data-testid={`input-directory-member-edit-facebook-${selectedDirectoryMember.id}`}
+                      />
+                    ) : (
+                      <>
+                        {selectedDirectoryMember.facebookLink ? (
+                          <a
+                            href={selectedDirectoryMember.facebookLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-medium text-primary hover:underline break-all"
+                          >
+                            {selectedDirectoryMember.facebookLink}
+                          </a>
+                        ) : (
+                          <p className="text-sm font-medium">-</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <p className="text-xs text-muted-foreground">Profile Photo</p>
+                    {isEditingDirectoryInfo ? (
+                      <div className="space-y-2 rounded-md border p-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-14 w-14 border">
+                            <AvatarImage
+                              src={directoryPhotoPreviewUrl || (!directoryPhotoMarkedForRemoval ? getMemberProfilePhotoSrc(selectedDirectoryMember.photoUrl) : undefined)}
+                              alt={`${selectedDirectoryMember.fullName} editable profile photo`}
+                            />
+                            <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+                              {getMemberInitials(selectedDirectoryMember.fullName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="text-xs text-muted-foreground">
+                            {directoryPhotoFile
+                              ? `Selected: ${directoryPhotoFile.name}`
+                              : directoryPhotoMarkedForRemoval
+                                ? "Photo will be removed when you save."
+                                : selectedDirectoryMember.photoUrl
+                                  ? "Current profile photo"
+                                  : "No profile photo"}
+                          </div>
+                        </div>
+
+                        <Input
+                          type="file"
+                          accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
+                          onChange={handleDirectoryPhotoFileChange}
+                          disabled={updatingMemberId === selectedDirectoryMember.id}
+                          data-testid={`input-directory-member-edit-photo-file-${selectedDirectoryMember.id}`}
+                        />
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => clearDirectoryPhotoSelection(true)}
+                            disabled={updatingMemberId === selectedDirectoryMember.id || (!selectedDirectoryMember.photoUrl && !directoryPhotoFile)}
+                            data-testid={`button-directory-member-remove-photo-${selectedDirectoryMember.id}`}
+                          >
+                            Remove Photo
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => clearDirectoryPhotoSelection(false)}
+                            disabled={updatingMemberId === selectedDirectoryMember.id || (!directoryPhotoFile && !directoryPhotoMarkedForRemoval)}
+                            data-testid={`button-directory-member-reset-photo-${selectedDirectoryMember.id}`}
+                          >
+                            Reset Photo Changes
+                          </Button>
+                        </div>
+                      </div>
+                    ) : selectedDirectoryMember.photoUrl ? (
+                      <div className="space-y-2">
+                        <Avatar className="h-14 w-14 border">
+                          <AvatarImage
+                            src={getMemberProfilePhotoSrc(selectedDirectoryMember.photoUrl)}
+                            alt={`${selectedDirectoryMember.fullName} profile photo`}
+                          />
+                          <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+                            {getMemberInitials(selectedDirectoryMember.fullName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <a
+                          href={selectedDirectoryMember.photoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-medium text-primary hover:underline break-all"
+                        >
+                          {selectedDirectoryMember.photoUrl}
+                        </a>
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium">-</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-4 space-y-3">
+                  <p className="text-sm font-semibold">Actions</p>
+                  <div className="space-y-2">
+                    <Label className="block text-xs text-muted-foreground">Household Size</Label>
+                    <div className="flex flex-col gap-2 sm:max-w-[220px]">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={directoryHouseholdSizeInput}
+                        onChange={(event) => setDirectoryHouseholdSizeInput(event.target.value)}
+                        className="sm:max-w-[180px]"
+                        disabled={updatingMemberId === selectedDirectoryMember.id}
+                        data-testid={`input-chapter-member-household-size-dialog-${selectedDirectoryMember.id}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm">Registered Voter</span>
+                        <Switch
+                          checked={directoryEditRegisteredVoter}
+                          onCheckedChange={setDirectoryEditRegisteredVoter}
+                          disabled={updatingMemberId === selectedDirectoryMember.id || !isEditingDirectoryInfo}
+                          data-testid={`switch-directory-member-registered-voter-${selectedDirectoryMember.id}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm">Active Member</span>
+                        <Switch
+                          checked={directoryEditIsActive}
+                          onCheckedChange={setDirectoryEditIsActive}
+                          disabled={updatingMemberId === selectedDirectoryMember.id || !isEditingDirectoryInfo}
+                          data-testid={`switch-directory-member-active-${selectedDirectoryMember.id}`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Changes in this section are staged and will only be applied after clicking Save Info.
+                  </p>
+
+                  {!isEditingDirectoryInfo ? (
+                    <div className="grid gap-2 sm:grid-cols-2 text-sm text-muted-foreground">
+                      <p>Registered Voter: {selectedDirectoryMember.registeredVoter ? "Yes" : "No"}</p>
+                      <p>Active: {selectedDirectoryMember.isActive ? "Yes" : "No"}</p>
+                    </div>
+                  ) : null}
+
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={deleteDirectoryMember}
+                      disabled={deleteMemberMutation.isPending || updatingMemberId === selectedDirectoryMember.id}
+                      data-testid={`button-delete-directory-member-${selectedDirectoryMember.id}`}
+                    >
+                      {deleteMemberMutation.isPending ? "Deleting..." : "Delete Member"}
+                    </Button>
+                  </div>
+                  </div>
+                </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         <PaginationControls
           currentPage={memberPagination.currentPage}
           totalPages={memberPagination.totalPages}
@@ -1861,12 +3884,403 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           itemLabel="members"
         />
           </TabsContent>
+
+          {!barangayId && (
+            <TabsContent value="analytics" className="space-y-6">
+              <MemberAnalyticsTab chapterId={chapterId} chapterName={chapterName} />
+            </TabsContent>
+          )}
         </Tabs>
+
+        <Dialog
+          open={applicationsExportDialogOpen}
+          onOpenChange={(open) => {
+            if (isExportingApplicationsPdf) {
+              return;
+            }
+            setApplicationsExportDialogOpen(open);
+          }}
+        >
+          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Export Applications PDF</DialogTitle>
+              <DialogDescription>
+                Customize what to include in the applications report before downloading the PDF.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="applications-export-report-title">Report Title</Label>
+                <Input
+                  id="applications-export-report-title"
+                  value={applicationsExportReportTitle}
+                  onChange={(event) => setApplicationsExportReportTitle(event.target.value)}
+                  placeholder="Member Applications Report"
+                  data-testid="input-applications-export-report-title"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Quick Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyApplicationsExportPreset("minimal")}
+                    disabled={isExportingApplicationsPdf}
+                    data-testid="button-applications-export-preset-minimal"
+                  >
+                    Minimal
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyApplicationsExportPreset("standard")}
+                    disabled={isExportingApplicationsPdf}
+                    data-testid="button-applications-export-preset-standard"
+                  >
+                    Standard
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyApplicationsExportPreset("full")}
+                    disabled={isExportingApplicationsPdf}
+                    data-testid="button-applications-export-preset-full"
+                  >
+                    Full
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sections to Include</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={applicationsExportSections.scope}
+                      onCheckedChange={(checked) => toggleApplicationsExportSection("scope", checked === true)}
+                      data-testid="checkbox-applications-export-section-scope"
+                    />
+                    Report Scope Summary
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={applicationsExportSections.applicationsTable}
+                      onCheckedChange={(checked) => toggleApplicationsExportSection("applicationsTable", checked === true)}
+                      data-testid="checkbox-applications-export-section-table"
+                    />
+                    Pending Applications Table
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm md:col-span-2">
+                    <Checkbox
+                      checked={applicationsExportSections.originByBarangay}
+                      onCheckedChange={(checked) => toggleApplicationsExportSection("originByBarangay", checked === true)}
+                      data-testid="checkbox-applications-export-section-origin"
+                    />
+                    Applicant Origin by Barangay
+                  </label>
+                </div>
+              </div>
+
+              {applicationsExportSections.applicationsTable ? (
+                <div className="space-y-2">
+                  <Label>Application Table Columns</Label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.name}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("name", checked === true)}
+                        data-testid="checkbox-applications-export-column-name"
+                      />
+                      Name
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.referenceId}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("referenceId", checked === true)}
+                        data-testid="checkbox-applications-export-column-reference"
+                      />
+                      Reference ID
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.type}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("type", checked === true)}
+                        data-testid="checkbox-applications-export-column-type"
+                      />
+                      Type
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.barangay}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("barangay", checked === true)}
+                        data-testid="checkbox-applications-export-column-barangay"
+                      />
+                      Barangay
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.contact}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("contact", checked === true)}
+                        data-testid="checkbox-applications-export-column-contact"
+                      />
+                      Contact
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.submitted}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("submitted", checked === true)}
+                        data-testid="checkbox-applications-export-column-submitted"
+                      />
+                      Submitted
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.directoryCheck}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("directoryCheck", checked === true)}
+                        data-testid="checkbox-applications-export-column-directory-check"
+                      />
+                      Directory Check
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={applicationsExportColumns.duplicateCheck}
+                        onCheckedChange={(checked) => toggleApplicationsExportColumn("duplicateCheck", checked === true)}
+                        data-testid="checkbox-applications-export-column-duplicate-check"
+                      />
+                      Duplicate Check
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+                <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setApplicationsExportDialogOpen(false)} disabled={isExportingApplicationsPdf}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleExportApplicationsPdf} disabled={isExportingApplicationsPdf} data-testid="button-download-applications-export-pdf">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  {isExportingApplicationsPdf ? "Generating PDF..." : "Download PDF"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={directoryExportDialogOpen}
+          onOpenChange={(open) => {
+            if (isExportingDirectoryPdf) {
+              return;
+            }
+            setDirectoryExportDialogOpen(open);
+          }}
+        >
+          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Export Directory PDF</DialogTitle>
+              <DialogDescription>
+                Customize what to include in the directory report before downloading the PDF.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="directory-export-report-title">Report Title</Label>
+                <Input
+                  id="directory-export-report-title"
+                  value={directoryExportReportTitle}
+                  onChange={(event) => setDirectoryExportReportTitle(event.target.value)}
+                  placeholder="Member Directory Report"
+                  data-testid="input-directory-export-report-title"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Quick Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyDirectoryExportPreset("minimal")}
+                    disabled={isExportingDirectoryPdf}
+                    data-testid="button-directory-export-preset-minimal"
+                  >
+                    Minimal
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyDirectoryExportPreset("standard")}
+                    disabled={isExportingDirectoryPdf}
+                    data-testid="button-directory-export-preset-standard"
+                  >
+                    Standard
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => applyDirectoryExportPreset("full")}
+                    disabled={isExportingDirectoryPdf}
+                    data-testid="button-directory-export-preset-full"
+                  >
+                    Full
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sections to Include</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={directoryExportSections.scope}
+                      onCheckedChange={(checked) => toggleDirectoryExportSection("scope", checked === true)}
+                      data-testid="checkbox-directory-export-section-scope"
+                    />
+                    Report Scope Summary
+                  </label>
+
+                  <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={directoryExportSections.directoryTable}
+                      onCheckedChange={(checked) => toggleDirectoryExportSection("directoryTable", checked === true)}
+                      data-testid="checkbox-directory-export-section-table"
+                    />
+                    Member Directory Table
+                  </label>
+                </div>
+              </div>
+
+              {directoryExportSections.directoryTable ? (
+                <div className="space-y-2">
+                  <Label>Directory Table Columns</Label>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.name}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("name", checked === true)}
+                        data-testid="checkbox-directory-export-column-name"
+                      />
+                      Name
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.type}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("type", checked === true)}
+                        data-testid="checkbox-directory-export-column-type"
+                      />
+                      Type
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.barangay}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("barangay", checked === true)}
+                        data-testid="checkbox-directory-export-column-barangay"
+                      />
+                      Barangay
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.age}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("age", checked === true)}
+                        data-testid="checkbox-directory-export-column-age"
+                      />
+                      Age
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.household}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("household", checked === true)}
+                        data-testid="checkbox-directory-export-column-household"
+                      />
+                      Household Size
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.contact}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("contact", checked === true)}
+                        data-testid="checkbox-directory-export-column-contact"
+                      />
+                      Contact
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.voter}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("voter", checked === true)}
+                        data-testid="checkbox-directory-export-column-voter"
+                      />
+                      Registered Voter
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                      <Checkbox
+                        checked={directoryExportColumns.active}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("active", checked === true)}
+                        data-testid="checkbox-directory-export-column-active"
+                      />
+                      Active
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm md:col-span-2">
+                      <Checkbox
+                        checked={directoryExportColumns.dateAdded}
+                        onCheckedChange={(checked) => toggleDirectoryExportColumn("dateAdded", checked === true)}
+                        data-testid="checkbox-directory-export-column-date-added"
+                      />
+                      Date Added
+                    </label>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
+                <p>PDF header and footer automatically include organization logo, organization name, full government name, motto, and SEC registry number.</p>
+                <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setDirectoryExportDialogOpen(false)} disabled={isExportingDirectoryPdf}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleExportDirectoryPdf} disabled={isExportingDirectoryPdf} data-testid="button-download-directory-export-pdf">
+                  <FileDown className="h-4 w-4 mr-2" />
+                  {isExportingDirectoryPdf ? "Generating PDF..." : "Download PDF"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
 }
 
-function Label({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <span className={`font-medium text-sm ${className || ""}`}>{children}</span>;
+function Label({
+  children,
+  className,
+  htmlFor,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  htmlFor?: string;
+}) {
+  return (
+    <label htmlFor={htmlFor} className={`font-medium text-sm ${className || ""}`}>
+      {children}
+    </label>
+  );
 }

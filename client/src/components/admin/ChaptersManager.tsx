@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import LoadingState from "@/components/ui/loading-state";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -33,6 +34,7 @@ import {
   Unlock,
   Users,
 } from "lucide-react";
+import { getComparisonColor } from "@/lib/chartColors";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
 import type { BarangayUser, Chapter, ChapterOfficer, ChapterUser, Member } from "@shared/schema";
 import L from "leaflet";
@@ -1308,13 +1310,7 @@ export default function ChaptersManager() {
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-3" role="status" aria-label="Loading chapters">
-        <div className="h-5 w-40 rounded-md bg-muted skeleton-shimmer" />
-        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
-        <div className="h-24 w-full rounded-lg bg-muted skeleton-shimmer" />
-      </div>
-    );
+    return <LoadingState label="Loading chapters..." rows={3} compact />;
   }
 
   return (
@@ -1504,10 +1500,7 @@ export default function ChaptersManager() {
             </CardHeader>
             <CardContent>
               {chapterMembersLoading ? (
-                <div className="space-y-3" role="status" aria-label="Loading chapter analytics">
-                  <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                  <div className="h-40 w-full rounded-lg bg-muted skeleton-shimmer" />
-                </div>
+                <LoadingState label="Loading chapter analytics..." rows={2} compact />
               ) : chapterMemberAnalytics.totalMembers === 0 ? (
                 <p className="text-muted-foreground">No members available yet for chapter analytics.</p>
               ) : (
@@ -1559,7 +1552,7 @@ export default function ChaptersManager() {
                               paddingAngle={2}
                             >
                               {chapterMembersPerBarangay.map((entry, index) => (
-                                <Cell key={`chapter-barangay-pie-${entry.barangay}`} fill={`hsl(var(--chart-${(index % 5) + 1}))`} />
+                                <Cell key={`chapter-barangay-pie-${entry.barangay}`} fill={getComparisonColor(index)} />
                               ))}
                             </Pie>
                           </PieChart>
@@ -1618,10 +1611,7 @@ export default function ChaptersManager() {
             </CardHeader>
             <CardContent>
               {chapterUsersLoading ? (
-                <div className="space-y-3" role="status" aria-label="Loading chapter account directory">
-                  <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                  <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-                </div>
+                <LoadingState label="Loading chapter account directory..." rows={2} compact />
               ) : chapterAccounts.length === 0 ? (
                 <p className="text-muted-foreground">No city chapter account yet.</p>
               ) : (
@@ -1699,10 +1689,7 @@ export default function ChaptersManager() {
             </CardHeader>
             <CardContent>
               {chapterOfficersLoading || chapterMembersLoading ? (
-                <div className="space-y-3" role="status" aria-label="Loading city officer directory">
-                  <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                  <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-                </div>
+                <LoadingState label="Loading city officer directory..." rows={2} compact />
               ) : (
                 <div className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3">
@@ -1800,10 +1787,7 @@ export default function ChaptersManager() {
             </CardHeader>
             <CardContent>
               {barangayUsersLoading ? (
-                <div className="space-y-3" role="status" aria-label="Loading barangay chapters">
-                  <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                  <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-                </div>
+                <LoadingState label="Loading barangay chapters..." rows={2} compact />
               ) : barangayAccounts.length === 0 ? (
                 <p className="text-muted-foreground">No barangay chapters yet for this city chapter.</p>
               ) : (
@@ -1925,10 +1909,7 @@ export default function ChaptersManager() {
             </CardHeader>
             <CardContent>
               {chapterMembersLoading ? (
-                <div className="space-y-3" role="status" aria-label="Loading barangay analytics">
-                  <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                  <div className="h-40 w-full rounded-lg bg-muted skeleton-shimmer" />
-                </div>
+                <LoadingState label="Loading barangay analytics..." rows={2} compact />
               ) : barangayMemberAnalytics.totalMembers === 0 ? (
                 <p className="text-muted-foreground">No members available yet for barangay analytics.</p>
               ) : (
@@ -2077,10 +2058,7 @@ export default function ChaptersManager() {
               </CardHeader>
               <CardContent>
                 {barangayOfficersLoading ? (
-                  <div className="space-y-3" role="status" aria-label="Loading barangay officers">
-                    <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                    <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-                  </div>
+                  <LoadingState label="Loading barangay officers..." rows={2} compact />
                 ) : barangayOfficers.length === 0 ? (
                   <p className="text-muted-foreground">No officers recorded for this barangay.</p>
                 ) : (
@@ -2103,10 +2081,7 @@ export default function ChaptersManager() {
               </CardHeader>
               <CardContent>
                 {chapterMembersLoading ? (
-                  <div className="space-y-3" role="status" aria-label="Loading barangay members">
-                    <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-                    <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-                  </div>
+                  <LoadingState label="Loading barangay members..." rows={2} compact />
                 ) : barangayMembers.length === 0 ? (
                   <p className="text-muted-foreground">No members recorded for this barangay.</p>
                 ) : (

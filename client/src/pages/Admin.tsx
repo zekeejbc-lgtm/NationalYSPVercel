@@ -7,8 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound, ShieldCheck } from "lucide-react";
+import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound, ShieldCheck, Monitor, Moon, Sun, X } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
+import { useTheme } from "@/hooks/use-theme";
+import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import MyProfile from "@/pages/MyProfile";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
 const ChaptersManager = lazy(() => import("@/components/admin/ChaptersManager"));
@@ -65,9 +68,11 @@ interface BirthdayData {
 export default function Admin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { themeMode, resolvedTheme, cycleThemeMode } = useTheme();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState(readInitialAdminTab);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   const { data: householdSummary } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
@@ -157,6 +162,15 @@ export default function Admin() {
     return null;
   }
 
+  const themeActionIcon = themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor;
+  const ThemeActionIcon = themeActionIcon;
+  const currentThemeLabel =
+    themeMode === "system"
+      ? `System (${resolvedTheme === "dark" ? "Dark" : "Light"})`
+      : themeMode === "dark"
+        ? "Dark"
+        : "Light";
+
   const dashboardTabs: AdaptiveDashboardTab[] = [
     { value: "stats", label: "Stats", icon: BarChart3, group: "Insights", dataTestId: "tab-stats", mobilePriority: true, desktopPriority: true },
     { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
@@ -169,7 +183,17 @@ export default function Admin() {
     { value: "requests", label: "Funding", icon: Send, group: "Operations", dataTestId: "tab-requests" },
     { value: "inbox", label: "National Inbox", icon: MessageSquare, group: "Communication", dataTestId: "tab-inbox", mobilePriority: true, desktopPriority: true },
     { value: "contact", label: "Contact", icon: Phone, group: "Communication", dataTestId: "tab-contact" },
+    { value: "admin-accounts-action", label: "Admin Accounts", icon: ShieldCheck, group: "Account", dataTestId: "tab-admin-accounts" },
   ];
+
+  const handleDashboardNavChange = (value: string) => {
+    if (value === "admin-accounts-action") {
+      setLocation("/admin/accounts");
+      return;
+    }
+
+    setActiveTab(value);
+  };
 
   const renderTabFallback = (label: string) => (
     <Card>
@@ -198,53 +222,41 @@ export default function Admin() {
             <div className="hidden sm:flex items-center gap-2">
               <Button
                 variant="outline"
-                onClick={() => setLocation("/admin/accounts")}
-                data-testid="button-admin-accounts"
+                size="icon"
+                onClick={cycleThemeMode}
+                data-testid="button-theme-toggle-header"
+                aria-label={`Current theme ${currentThemeLabel}. Click to cycle theme.`}
+                title="Cycle theme: Light -> Dark -> System"
               >
-                <ShieldCheck className="h-4 w-4 mr-2" />
-                Admin Accounts
+                <ThemeActionIcon className="h-4 w-4" />
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setLocation("/my-profile")}
+                onClick={() => setProfileModalOpen(true)}
                 data-testid="button-my-profile"
               >
                 <UserRound className="h-4 w-4 mr-2" />
                 My Profile
               </Button>
-              <Button 
-                variant="outline" 
-                onClick={handleLogout}
-                data-testid="button-logout"
+            </div>
+            <div className="sm:hidden flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={cycleThemeMode}
+                data-testid="button-theme-toggle-header-mobile"
+                aria-label={`Current theme ${currentThemeLabel}. Click to cycle theme.`}
+                title="Cycle theme: Light -> Dark -> System"
               >
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
+                <ThemeActionIcon className="h-4 w-4" />
               </Button>
             </div>
-            <Button 
-              variant="outline" 
-              onClick={handleLogout}
-              data-testid="button-logout-mobile"
-              className="sm:hidden"
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
           </div>
           <div className="sm:hidden mt-3 grid gap-2">
             <Button
               variant="outline"
               className="w-full"
-              onClick={() => setLocation("/admin/accounts")}
-              data-testid="button-admin-accounts-mobile"
-            >
-              <ShieldCheck className="h-4 w-4 mr-2" />
-              Admin Accounts
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setLocation("/my-profile")}
+              onClick={() => setProfileModalOpen(true)}
               data-testid="button-my-profile-mobile"
             >
               <UserRound className="h-4 w-4 mr-2" />
@@ -254,12 +266,47 @@ export default function Admin() {
         </div>
       </div>
 
+      <Dialog open={profileModalOpen} onOpenChange={setProfileModalOpen}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden" hideClose>
+          <div className="flex h-[85dvh] flex-col">
+            <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold">My Profile</h2>
+                <p className="text-sm text-muted-foreground">Manage your account information and password</p>
+              </div>
+              <DialogClose asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  data-testid="button-my-profile-modal-close"
+                  aria-label="Close profile panel"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <MyProfile embedded hideEmbeddedHeading />
+            </div>
+            <div className="flex justify-end border-t px-6 py-4">
+              <Button
+                variant="outline"
+                onClick={handleLogout}
+                data-testid="button-my-profile-modal-logout"
+              >
+                Logout
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-24 md:pb-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <AdaptiveDashboardNav
             tabs={dashboardTabs}
             activeTab={activeTab}
-            onChange={setActiveTab}
+            onChange={handleDashboardNavChange}
             mobileTitle="Admin Sections"
             mobileDescription="Use quick tabs below or open More for management sections."
             desktopVisibleCount={8}

@@ -17,6 +17,7 @@ import {
   LogOut,
   Users,
   UserCheck,
+  HandHeart,
   MapPin,
   Target,
   Trophy,
@@ -30,6 +31,7 @@ const OfficersPanel = lazy(() => import("@/components/chapter/OfficersPanel"));
 const BarangayKpiPanel = lazy(() => import("@/components/chapter/BarangayKpiPanel"));
 const BarangayLeaderboard = lazy(() => import("@/components/chapter/BarangayLeaderboard"));
 const NationalRequestPanel = lazy(() => import("@/components/chapter/NationalRequestPanel"));
+const VolunteerOpportunityPanel = lazy(() => import("@/components/chapter/VolunteerOpportunityPanel"));
 
 const BARANGAY_ACTIVE_TAB_STORAGE_KEY = "ysp:barangay-active-tab:v1";
 
@@ -184,6 +186,7 @@ export default function BarangayDashboard() {
   const dashboardTabs: AdaptiveDashboardTab[] = [
     { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
     { value: "officers", label: "Officers", icon: UserCheck, group: "People", dataTestId: "tab-officers", mobilePriority: true, desktopPriority: true },
+    { value: "volunteer", label: "Volunteer", icon: HandHeart, group: "Operations", dataTestId: "tab-volunteer", mobilePriority: true, desktopPriority: true },
     { value: "kpis", label: "KPIs", icon: Target, group: "Insights", dataTestId: "tab-kpis", mobilePriority: true, desktopPriority: true },
     { value: "leaderboard", label: "Leaderboard", icon: Trophy, group: "Insights", dataTestId: "tab-leaderboard", mobilePriority: true, desktopPriority: true },
     { value: "national", label: "Message National", icon: MessageSquare, group: "Communication", dataTestId: "tab-national", desktopPriority: true },
@@ -363,6 +366,18 @@ export default function BarangayDashboard() {
                 </Suspense>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="volunteer">
+            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+              {authUser?.chapterId && authUser?.barangayId && (
+                <VolunteerOpportunityPanel
+                  chapterId={authUser.chapterId}
+                  role="barangay"
+                  barangayId={authUser.barangayId}
+                />
+              )}
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="kpis">

@@ -22,6 +22,7 @@ import MyProfile from "@/pages/MyProfile";
 import NotFound from "@/pages/not-found";
 import { IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import { ConfirmDialogProvider } from "@/hooks/use-confirm-dialog";
+import { ThemeProvider } from "@/hooks/use-theme";
 
 type RouteSeo = {
   title: string;
@@ -489,14 +490,16 @@ function AppContent() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <ConfirmDialogProvider>
-          <AppContent />
-          <Toaster />
-        </ConfirmDialogProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <ConfirmDialogProvider>
+            <AppContent />
+            <Toaster />
+          </ConfirmDialogProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }
 

@@ -1179,7 +1179,7 @@ export default function Membership() {
                       <img
                         src={getChapterLogoSrc(selectedChapter.photo)}
                         alt={`${selectedChapter.name} logo`}
-                        className="h-20 w-20 rounded-full border bg-white object-contain p-1"
+                        className="h-20 w-20 rounded-full border bg-card object-contain p-1"
                         onError={(event) => {
                           event.currentTarget.onerror = null;
                           event.currentTarget.src = WEBSITE_LOGO_SRC;

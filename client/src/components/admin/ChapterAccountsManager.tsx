@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import LoadingState from "@/components/ui/loading-state";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -158,10 +159,7 @@ export default function ChapterAccountsManager() {
               Users for {selectedChapter?.name}
             </h3>
             {usersLoading ? (
-              <div className="space-y-3" role="status" aria-label="Loading chapter users">
-                <div className="h-5 w-40 rounded-md bg-muted skeleton-shimmer" />
-                <div className="h-14 w-full rounded-lg bg-muted skeleton-shimmer" />
-              </div>
+              <LoadingState label="Loading chapter users..." rows={2} compact />
             ) : chapterUsers.length === 0 ? (
               <p className="text-muted-foreground">No users created for this chapter yet.</p>
             ) : (

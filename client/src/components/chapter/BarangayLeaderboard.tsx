@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import LoadingState from "@/components/ui/loading-state";
 import { Trophy, Medal, Award, Crown, Users } from "lucide-react";
 
 interface LeaderboardEntry {
@@ -31,7 +32,7 @@ export default function BarangayLeaderboard({ chapterId, currentBarangayId }: Ba
       case 1:
         return <Crown className="h-5 w-5 text-yellow-500" />;
       case 2:
-        return <Medal className="h-4 w-4 text-gray-400" />;
+        return <Medal className="h-4 w-4 text-slate-400 dark:text-slate-300" />;
       case 3:
         return <Award className="h-4 w-4 text-amber-600" />;
       default:
@@ -46,11 +47,7 @@ export default function BarangayLeaderboard({ chapterId, currentBarangayId }: Ba
     return (
       <Card>
         <CardContent className="py-6">
-          <div className="space-y-3" role="status" aria-label="Loading leaderboard">
-            <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
-            <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
-          </div>
+          <LoadingState label="Loading leaderboard..." rows={2} compact />
         </CardContent>
       </Card>
     );

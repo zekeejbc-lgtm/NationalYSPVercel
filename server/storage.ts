@@ -64,7 +64,7 @@ import {
   nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, asc } from "drizzle-orm";
+import { eq, desc, and, sql, asc, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 export type ImportantDocumentAcknowledgement = {
@@ -204,14 +204,17 @@ export interface IStorage {
   deleteKpiScopesByTemplateId(kpiTemplateId: string): Promise<boolean>;
 
   getKpiCompletions(chapterId: string, year?: number, quarter?: number): Promise<KpiCompletion[]>;
+  getBarangayKpiCompletions(barangayId: string, year?: number, quarter?: number): Promise<KpiCompletion[]>;
   getKpiCompletion(id: string): Promise<KpiCompletion | undefined>;
   getKpiCompletionByTemplateAndChapter(templateId: string, chapterId: string): Promise<KpiCompletion | undefined>;
+  getKpiCompletionByTemplateAndBarangay(templateId: string, barangayId: string): Promise<KpiCompletion | undefined>;
   createKpiCompletion(completion: InsertKpiCompletion): Promise<KpiCompletion>;
   updateKpiCompletion(id: string, completion: Partial<InsertKpiCompletion>): Promise<KpiCompletion | undefined>;
   markKpiCompleted(id: string): Promise<KpiCompletion | undefined>;
   deleteKpiCompletion(id: string): Promise<boolean>;
 
   getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]>;
+  getVolunteerOpportunitiesByBarangay(barangayId: string): Promise<VolunteerOpportunity[]>;
 
   getImportantDocuments(): Promise<ImportantDocument[]>;
   getImportantDocument(id: string): Promise<ImportantDocument | undefined>;
@@ -856,6 +859,7 @@ export class DbStorage implements IStorage {
     const query = sql`
       SELECT DISTINCT kt.* FROM kpi_templates kt
       LEFT JOIN kpi_scopes ks ON kt.id = ks.kpi_template_id
+      LEFT JOIN barangay_users bu ON ks.entity_type = 'barangay' AND ks.entity_id = bu.id
       WHERE kt.is_active = true
       ${year ? sql`AND kt.year = ${year}` : sql``}
       ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
@@ -863,6 +867,7 @@ export class DbStorage implements IStorage {
         kt.scope = 'all_chapters_and_barangays'
         OR kt.scope = 'all_chapters'
         ${chapterId ? sql`OR (kt.scope = 'selected_chapters' AND ks.entity_type = 'chapter' AND ks.entity_id = ${chapterId})` : sql``}
+        ${chapterId ? sql`OR (kt.scope = 'selected_barangays' AND ks.entity_type = 'barangay' AND bu.chapter_id = ${chapterId})` : sql``}
       )
       ORDER BY kt.name ASC
     `;
@@ -958,6 +963,7 @@ export class DbStorage implements IStorage {
       FROM kpi_completions kc
       INNER JOIN kpi_templates kt ON kc.kpi_template_id = kt.id
       WHERE kc.chapter_id = ${chapterId}
+      AND kc.barangay_id IS NULL
       ${year ? sql`AND kt.year = ${year}` : sql``}
       ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
       ORDER BY kc.created_at DESC
@@ -968,6 +974,33 @@ export class DbStorage implements IStorage {
       id: row.id,
       kpiTemplateId: row.kpi_template_id,
       chapterId: row.chapter_id,
+      barangayId: row.barangay_id,
+      numericValue: row.numeric_value,
+      textValue: row.text_value,
+      isCompleted: row.is_completed,
+      completedAt: row.completed_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async getBarangayKpiCompletions(barangayId: string, year?: number, quarter?: number): Promise<KpiCompletion[]> {
+    const query = sql`
+      SELECT kc.*
+      FROM kpi_completions kc
+      INNER JOIN kpi_templates kt ON kc.kpi_template_id = kt.id
+      WHERE kc.barangay_id = ${barangayId}
+      ${year ? sql`AND kt.year = ${year}` : sql``}
+      ${quarter ? sql`AND (kt.quarter = ${quarter} OR kt.timeframe = 'yearly' OR kt.timeframe = 'both')` : sql``}
+      ORDER BY kc.created_at DESC
+    `;
+
+    const result = await db.execute(query);
+    return (result.rows as any[]).map(row => ({
+      id: row.id,
+      kpiTemplateId: row.kpi_template_id,
+      chapterId: row.chapter_id,
+      barangayId: row.barangay_id,
       numericValue: row.numeric_value,
       textValue: row.text_value,
       isCompleted: row.is_completed,
@@ -984,7 +1017,21 @@ export class DbStorage implements IStorage {
 
   async getKpiCompletionByTemplateAndChapter(templateId: string, chapterId: string): Promise<KpiCompletion | undefined> {
     const result = await db.select().from(kpiCompletions).where(
-      and(eq(kpiCompletions.kpiTemplateId, templateId), eq(kpiCompletions.chapterId, chapterId))
+      and(
+        eq(kpiCompletions.kpiTemplateId, templateId),
+        eq(kpiCompletions.chapterId, chapterId),
+        isNull(kpiCompletions.barangayId),
+      )
+    );
+    return result[0];
+  }
+
+  async getKpiCompletionByTemplateAndBarangay(templateId: string, barangayId: string): Promise<KpiCompletion | undefined> {
+    const result = await db.select().from(kpiCompletions).where(
+      and(
+        eq(kpiCompletions.kpiTemplateId, templateId),
+        eq(kpiCompletions.barangayId, barangayId),
+      )
     );
     return result[0];
   }
@@ -1018,6 +1065,17 @@ export class DbStorage implements IStorage {
 
   async getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]> {
     return db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.chapterId, chapterId)).orderBy(volunteerOpportunities.date);
+  }
+
+  async getVolunteerOpportunitiesByBarangay(barangayId: string): Promise<VolunteerOpportunity[]> {
+    const connectedBarangayPattern = `%,${barangayId},%`;
+    return db
+      .select()
+      .from(volunteerOpportunities)
+      .where(
+        sql`(${volunteerOpportunities.barangayId} = ${barangayId} OR (',' || COALESCE(${volunteerOpportunities.barangayIds}, '') || ',') LIKE ${connectedBarangayPattern})`
+      )
+      .orderBy(volunteerOpportunities.date);
   }
 
   async getImportantDocuments(): Promise<ImportantDocument[]> {

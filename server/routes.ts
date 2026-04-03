@@ -30,6 +30,24 @@ import {
 import { fromError } from "zod-validation-error";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { isAutoDependencyTemplate, syncAutoDependencyKpiCompletions } from "./kpi-dependency-service";
+import {
+  evaluateKpiDependencyRule,
+  formatKpiDependencyRuleDescription,
+  KPI_DEPENDENCY_METRIC_LABELS,
+  KPI_DEPENDENCY_OPERATOR_LABELS,
+  parseKpiDependencyConfig,
+  summarizeKpiDependencyConfig,
+  type KpiDependencyMetric,
+} from "@shared/kpi-dependencies";
+import { parsePdfExportContract, type PdfExportContract } from "@shared/pdf-export-contract";
+import {
+  getPdfFallbackAuditEntryById,
+  getPdfFallbackInternalEntryById,
+  listPdfFallbackAuditEntries,
+  registerAcceptedPdfFallback,
+  registerRejectedPdfFallback,
+} from "./pdf-fallback-service";
 
 const REQUIRED_PUBLIC_TABLES = ["programs", "chapters", "stats"];
 
@@ -474,6 +492,311 @@ function requireChapterOrBarangayAuth(req: Request, res: Response, next: Functio
   next();
 }
 
+async function getChapterBarangayIdSet(chapterId: string): Promise<Set<string>> {
+  const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterId);
+  return new Set(chapterBarangays.map((barangay) => barangay.id));
+}
+
+async function getScopedBarangayUser(req: Request, barangayUserId: string) {
+  const barangayUser = await storage.getBarangayUser(barangayUserId);
+  if (!barangayUser) {
+    return { status: 404 as const, barangayUser: null };
+  }
+
+  if (req.session.role === "admin") {
+    return { status: 200 as const, barangayUser };
+  }
+
+  if (
+    req.session.role === "chapter" &&
+    req.session.chapterId &&
+    barangayUser.chapterId === req.session.chapterId
+  ) {
+    return { status: 200 as const, barangayUser };
+  }
+
+  return { status: 403 as const, barangayUser: null };
+}
+
+async function getChapterManageableKpiTemplateContext(templateId: string, chapterId: string) {
+  const template = await storage.getKpiTemplate(templateId);
+  if (!template || template.scope !== "selected_barangays") {
+    return null;
+  }
+
+  const scopes = await storage.getKpiScopesByTemplateId(templateId);
+  const barangayIds = Array.from(
+    new Set(
+      scopes
+        .filter((scope) => scope.entityType === "barangay")
+        .map((scope) => scope.entityId),
+    ),
+  );
+
+  if (barangayIds.length === 0) {
+    return null;
+  }
+
+  const chapterBarangayIds = await getChapterBarangayIdSet(chapterId);
+  if (barangayIds.some((barangayId) => !chapterBarangayIds.has(barangayId))) {
+    return null;
+  }
+
+  return {
+    template,
+    scopes,
+    barangayIds,
+  };
+}
+
+function isBarangayOnlyKpiTemplateScope(template: { scope: string | null | undefined }) {
+  return template.scope === "selected_barangays";
+}
+
+function isBarangayRecipientKpiScope(scope: string | null | undefined) {
+  return (
+    scope === "all_chapters_and_barangays" ||
+    scope === "all_barangays" ||
+    scope === "selected_barangays" ||
+    scope === "selected_chapters"
+  );
+}
+
+async function isTemplateAssignedToBarangay(templateId: string, chapterId: string, barangayId: string) {
+  const template = await storage.getKpiTemplate(templateId);
+  if (!template || !isBarangayRecipientKpiScope(template.scope)) {
+    return false;
+  }
+
+  if (template.scope === "selected_barangays") {
+    const scopes = await storage.getKpiScopesByTemplateId(templateId);
+    return scopes.some((scope) => scope.entityType === "barangay" && scope.entityId === barangayId);
+  }
+
+  if (template.scope === "selected_chapters") {
+    const scopes = await storage.getKpiScopesByTemplateId(templateId);
+    return scopes.some((scope) => scope.entityType === "chapter" && scope.entityId === chapterId);
+  }
+
+  return true;
+}
+
+type SyncBarangayAutoDependencyOptions = {
+  chapterId: string;
+  barangayId: string;
+  year?: number;
+  quarter?: number;
+};
+
+type BarangayAutoDependencyEvaluation = {
+  isCompleted: boolean;
+  numericValue: number | null;
+  textValue: string;
+};
+
+function hasKpiCompletionPayloadChanges(
+  existingCompletion: {
+    isCompleted: boolean;
+    numericValue: number | null;
+    textValue: string | null;
+    completedAt: Date | null;
+  },
+  payload: {
+    isCompleted: boolean;
+    numericValue: number | null;
+    textValue: string;
+    completedAt: Date | null;
+  },
+) {
+  const existingCompletedAtMs = existingCompletion.completedAt ? new Date(existingCompletion.completedAt).getTime() : null;
+  const payloadCompletedAtMs = payload.completedAt ? payload.completedAt.getTime() : null;
+
+  return (
+    existingCompletion.isCompleted !== payload.isCompleted ||
+    (existingCompletion.numericValue ?? null) !== payload.numericValue ||
+    (existingCompletion.textValue ?? null) !== payload.textValue ||
+    existingCompletedAtMs !== payloadCompletedAtMs
+  );
+}
+
+async function evaluateAutoDependencyForBarangayTemplate(
+  chapterId: string,
+  barangayId: string,
+  config: NonNullable<ReturnType<typeof parseKpiDependencyConfig>>,
+  chapterMetricCache: Map<KpiDependencyMetric, number>,
+): Promise<BarangayAutoDependencyEvaluation> {
+  const ruleOutcomes: Array<{ value: number; passed: boolean; ruleLine: string }> = [];
+
+  for (const rule of config.rules) {
+    const value = await resolveDependencyMetricByBarangay(rule.metric, chapterId, barangayId, chapterMetricCache);
+    const passed = evaluateKpiDependencyRule(value, rule.operator, rule.targetValue);
+    ruleOutcomes.push({
+      value,
+      passed,
+      ruleLine: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue),
+    });
+  }
+
+  const isCompleted =
+    config.aggregation === "any"
+      ? ruleOutcomes.some((outcome) => outcome.passed)
+      : ruleOutcomes.every((outcome) => outcome.passed);
+
+  const numericValue = ruleOutcomes[0]?.value ?? null;
+  const ruleSummaryLines = ruleOutcomes.map((outcome) => `${outcome.passed ? "PASS" : "PENDING"} - ${outcome.ruleLine}`);
+
+  return {
+    isCompleted,
+    numericValue,
+    textValue: `${summarizeKpiDependencyConfig(config)} || ${ruleSummaryLines.join(" || ")}`,
+  };
+}
+
+async function syncAutoDependencyKpiCompletionsForBarangay(
+  options: SyncBarangayAutoDependencyOptions,
+) {
+  const templates = await storage.getKpiTemplatesForBarangay(
+    options.year,
+    options.barangayId,
+    options.chapterId,
+    options.quarter,
+  );
+
+  const recipientTemplateIds = new Set(templates.map((template) => template.id));
+
+  const existingCompletions = await storage.getBarangayKpiCompletions(options.barangayId, options.year, options.quarter);
+
+  for (const completion of existingCompletions) {
+    if (!recipientTemplateIds.has(completion.kpiTemplateId)) {
+      await storage.deleteKpiCompletion(completion.id);
+    }
+  }
+
+  const autoTemplates = templates
+    .map((template) => ({ template, config: parseKpiDependencyConfig(template.linkedEntityId) }))
+    .filter(
+      (
+        item,
+      ): item is {
+        template: (typeof templates)[number];
+        config: NonNullable<ReturnType<typeof parseKpiDependencyConfig>>;
+      } => Boolean(item.config),
+    );
+
+  if (autoTemplates.length === 0) {
+    return;
+  }
+
+  const refreshedCompletions = await storage.getBarangayKpiCompletions(options.barangayId, options.year, options.quarter);
+  const existingByTemplateId = new Map(refreshedCompletions.map((completion) => [completion.kpiTemplateId, completion]));
+  const chapterMetricCache = new Map<KpiDependencyMetric, number>();
+
+  for (const { template, config } of autoTemplates) {
+    const evaluation = await evaluateAutoDependencyForBarangayTemplate(
+      options.chapterId,
+      options.barangayId,
+      config,
+      chapterMetricCache,
+    );
+    const existingCompletion = existingByTemplateId.get(template.id);
+
+    if (!existingCompletion) {
+      await storage.createKpiCompletion({
+        chapterId: options.chapterId,
+        barangayId: options.barangayId,
+        kpiTemplateId: template.id,
+        numericValue: evaluation.numericValue,
+        textValue: evaluation.textValue,
+        isCompleted: evaluation.isCompleted,
+        completedAt: evaluation.isCompleted ? new Date() : null,
+      });
+      continue;
+    }
+
+    const completedAt = evaluation.isCompleted
+      ? existingCompletion.completedAt ?? new Date()
+      : null;
+
+    const updatePayload = {
+      isCompleted: evaluation.isCompleted,
+      numericValue: evaluation.numericValue,
+      textValue: evaluation.textValue,
+      completedAt,
+    };
+
+    if (hasKpiCompletionPayloadChanges(existingCompletion, updatePayload)) {
+      await storage.updateKpiCompletion(existingCompletion.id, updatePayload);
+    }
+  }
+}
+
+async function resolveDependencyMetricByBarangay(
+  metric: KpiDependencyMetric,
+  chapterId: string,
+  barangayId: string,
+  chapterMetricCache: Map<KpiDependencyMetric, number>,
+) {
+  if (
+    metric === "project_reports_count" ||
+    metric === "documents_acknowledged_count" ||
+    metric === "volunteer_opportunities_count" ||
+    metric === "mou_submissions_count" ||
+    metric === "chapter_requests_count" ||
+    metric === "publications_count"
+  ) {
+    const cached = chapterMetricCache.get(metric);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let chapterMetricValue = 0;
+    if (metric === "project_reports_count") {
+      const reports = await storage.getProjectReportsByChapter(chapterId);
+      chapterMetricValue = reports.length;
+    } else if (metric === "documents_acknowledged_count") {
+      const acknowledgements = await storage.getChapterDocumentAcks(chapterId);
+      chapterMetricValue = acknowledgements.filter((ack) => ack.acknowledged).length;
+    } else if (metric === "volunteer_opportunities_count") {
+      const opportunities = await storage.getVolunteerOpportunitiesByChapter(chapterId);
+      chapterMetricValue = opportunities.length;
+    } else if (metric === "mou_submissions_count") {
+      const submission = await storage.getMouSubmissionByChapter(chapterId);
+      chapterMetricValue = submission ? 1 : 0;
+    } else if (metric === "chapter_requests_count") {
+      const requests = await storage.getChapterRequestsByChapter(chapterId);
+      chapterMetricValue = requests.length;
+    } else if (metric === "publications_count") {
+      const publications = await storage.getPublicationsByChapter(chapterId);
+      chapterMetricValue = publications.length;
+    }
+
+    chapterMetricCache.set(metric, chapterMetricValue);
+    return chapterMetricValue;
+  }
+
+  if (metric === "members_directory_count") {
+    const members = await storage.getMembersByBarangay(barangayId);
+    return members.filter((member) => member.isActive).length;
+  }
+
+  if (metric === "officers_count") {
+    const officers = await storage.getOfficersByBarangay(barangayId);
+    return officers.length;
+  }
+
+  if (metric === "national_messages_count") {
+    const messages = await storage.getNationalRequestsBySender("barangay", barangayId);
+    return messages.length;
+  }
+
+  if (metric === "active_barangay_accounts_count") {
+    const barangayUser = await storage.getBarangayUser(barangayId);
+    return barangayUser?.isActive ? 1 : 0;
+  }
+
+  return 0;
+}
+
 function isUsernameTakenByDifferentUser(
   username: string,
   currentRole: "admin" | "chapter" | "barangay",
@@ -612,6 +935,8 @@ const BASIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 let memberApplicationReferenceInfraEnsured = false;
 let memberApplicationReferenceBackfillCompleted = false;
 let memberApplicationReferenceBackfillPromise: Promise<void> | null = null;
+let kpiCompletionBarangayInfraEnsured = false;
+let volunteerOpportunityInfraEnsured = false;
 
 function normalizeApplicationReferenceId(value: string) {
   return value.trim().toUpperCase();
@@ -654,6 +979,77 @@ async function ensureMembersApplicationReferenceInfra() {
   `);
 
   memberApplicationReferenceInfraEnsured = true;
+}
+
+async function ensureKpiCompletionBarangayInfra() {
+  if (kpiCompletionBarangayInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE kpi_completions ADD COLUMN IF NOT EXISTS barangay_id varchar`);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'kpi_completions_barangay_id_fkey'
+      ) THEN
+        ALTER TABLE kpi_completions
+          ADD CONSTRAINT kpi_completions_barangay_id_fkey
+          FOREIGN KEY (barangay_id)
+          REFERENCES barangay_users(id)
+          ON DELETE SET NULL;
+      END IF;
+    END
+    $$
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kpi_completions_barangay_id_idx
+    ON kpi_completions (barangay_id)
+  `);
+
+  kpiCompletionBarangayInfraEnsured = true;
+}
+
+async function ensureVolunteerOpportunityInfra() {
+  if (volunteerOpportunityInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS barangay_id varchar`);
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS barangay_ids text`);
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS description text`);
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS learn_more_url text`);
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS apply_url text`);
+  await pool.query(`ALTER TABLE volunteer_opportunities ADD COLUMN IF NOT EXISTS deadline_at timestamp`);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'volunteer_opportunities_barangay_id_fkey'
+      ) THEN
+        ALTER TABLE volunteer_opportunities
+          ADD CONSTRAINT volunteer_opportunities_barangay_id_fkey
+          FOREIGN KEY (barangay_id)
+          REFERENCES barangay_users(id)
+          ON DELETE SET NULL;
+      END IF;
+    END
+    $$
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS volunteer_opportunities_chapter_id_idx
+    ON volunteer_opportunities (chapter_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS volunteer_opportunities_barangay_id_idx
+    ON volunteer_opportunities (barangay_id)
+  `);
+
+  volunteerOpportunityInfraEnsured = true;
 }
 
 async function ensureBackfilledMemberApplicationReferenceIds() {
@@ -793,7 +1189,61 @@ function shouldAllowIndexing(req: Request) {
   return INDEXABLE_HOSTS.has(getRequestHostname(req));
 }
 
+function isPdfFallbackMetadataScopeAllowed(
+  req: Request,
+  metadata: { chapterId?: string; barangayId?: string },
+) {
+  const sessionRole = req.session.role;
+
+  if (sessionRole === "admin") {
+    return true;
+  }
+
+  if (sessionRole === "chapter") {
+    if (!req.session.chapterId) {
+      return false;
+    }
+
+    return !metadata.chapterId || metadata.chapterId === req.session.chapterId;
+  }
+
+  if (sessionRole === "barangay") {
+    const contractChapterId = metadata.chapterId;
+    const contractBarangayId = metadata.barangayId;
+
+    if (contractChapterId && req.session.chapterId && contractChapterId !== req.session.chapterId) {
+      return false;
+    }
+
+    if (contractBarangayId && req.session.barangayId && contractBarangayId !== req.session.barangayId) {
+      return false;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function isPdfFallbackScopeAllowed(req: Request, contract: PdfExportContract) {
+  return isPdfFallbackMetadataScopeAllowed(req, {
+    chapterId: contract.snapshotMetadata.chapterId,
+    barangayId: contract.snapshotMetadata.barangayId,
+  });
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  if (process.env.DATABASE_URL) {
+    try {
+      await ensureKpiCompletionBarangayInfra();
+      await ensureVolunteerOpportunityInfra();
+    } catch (error: any) {
+      console.error("[startup] Failed to ensure startup schema infra", {
+        message: error?.message,
+      });
+    }
+  }
+
   app.use((req, res, next) => {
     if (!req.path.startsWith("/api") && !shouldAllowIndexing(req)) {
       res.setHeader("X-Robots-Tag", "noindex, nofollow");
@@ -963,6 +1413,150 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       },
     });
+  });
+
+  app.post("/api/pdf-exports/fallback", requireAuth, async (req, res) => {
+    const rawContract = req.body?.contract ?? req.body;
+    const reasonText =
+      typeof req.body?.reason === "string" && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 600)
+        : "client-export-failed";
+
+    try {
+      const contract = parsePdfExportContract(rawContract);
+
+      if (!isPdfFallbackScopeAllowed(req, contract)) {
+        registerRejectedPdfFallback({
+          reportId: contract.reportId,
+          purpose: contract.purpose,
+          actorRole: req.session.role || "unknown",
+          chapterId: contract.snapshotMetadata.chapterId,
+          barangayId: contract.snapshotMetadata.barangayId,
+          source: contract.snapshotMetadata.source,
+          generationMode: contract.generationMode,
+          reason: "scope-mismatch",
+          requestIp: req.ip || "unknown",
+          userAgent: req.get("user-agent") || "unknown",
+        });
+        return res.status(403).json({ error: "Fallback scope does not match your current session" });
+      }
+
+      const acceptedEntry = registerAcceptedPdfFallback({
+        contract,
+        actorRole: req.session.role || contract.snapshotMetadata.actorRole || "unknown",
+        reason: reasonText,
+        requestIp: req.ip || "unknown",
+        userAgent: req.get("user-agent") || "unknown",
+      });
+
+      console.warn("[pdf-fallback] request accepted", {
+        id: acceptedEntry.id,
+        reportId: acceptedEntry.reportId,
+        actorRole: acceptedEntry.actorRole,
+        chapterId: acceptedEntry.chapterId,
+      });
+
+      return res.status(202).json({
+        accepted: true,
+        fallbackId: acceptedEntry.id,
+        status: acceptedEntry.status,
+        mode: "server-fallback-renderer",
+        statusUrl: `/api/pdf-exports/fallback/${acceptedEntry.id}`,
+        downloadUrl: `/api/pdf-exports/fallback/${acceptedEntry.id}/download`,
+        message: "Fallback intake accepted. Server-side rendering has been queued.",
+      });
+    } catch (error: any) {
+      const validationError = fromError(error);
+      const reportId = typeof rawContract?.reportId === "string" ? rawContract.reportId : "unknown";
+      const purpose = typeof rawContract?.purpose === "string" ? rawContract.purpose : "unknown";
+
+      registerRejectedPdfFallback({
+        reportId,
+        purpose,
+        actorRole: req.session.role || "unknown",
+        chapterId: typeof rawContract?.snapshotMetadata?.chapterId === "string" ? rawContract.snapshotMetadata.chapterId : undefined,
+        barangayId: typeof rawContract?.snapshotMetadata?.barangayId === "string" ? rawContract.snapshotMetadata.barangayId : undefined,
+        source: rawContract?.snapshotMetadata?.source === "api" ? "api" : "ui",
+        generationMode:
+          rawContract?.generationMode === "server" || rawContract?.generationMode === "hybrid"
+            ? rawContract.generationMode
+            : "client",
+        reason: `validation-error: ${validationError.message}`,
+        requestIp: req.ip || "unknown",
+        userAgent: req.get("user-agent") || "unknown",
+      });
+
+      return res.status(400).json({
+        error: "Invalid PDF export contract payload",
+        details: validationError.message,
+      });
+    }
+  });
+
+  app.get("/api/pdf-exports/fallback/audit", requireAdminAuth, async (_req, res) => {
+    return res.json({
+      entries: [...listPdfFallbackAuditEntries()].reverse(),
+    });
+  });
+
+  app.get("/api/pdf-exports/fallback/:fallbackId", requireAuth, async (req, res) => {
+    const fallbackId = req.params.fallbackId;
+    const internalEntry = getPdfFallbackInternalEntryById(fallbackId);
+
+    if (!internalEntry) {
+      return res.status(404).json({ error: "Fallback request not found" });
+    }
+
+    if (
+      !isPdfFallbackMetadataScopeAllowed(req, {
+        chapterId: internalEntry.chapterId,
+        barangayId: internalEntry.barangayId,
+      })
+    ) {
+      return res.status(403).json({ error: "You do not have access to this fallback request" });
+    }
+
+    const entry = getPdfFallbackAuditEntryById(fallbackId);
+    if (!entry) {
+      return res.status(404).json({ error: "Fallback request not found" });
+    }
+
+    return res.json({
+      entry,
+      downloadUrl: entry.status === "completed" ? `/api/pdf-exports/fallback/${fallbackId}/download` : null,
+    });
+  });
+
+  app.get("/api/pdf-exports/fallback/:fallbackId/download", requireAuth, async (req, res) => {
+    const fallbackId = req.params.fallbackId;
+    const internalEntry = getPdfFallbackInternalEntryById(fallbackId);
+
+    if (!internalEntry) {
+      return res.status(404).json({ error: "Fallback request not found" });
+    }
+
+    if (
+      !isPdfFallbackMetadataScopeAllowed(req, {
+        chapterId: internalEntry.chapterId,
+        barangayId: internalEntry.barangayId,
+      })
+    ) {
+      return res.status(403).json({ error: "You do not have access to this fallback file" });
+    }
+
+    if (internalEntry.status !== "completed" || !internalEntry.outputAbsolutePath || !internalEntry.outputFileName) {
+      return res.status(409).json({
+        error: "Fallback PDF is not ready",
+        status: internalEntry.status,
+        details: internalEntry.errorMessage || null,
+      });
+    }
+
+    if (!fs.existsSync(internalEntry.outputAbsolutePath)) {
+      return res.status(404).json({ error: "Fallback file is no longer available" });
+    }
+
+    return res.download(internalEntry.outputAbsolutePath, internalEntry.outputFileName);
   });
   
   app.post("/api/auth/login/admin", async (req, res) => {
@@ -2015,20 +2609,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
-  app.post("/api/reset-password/:accountType/:id", requireAdminAuth, async (req, res) => {
+  app.post("/api/reset-password/:accountType/:id", requireAuth, async (req, res) => {
     const { accountType, id } = req.params;
+    const normalizedAccountType = accountType.toLowerCase();
+    const isAdmin = req.session.role === "admin";
+    const isChapter = req.session.role === "chapter";
+
+    if (!isAdmin && !isChapter) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (normalizedAccountType !== "chapter" && normalizedAccountType !== "barangay") {
+      return res.status(400).json({ error: "Unsupported account type" });
+    }
+
+    if (normalizedAccountType === "chapter" && !isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (normalizedAccountType === "barangay" && isChapter) {
+      const scopedBarangayUser = await getScopedBarangayUser(req, id);
+      if (scopedBarangayUser.status === 404) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      if (scopedBarangayUser.status === 403) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
     const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 4).toUpperCase();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     let updated;
-    if (accountType === "chapter") {
+    if (normalizedAccountType === "chapter") {
       updated = await storage.updateChapterUser(id, {
         password: hashedPassword,
         mustChangePassword: true,
         failedLoginAttempts: 0,
         lockedUntil: null
       } as any);
-    } else if (accountType === "barangay") {
+    } else if (normalizedAccountType === "barangay") {
       updated = await storage.updateBarangayUser(id, {
         password: hashedPassword,
         mustChangePassword: true,
@@ -2041,17 +2661,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "Account not found" });
     }
 
-    console.log("[Auth] Admin reset password for", accountType, "account:", id);
+    console.log("[Auth] Password reset for", normalizedAccountType, "account:", id, "by role:", req.session.role);
     res.json({ success: true, temporaryPassword: tempPassword });
   });
 
-  app.post("/api/unlock-account/:accountType/:id", requireAdminAuth, async (req, res) => {
+  app.post("/api/unlock-account/:accountType/:id", requireAuth, async (req, res) => {
     const { accountType, id } = req.params;
+    const normalizedAccountType = accountType.toLowerCase();
+    const isAdmin = req.session.role === "admin";
+    const isChapter = req.session.role === "chapter";
+
+    if (!isAdmin && !isChapter) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (normalizedAccountType !== "chapter" && normalizedAccountType !== "barangay") {
+      return res.status(400).json({ error: "Unsupported account type" });
+    }
+
+    if (normalizedAccountType === "chapter" && !isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (normalizedAccountType === "barangay" && isChapter) {
+      const scopedBarangayUser = await getScopedBarangayUser(req, id);
+      if (scopedBarangayUser.status === 404) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      if (scopedBarangayUser.status === 403) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
 
     let updated;
-    if (accountType === "chapter") {
+    if (normalizedAccountType === "chapter") {
       updated = await storage.updateChapterUser(id, { failedLoginAttempts: 0, lockedUntil: null } as any);
-    } else if (accountType === "barangay") {
+    } else if (normalizedAccountType === "barangay") {
       updated = await storage.updateBarangayUser(id, { failedLoginAttempts: 0, lockedUntil: null } as any);
     }
 
@@ -2105,20 +2750,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Barangay user management routes
-  app.get("/api/barangay-users", requireAdminAuth, async (req, res) => {
-    const { chapterId } = req.query;
-    let users;
-    if (chapterId) {
-      users = await storage.getBarangayUsersByChapterId(chapterId as string);
-    } else {
-      users = await storage.getBarangayUsers();
+  app.get("/api/barangay-users", requireAuth, async (req, res) => {
+    const requestedChapterId = typeof req.query.chapterId === "string" ? req.query.chapterId : undefined;
+
+    if (req.session.role === "admin") {
+      const users = requestedChapterId
+        ? await storage.getBarangayUsersByChapterId(requestedChapterId)
+        : await storage.getBarangayUsers();
+      return res.json(users.map((u) => ({ ...u, password: undefined })));
     }
-    res.json(users.map(u => ({ ...u, password: undefined })));
+
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId;
+      if (!sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (requestedChapterId && requestedChapterId !== sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const users = await storage.getBarangayUsersByChapterId(sessionChapterId);
+      return res.json(users.map((u) => ({ ...u, password: undefined })));
+    }
+
+    return res.status(403).json({ error: "Access denied" });
   });
 
-  app.get("/api/chapters/:id/barangay-users", requireAdminAuth, async (req, res) => {
-    const users = await storage.getBarangayUsersByChapterId(req.params.id);
-    res.json(users.map(u => ({ ...u, password: undefined })));
+  app.get("/api/chapters/:id/barangay-users", requireAuth, async (req, res) => {
+    const requestedChapterId = req.params.id;
+
+    if (req.session.role === "admin") {
+      const users = await storage.getBarangayUsersByChapterId(requestedChapterId);
+      return res.json(users.map((u) => ({ ...u, password: undefined })));
+    }
+
+    if (req.session.role === "chapter") {
+      if (!req.session.chapterId || req.session.chapterId !== requestedChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const users = await storage.getBarangayUsersByChapterId(requestedChapterId);
+      return res.json(users.map((u) => ({ ...u, password: undefined })));
+    }
+
+    return res.status(403).json({ error: "Access denied" });
   });
 
   app.post("/api/barangay-users", requireAdminAuth, async (req, res) => {
@@ -2135,24 +2811,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/barangay-users/:id", requireAdminAuth, async (req, res) => {
+  app.put("/api/barangay-users/:id", requireAuth, async (req, res) => {
     try {
       const validated = insertBarangayUserSchema.partial().parse(req.body);
-      if (validated.password) {
-        validated.password = await bcrypt.hash(validated.password, 10);
+
+      const scopedBarangayUser = await getScopedBarangayUser(req, req.params.id);
+      if (scopedBarangayUser.status === 404) {
+        return res.status(404).json({ error: "User not found" });
       }
-      const user = await storage.updateBarangayUser(req.params.id, validated);
+      if (scopedBarangayUser.status === 403) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const updatePayload: Record<string, unknown> = {};
+
+      if (req.session.role === "admin") {
+        Object.assign(updatePayload, validated);
+        if (typeof updatePayload.password === "string" && updatePayload.password) {
+          updatePayload.password = await bcrypt.hash(updatePayload.password, 10);
+        }
+      } else if (req.session.role === "chapter") {
+        const chapterAllowedFields: Array<keyof typeof validated> = [
+          "barangayName",
+          "username",
+          "isActive",
+          "mustChangePassword",
+        ];
+
+        for (const key of chapterAllowedFields) {
+          const value = validated[key];
+          if (value !== undefined) {
+            updatePayload[key] = value;
+          }
+        }
+
+        if (validated.password !== undefined) {
+          return res.status(403).json({ error: "Use reset password action for barangay accounts" });
+        }
+      } else {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (Object.keys(updatePayload).length === 0) {
+        return res.status(400).json({ error: "No valid fields provided for update" });
+      }
+
+      const user = await storage.updateBarangayUser(req.params.id, updatePayload as any);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
       res.json({ ...user, password: undefined });
     } catch (error: any) {
+      if (error.code === "23505") {
+        return res.status(400).json({ error: "Username already exists" });
+      }
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
   });
 
   app.delete("/api/barangay-users/:id", requireAdminAuth, async (req, res) => {
+    const [linkedMembers, linkedOfficers] = await Promise.all([
+      storage.getMembersByBarangay(req.params.id),
+      storage.getOfficersByBarangay(req.params.id),
+    ]);
+
+    const dependencyMessages: string[] = [];
+    if (linkedMembers.length > 0) {
+      dependencyMessages.push(`${linkedMembers.length} member(s)`);
+    }
+    if (linkedOfficers.length > 0) {
+      dependencyMessages.push(`${linkedOfficers.length} officer(s)`);
+    }
+
+    if (dependencyMessages.length > 0) {
+      return res.status(400).json({
+        error: `Cannot delete barangay: has ${dependencyMessages.join(", ")}. Reassign or clear linked records first.`,
+      });
+    }
+
     const deleted = await storage.deleteBarangayUser(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: "User not found" });
@@ -2175,6 +2912,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(result);
   });
 
+  const parseBarangayIdsCsv = (value: unknown) => {
+    if (typeof value !== "string") {
+      return [] as string[];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .split(",")
+          .map((segment) => segment.trim())
+          .filter((segment) => segment.length > 0),
+      ),
+    );
+  };
+
+  const resolveChapterBarangayTargets = async (chapterId: string, rawBarangayIds: unknown) => {
+    const requestedBarangayIds = parseBarangayIdsCsv(rawBarangayIds);
+    if (requestedBarangayIds.length === 0) {
+      return {
+        primaryBarangayId: undefined as string | undefined,
+        barangayIdsCsv: undefined as string | undefined,
+        connectedBarangayNames: [] as string[],
+      };
+    }
+
+    const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterId);
+    const activeBarangayById = new Map(
+      chapterBarangays
+        .filter((barangay) => barangay.isActive)
+        .map((barangay) => [barangay.id, barangay]),
+    );
+
+    const connectedBarangays = requestedBarangayIds.map((barangayId) => activeBarangayById.get(barangayId));
+    if (connectedBarangays.some((barangay) => !barangay)) {
+      throw new Error("Invalid barangay connection list");
+    }
+
+    const connectedBarangayNames = connectedBarangays
+      .map((barangay) => barangay!.barangayName)
+      .filter((name, index, source) => source.indexOf(name) === index);
+
+    return {
+      primaryBarangayId: requestedBarangayIds[0],
+      barangayIdsCsv: requestedBarangayIds.join(","),
+      connectedBarangayNames,
+    };
+  };
+
   app.get("/api/volunteer-opportunities", async (req, res) => {
     const opportunities = await storage.getVolunteerOpportunities();
     res.json(opportunities);
@@ -2190,14 +2975,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/volunteer-opportunities", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
+      const selectedChapterId = typeof req.body.chapterId === "string" ? req.body.chapterId.trim() : "";
+      let chapterId: string | undefined;
+      let barangayId: string | undefined;
+      let barangayIds: string | undefined;
+      let chapterName = "YSP National";
+
+      if (selectedChapterId && selectedChapterId !== "national") {
+        const selectedChapter = await storage.getChapter(selectedChapterId);
+        if (!selectedChapter) {
+          return res.status(400).json({ error: "Invalid chapter selected" });
+        }
+        chapterId = selectedChapter.id;
+        chapterName = selectedChapter.name;
+
+        const chapterBarangayTargets = await resolveChapterBarangayTargets(chapterId, req.body.barangayIds);
+        barangayId = chapterBarangayTargets.primaryBarangayId;
+        barangayIds = chapterBarangayTargets.barangayIdsCsv;
+
+        if (chapterBarangayTargets.connectedBarangayNames.length === 1) {
+          chapterName = `${selectedChapter.name} - ${chapterBarangayTargets.connectedBarangayNames[0]}`;
+        } else if (chapterBarangayTargets.connectedBarangayNames.length > 1) {
+          chapterName = `${selectedChapter.name} - ${chapterBarangayTargets.connectedBarangayNames.join(", ")}`;
+        }
+      }
+
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
       console.log("[volunteer-image-upload] admin create", {
         route: req.originalUrl,
         hasFile: Boolean(req.file),
         photoUrl,
       });
+
       const validated = insertVolunteerOpportunitySchema.parse({
-        ...req.body,
+        eventName: req.body.eventName,
+        date: req.body.date,
+        time: normalizeOptionalText(req.body.time) || "TBD",
+        venue: normalizeOptionalText(req.body.venue) || "TBD",
+        chapterId,
+        barangayId,
+        barangayIds,
+        chapter: chapterName,
+        description: normalizeOptionalText(req.body.description),
+        sdgs: normalizeOptionalText(req.body.sdgs) || "",
+        contactName: req.body.contactName,
+        contactPhone: req.body.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail),
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl),
+        applyUrl: normalizeOptionalText(req.body.applyUrl),
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt),
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || "18+",
         photoUrl
       });
       const opportunity = await storage.createVolunteerOpportunity(validated);
@@ -2214,21 +3049,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/volunteer-opportunities/:id", requireAdminAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
+      const existing = await storage.getVolunteerOpportunity(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Volunteer opportunity not found" });
+      }
+
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
+      const selectedChapterId = typeof req.body.chapterId === "string" ? req.body.chapterId.trim() : "";
+      let chapterId: string | undefined;
+      let barangayId: string | undefined;
+      let barangayIds: string | undefined;
+      let chapterName = "YSP National";
+      const hasBarangayIdsPayload = typeof req.body.barangayIds === "string";
+
+      if (selectedChapterId && selectedChapterId !== "national") {
+        const selectedChapter = await storage.getChapter(selectedChapterId);
+        if (!selectedChapter) {
+          return res.status(400).json({ error: "Invalid chapter selected" });
+        }
+        chapterId = selectedChapter.id;
+
+        if (hasBarangayIdsPayload) {
+          const chapterBarangayTargets = await resolveChapterBarangayTargets(chapterId, req.body.barangayIds);
+          barangayId = chapterBarangayTargets.primaryBarangayId;
+          barangayIds = chapterBarangayTargets.barangayIdsCsv;
+
+          if (chapterBarangayTargets.connectedBarangayNames.length === 1) {
+            chapterName = `${selectedChapter.name} - ${chapterBarangayTargets.connectedBarangayNames[0]}`;
+          } else if (chapterBarangayTargets.connectedBarangayNames.length > 1) {
+            chapterName = `${selectedChapter.name} - ${chapterBarangayTargets.connectedBarangayNames.join(", ")}`;
+          } else {
+            chapterName = selectedChapter.name;
+          }
+        } else {
+          barangayId = existing.barangayId || undefined;
+          barangayIds = existing.barangayIds || undefined;
+          chapterName = existing.chapter || selectedChapter.name;
+        }
+      } else {
+        barangayId = undefined;
+        barangayIds = undefined;
+      }
+
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
       console.log("[volunteer-image-upload] admin update", {
         route: req.originalUrl,
         hasFile: Boolean(req.file),
         photoUrl,
       });
-      const updateData = { ...req.body };
-      if (photoUrl) {
-        updateData.photoUrl = photoUrl;
-      }
-      const validated = insertVolunteerOpportunitySchema.partial().parse(updateData);
+
+      const validated = insertVolunteerOpportunitySchema.parse({
+        eventName: req.body.eventName,
+        date: req.body.date,
+        time: normalizeOptionalText(req.body.time) || "TBD",
+        venue: normalizeOptionalText(req.body.venue) || "TBD",
+        chapterId,
+        barangayId,
+        barangayIds,
+        chapter: chapterName,
+        description: normalizeOptionalText(req.body.description),
+        sdgs: normalizeOptionalText(req.body.sdgs) || "",
+        contactName: req.body.contactName,
+        contactPhone: req.body.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail),
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl),
+        applyUrl: normalizeOptionalText(req.body.applyUrl),
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt),
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || "18+",
+        photoUrl: photoUrl || existing.photoUrl || undefined,
+      });
+
       const opportunity = await storage.updateVolunteerOpportunity(req.params.id, validated);
-      if (!opportunity) {
-        return res.status(404).json({ error: "Volunteer opportunity not found" });
-      }
       res.json(opportunity);
     } catch (error: any) {
       console.error("[volunteer-image-upload] admin update failed", {
@@ -2849,9 +3747,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const allowedFieldsByRole: Record<string, string[]> = {
-        admin: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink", "photoUrl", "chapterId", "barangayId"],
-        chapter: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink", "photoUrl", "barangayId", "householdSize"],
-        barangay: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink"],
+        admin: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "birthdate", "contactNumber", "email", "facebookLink", "photoUrl", "chapterId", "barangayId"],
+        chapter: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "birthdate", "contactNumber", "email", "facebookLink", "photoUrl", "barangayId", "householdSize"],
+        barangay: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "birthdate", "contactNumber", "email", "facebookLink"],
       };
 
       const allowedFields = allowedFieldsByRole[req.session.role || ""] || [];
@@ -2875,17 +3773,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.householdSize = parsedHouseholdSize;
       }
 
+      if (updateData.birthdate !== undefined) {
+        if (updateData.birthdate === null || updateData.birthdate === "") {
+          updateData.birthdate = null;
+        } else if (typeof updateData.birthdate === "string") {
+          const normalizedBirthdate = updateData.birthdate.trim();
+          if (!normalizedBirthdate) {
+            updateData.birthdate = null;
+          } else {
+            const parsedBirthdate = new Date(normalizedBirthdate);
+            if (Number.isNaN(parsedBirthdate.getTime())) {
+              return res.status(400).json({ error: "Invalid birthdate" });
+            }
+            updateData.birthdate = parsedBirthdate;
+          }
+        } else {
+          return res.status(400).json({ error: "Invalid birthdate" });
+        }
+      }
+
       if (updateData.email !== undefined) {
-        if (typeof updateData.email !== "string") {
+        if (updateData.email === null || updateData.email === "") {
+          updateData.email = null;
+        } else if (typeof updateData.email === "string") {
+          const normalizedEmail = updateData.email.trim().toLowerCase();
+          if (!normalizedEmail || !BASIC_EMAIL_REGEX.test(normalizedEmail)) {
+            return res.status(400).json({ error: "Invalid email address" });
+          }
+
+          updateData.email = normalizedEmail;
+        } else {
           return res.status(400).json({ error: "Invalid email address" });
         }
-
-        const normalizedEmail = updateData.email.trim().toLowerCase();
-        if (!normalizedEmail || !BASIC_EMAIL_REGEX.test(normalizedEmail)) {
-          return res.status(400).json({ error: "Invalid email address" });
-        }
-
-        updateData.email = normalizedEmail;
       }
 
       if (updateData.photoUrl !== undefined) {
@@ -3019,6 +3938,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Only pending duplicate applications can be merged" });
       }
 
+      const rawFieldSources = req.body?.fieldSources;
+      if (
+        rawFieldSources !== undefined &&
+        (typeof rawFieldSources !== "object" || rawFieldSources === null || Array.isArray(rawFieldSources))
+      ) {
+        return res.status(400).json({ error: "fieldSources must be an object keyed by merge field" });
+      }
+
+      const mergeSelectableFields = ["fullName", "contactNumber", "email", "facebookLink", "birthdate", "age", "photoUrl", "barangayId"] as const;
+      type MergeSelectableField = typeof mergeSelectableFields[number];
+      const mergeFieldSourceByKey = new Map<MergeSelectableField, "primary" | "duplicate">();
+
+      if (rawFieldSources) {
+        const fieldSourcesRecord = rawFieldSources as Record<string, unknown>;
+        for (const fieldKey of mergeSelectableFields) {
+          const requestedSourceMemberId = fieldSourcesRecord[fieldKey];
+          if (requestedSourceMemberId === undefined || requestedSourceMemberId === null) {
+            continue;
+          }
+
+          if (typeof requestedSourceMemberId !== "string") {
+            return res.status(400).json({ error: `fieldSources.${fieldKey} must be a member ID string` });
+          }
+
+          const normalizedSourceMemberId = requestedSourceMemberId.trim();
+          if (!normalizedSourceMemberId) {
+            continue;
+          }
+
+          if (normalizedSourceMemberId !== primaryMember.id && normalizedSourceMemberId !== duplicateMember.id) {
+            return res.status(400).json({ error: `fieldSources.${fieldKey} must reference either the primary or duplicate member` });
+          }
+
+          mergeFieldSourceByKey.set(
+            fieldKey,
+            normalizedSourceMemberId === primaryMember.id ? "primary" : "duplicate",
+          );
+        }
+      }
+
       const statusRank: Record<string, number> = {
         rejected: 0,
         pending: 1,
@@ -3032,6 +3991,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? primaryStatus
           : duplicateStatus;
 
+      const getSourceMemberForField = (fieldKey: MergeSelectableField) => {
+        const source = mergeFieldSourceByKey.get(fieldKey);
+        if (!source) {
+          return null;
+        }
+
+        return source === "primary" ? primaryMember : duplicateMember;
+      };
+
+      const normalizeOptionalString = (value: unknown) => {
+        if (value === null || value === undefined) {
+          return null;
+        }
+
+        if (typeof value !== "string") {
+          return null;
+        }
+
+        const trimmedValue = value.trim();
+        return trimmedValue || null;
+      };
+
+      const resolveRequiredStringField = (fieldKey: Extract<MergeSelectableField, "fullName" | "contactNumber">, fallbackValue: string) => {
+        const sourceMember = getSourceMemberForField(fieldKey);
+        if (!sourceMember) {
+          return fallbackValue;
+        }
+
+        const selectedValue = sourceMember[fieldKey];
+        if (typeof selectedValue === "string" && selectedValue.trim()) {
+          return selectedValue;
+        }
+
+        return fallbackValue;
+      };
+
+      const resolveOptionalStringField = (
+        fieldKey: Extract<MergeSelectableField, "email" | "facebookLink" | "photoUrl">,
+        fallbackValue: string | null,
+      ) => {
+        const sourceMember = getSourceMemberForField(fieldKey);
+        if (!sourceMember) {
+          return normalizeOptionalString(fallbackValue);
+        }
+
+        const selectedValue = sourceMember[fieldKey];
+        if (selectedValue === null) {
+          return null;
+        }
+
+        if (selectedValue === undefined) {
+          return normalizeOptionalString(fallbackValue);
+        }
+
+        return normalizeOptionalString(selectedValue) ?? normalizeOptionalString(fallbackValue);
+      };
+
+      const resolveBarangayField = (fallbackValue: string | null) => {
+        const sourceMember = getSourceMemberForField("barangayId");
+        if (!sourceMember) {
+          return fallbackValue;
+        }
+
+        const selectedBarangayId = sourceMember.barangayId;
+        if (selectedBarangayId === null || selectedBarangayId === undefined) {
+          return null;
+        }
+
+        if (typeof selectedBarangayId !== "string") {
+          return fallbackValue;
+        }
+
+        const normalizedBarangayId = selectedBarangayId.trim();
+        return normalizedBarangayId || null;
+      };
+
+      const resolveAgeField = (fallbackValue: number) => {
+        const sourceMember = getSourceMemberForField("age");
+        if (!sourceMember) {
+          return fallbackValue;
+        }
+
+        const selectedAge = sourceMember.age;
+        if (typeof selectedAge === "number" && Number.isFinite(selectedAge) && selectedAge > 0) {
+          return selectedAge;
+        }
+
+        return fallbackValue;
+      };
+
+      const resolveBirthdateField = (fallbackValue: Date | string | null) => {
+        const sourceMember = getSourceMemberForField("birthdate");
+        if (!sourceMember) {
+          return fallbackValue;
+        }
+
+        const selectedBirthdate = sourceMember.birthdate;
+        if (selectedBirthdate === null) {
+          return null;
+        }
+
+        if (selectedBirthdate instanceof Date) {
+          return selectedBirthdate;
+        }
+
+        if (typeof selectedBirthdate === "string") {
+          const parsed = new Date(selectedBirthdate);
+          if (!Number.isNaN(parsed.getTime())) {
+            return parsed;
+          }
+        }
+
+        return fallbackValue;
+      };
+
+      const fallbackFullName = primaryMember.fullName || duplicateMember.fullName;
+      const fallbackContactNumber = primaryMember.contactNumber || duplicateMember.contactNumber;
+      const fallbackAge =
+        typeof primaryMember.age === "number"
+          ? primaryMember.age
+          : typeof duplicateMember.age === "number"
+            ? duplicateMember.age
+            : 18;
+      const fallbackBirthdate = primaryMember.birthdate ?? duplicateMember.birthdate ?? null;
+      const fallbackEmail = normalizeOptionalString(primaryMember.email) ?? normalizeOptionalString(duplicateMember.email);
+      const fallbackFacebookLink = normalizeOptionalString(primaryMember.facebookLink) ?? normalizeOptionalString(duplicateMember.facebookLink);
+      const fallbackPhotoUrl = normalizeOptionalString(primaryMember.photoUrl) ?? normalizeOptionalString(duplicateMember.photoUrl);
+      const fallbackBarangayId = normalizeOptionalString(primaryMember.barangayId) ?? normalizeOptionalString(duplicateMember.barangayId);
+
       const primaryHouseholdVoters = typeof primaryMember.householdVoters === "number" ? primaryMember.householdVoters : null;
       const duplicateHouseholdVoters = typeof duplicateMember.householdVoters === "number" ? duplicateMember.householdVoters : null;
       const mergedHouseholdVoters =
@@ -3040,15 +4128,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : null;
 
       const mergedUpdateData: Record<string, any> = {
-        fullName: primaryMember.fullName || duplicateMember.fullName,
-        age: primaryMember.age || duplicateMember.age,
-        birthdate: primaryMember.birthdate || duplicateMember.birthdate,
+        fullName: resolveRequiredStringField("fullName", fallbackFullName),
+        age: resolveAgeField(fallbackAge),
+        birthdate: resolveBirthdateField(fallbackBirthdate),
         chapterId: primaryMember.chapterId || duplicateMember.chapterId,
-        barangayId: primaryMember.barangayId || duplicateMember.barangayId,
-        contactNumber: primaryMember.contactNumber || duplicateMember.contactNumber,
-        email: primaryMember.email || duplicateMember.email,
-        facebookLink: primaryMember.facebookLink || duplicateMember.facebookLink,
-        photoUrl: primaryMember.photoUrl || duplicateMember.photoUrl,
+        barangayId: resolveBarangayField(fallbackBarangayId),
+        contactNumber: resolveRequiredStringField("contactNumber", fallbackContactNumber),
+        email: resolveOptionalStringField("email", fallbackEmail),
+        facebookLink: resolveOptionalStringField("facebookLink", fallbackFacebookLink),
+        photoUrl: resolveOptionalStringField("photoUrl", fallbackPhotoUrl),
         registeredVoter: Boolean(primaryMember.registeredVoter || duplicateMember.registeredVoter),
         householdSize: Math.max(primaryMember.householdSize || 1, duplicateMember.householdSize || 1),
         householdVoters: mergedHouseholdVoters,
@@ -3228,15 +4316,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
     const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
     const barangayScope = req.query.barangayScope === "true";
-    const barangayId = req.query.barangayId as string | undefined;
-    const chapterId = req.query.chapterId as string | undefined;
+    const requestedBarangayId = req.query.barangayId as string | undefined;
+    const requestedChapterId = req.query.chapterId as string | undefined;
     const chapterScope = req.query.chapterScope === "true";
+
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId;
+      if (!sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (barangayScope) {
+        const chapterBarangayIds = await getChapterBarangayIdSet(sessionChapterId);
+        if (requestedBarangayId && !chapterBarangayIds.has(requestedBarangayId)) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        const templates = await storage.getKpiTemplatesForBarangay(year, requestedBarangayId, sessionChapterId, quarter);
+        return res.json(templates);
+      }
+
+      const templates = await storage.getKpiTemplatesForChapter(year, sessionChapterId, quarter);
+      return res.json(templates);
+    }
+
+    if (req.session.role === "barangay") {
+      const sessionChapterId = req.session.chapterId;
+      const sessionBarangayId = req.session.barangayId;
+      if (!sessionChapterId || !sessionBarangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const templates = await storage.getKpiTemplatesForBarangay(year, sessionBarangayId, sessionChapterId, quarter);
+      return res.json(templates);
+    }
     
-    if (barangayScope && barangayId) {
-      const templates = await storage.getKpiTemplatesForBarangay(year, barangayId, chapterId, quarter);
+    if (barangayScope && requestedBarangayId) {
+      const templates = await storage.getKpiTemplatesForBarangay(year, requestedBarangayId, requestedChapterId, quarter);
       res.json(templates);
-    } else if (chapterScope && chapterId) {
-      const templates = await storage.getKpiTemplatesForChapter(year, chapterId, quarter);
+    } else if (chapterScope && requestedChapterId) {
+      const templates = await storage.getKpiTemplatesForChapter(year, requestedChapterId, quarter);
       res.json(templates);
     } else {
       const templates = await storage.getKpiTemplates(year, quarter);
@@ -3252,15 +4371,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(template);
   });
 
-  app.get("/api/kpi-templates/:id/scopes", requireAdminAuth, async (req, res) => {
-    const scopes = await storage.getKpiScopesByTemplateId(req.params.id);
-    res.json(scopes);
+  app.get("/api/kpi-templates/:id/scopes", requireAuth, async (req, res) => {
+    if (req.session.role === "admin") {
+      const scopes = await storage.getKpiScopesByTemplateId(req.params.id);
+      return res.json(scopes);
+    }
+
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId;
+      if (!sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const manageableContext = await getChapterManageableKpiTemplateContext(req.params.id, sessionChapterId);
+      if (!manageableContext) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      return res.json(manageableContext.scopes);
+    }
+
+    return res.status(403).json({ error: "Access denied" });
   });
 
-  app.post("/api/kpi-templates", requireAdminAuth, async (req, res) => {
+  app.get("/api/kpi-templates/:id/barangay-analytics", requireAuth, async (req, res) => {
+    const templateId = req.params.id;
+    const template = await storage.getKpiTemplate(templateId);
+    if (!template) {
+      return res.status(404).json({ error: "KPI template not found" });
+    }
+
+    const scopes = await storage.getKpiScopesByTemplateId(templateId);
+    const assignedBarangayIds = Array.from(
+      new Set(
+        scopes
+          .filter((scope) => scope.entityType === "barangay")
+          .map((scope) => scope.entityId),
+      ),
+    );
+
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId;
+      if (!sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const manageableContext = await getChapterManageableKpiTemplateContext(templateId, sessionChapterId);
+      if (!manageableContext) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    } else if (req.session.role !== "admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const dependencyConfig = parseKpiDependencyConfig(template.linkedEntityId);
+    const chapterMetricCache = new Map<KpiDependencyMetric, number>();
+
+    const assignedBarangayEntries = await Promise.all(
+      assignedBarangayIds.map(async (barangayId) => {
+        const barangayUser = await storage.getBarangayUser(barangayId);
+        if (!barangayUser) {
+          return null;
+        }
+
+        const chapterId = barangayUser.chapterId;
+        let accomplished = false;
+        const ruleEvaluations: Array<{
+          metric: KpiDependencyMetric;
+          metricLabel: string;
+          operator: string;
+          operatorLabel: string;
+          targetValue: number;
+          currentValue: number;
+          passed: boolean;
+          description: string;
+        }> = [];
+
+        if (dependencyConfig) {
+          for (const rule of dependencyConfig.rules) {
+            const currentValue = await resolveDependencyMetricByBarangay(
+              rule.metric,
+              chapterId,
+              barangayId,
+              chapterMetricCache,
+            );
+            const passed = evaluateKpiDependencyRule(currentValue, rule.operator, rule.targetValue);
+            ruleEvaluations.push({
+              metric: rule.metric,
+              metricLabel: KPI_DEPENDENCY_METRIC_LABELS[rule.metric],
+              operator: rule.operator,
+              operatorLabel: KPI_DEPENDENCY_OPERATOR_LABELS[rule.operator],
+              targetValue: rule.targetValue,
+              currentValue,
+              passed,
+              description: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue),
+            });
+          }
+
+          accomplished =
+            dependencyConfig.aggregation === "any"
+              ? ruleEvaluations.some((rule) => rule.passed)
+              : ruleEvaluations.every((rule) => rule.passed);
+        } else {
+          const barangayCompletion = await storage.getKpiCompletionByTemplateAndBarangay(template.id, barangayId);
+          accomplished = Boolean(barangayCompletion?.isCompleted);
+        }
+
+        return {
+          barangayId,
+          barangayName: barangayUser.barangayName,
+          chapterId,
+          accomplished,
+          ruleEvaluations,
+        };
+      }),
+    );
+
+    const assignedBarangays = assignedBarangayEntries.filter(
+      (entry): entry is NonNullable<typeof entry> => Boolean(entry),
+    );
+
+    const accomplishedCount = assignedBarangays.filter((barangay) => barangay.accomplished).length;
+    const assignedCount = assignedBarangays.length;
+
+    return res.json({
+      template,
+      dependencySummary: dependencyConfig ? summarizeKpiDependencyConfig(dependencyConfig) : null,
+      assignedBarangays,
+      assignedCount,
+      accomplishedCount,
+      pendingCount: Math.max(assignedCount - accomplishedCount, 0),
+    });
+  });
+
+  app.post("/api/kpi-templates", requireAuth, async (req, res) => {
     try {
       const { selectedEntityIds, ...templateData } = req.body;
       const validated = insertKpiTemplateSchema.parse(templateData);
+
+      if (req.session.role !== "admin" && req.session.role !== "chapter") {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (req.session.role === "chapter") {
+        const sessionChapterId = req.session.chapterId;
+        if (!sessionChapterId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        if (validated.scope !== "selected_barangays") {
+          return res.status(403).json({ error: "Chapters can only assign KPI templates to selected barangays." });
+        }
+
+        if (!Array.isArray(selectedEntityIds) || selectedEntityIds.length === 0) {
+          return res.status(400).json({ error: "Select at least one barangay." });
+        }
+
+        const chapterBarangayIds = await getChapterBarangayIdSet(sessionChapterId);
+        const hasInvalidBarangay = selectedEntityIds.some(
+          (entityId: string) => !chapterBarangayIds.has(entityId),
+        );
+
+        if (hasInvalidBarangay) {
+          return res.status(403).json({ error: "One or more barangays are outside your chapter." });
+        }
+      }
+
       const template = await storage.createKpiTemplate(validated);
       
       if (selectedEntityIds && selectedEntityIds.length > 0 && 
@@ -3281,10 +4557,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/kpi-templates/:id", requireAdminAuth, async (req, res) => {
+  app.put("/api/kpi-templates/:id", requireAuth, async (req, res) => {
     try {
       const { selectedEntityIds, ...templateData } = req.body;
-      const validated = insertKpiTemplateSchema.partial().parse(templateData);
+      const validated = insertKpiTemplateSchema.partial().parse(templateData) as Record<string, any>;
+
+      if (req.session.role === "chapter") {
+        const sessionChapterId = req.session.chapterId;
+        if (!sessionChapterId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        const manageableContext = await getChapterManageableKpiTemplateContext(req.params.id, sessionChapterId);
+        if (!manageableContext) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        if (validated.scope && validated.scope !== "selected_barangays") {
+          return res.status(403).json({ error: "Chapters can only assign KPI templates to selected barangays." });
+        }
+
+        if (!Array.isArray(selectedEntityIds) || selectedEntityIds.length === 0) {
+          return res.status(400).json({ error: "Select at least one barangay." });
+        }
+
+        const chapterBarangayIds = await getChapterBarangayIdSet(sessionChapterId);
+        const hasInvalidBarangay = selectedEntityIds.some(
+          (entityId: string) => !chapterBarangayIds.has(entityId),
+        );
+        if (hasInvalidBarangay) {
+          return res.status(403).json({ error: "One or more barangays are outside your chapter." });
+        }
+
+        const template = await storage.updateKpiTemplate(req.params.id, {
+          ...validated,
+          scope: "selected_barangays",
+        });
+        if (!template) {
+          return res.status(404).json({ error: "KPI template not found" });
+        }
+
+        await storage.deleteKpiScopesByTemplateId(req.params.id);
+        const scopes = selectedEntityIds.map((entityId: string) => ({
+          kpiTemplateId: template.id,
+          entityType: "barangay",
+          entityId,
+        }));
+        await storage.createKpiScopes(scopes);
+        return res.json(template);
+      }
+
+      if (req.session.role !== "admin") {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
       const template = await storage.updateKpiTemplate(req.params.id, validated);
       if (!template) {
         return res.status(404).json({ error: "KPI template not found" });
@@ -3312,7 +4638,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/kpi-templates/:id", requireAdminAuth, async (req, res) => {
+  app.delete("/api/kpi-templates/:id", requireAuth, async (req, res) => {
+    if (req.session.role === "chapter") {
+      const sessionChapterId = req.session.chapterId;
+      if (!sessionChapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const manageableContext = await getChapterManageableKpiTemplateContext(req.params.id, sessionChapterId);
+      if (!manageableContext) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const deleted = await storage.deleteKpiTemplate(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "KPI template not found" });
+      }
+      return res.json({ success: true });
+    }
+
+    if (req.session.role !== "admin") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const deleted = await storage.deleteKpiTemplate(req.params.id);
     if (!deleted) {
       return res.status(404).json({ error: "KPI template not found" });
@@ -3344,8 +4692,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     const year = req.query.year ? parseInt(req.query.year as string) : undefined;
     const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
+
+    await syncAutoDependencyKpiCompletions({
+      chapterId: effectiveChapterId!,
+      year,
+      quarter,
+    });
+
     const completions = await storage.getKpiCompletions(effectiveChapterId!, year, quarter);
     res.json(completions);
+  });
+
+  app.get("/api/barangay-kpi-completions", requireBarangayAuth, async (req, res) => {
+    const chapterId = req.session.chapterId;
+    const barangayId = req.session.barangayId;
+    if (!chapterId || !barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const year = req.query.year ? parseInt(req.query.year as string) : undefined;
+    const quarter = req.query.quarter ? parseInt(req.query.quarter as string) : undefined;
+
+    await syncAutoDependencyKpiCompletionsForBarangay({
+      chapterId,
+      barangayId,
+      year,
+      quarter,
+    });
+
+    const completions = await storage.getBarangayKpiCompletions(barangayId, year, quarter);
+    res.json(completions);
+  });
+
+  app.post("/api/barangay-kpi-completions", requireBarangayAuth, async (req, res) => {
+    try {
+      const chapterId = req.session.chapterId;
+      const barangayId = req.session.barangayId;
+      if (!chapterId || !barangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const validated = insertKpiCompletionSchema.parse({
+        ...req.body,
+        chapterId,
+        barangayId,
+      });
+
+      const template = await storage.getKpiTemplate(validated.kpiTemplateId);
+      if (!template) {
+        return res.status(404).json({ error: "KPI template not found" });
+      }
+
+      const assignedToBarangay = await isTemplateAssignedToBarangay(template.id, chapterId, barangayId);
+      if (!assignedToBarangay) {
+        return res.status(403).json({ error: "This KPI is not assigned to your barangay." });
+      }
+
+      if (isAutoDependencyTemplate(template)) {
+        return res.status(400).json({ error: "This KPI is auto-tracked by dependencies and cannot be submitted manually." });
+      }
+
+      const existing = await storage.getKpiCompletionByTemplateAndBarangay(validated.kpiTemplateId, barangayId);
+      if (existing) {
+        const updated = await storage.updateKpiCompletion(existing.id, validated);
+        return res.json(updated);
+      }
+
+      const completion = await storage.createKpiCompletion(validated);
+      return res.json(completion);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      return res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.post("/api/barangay-kpi-completions/:id/mark-complete", requireBarangayAuth, async (req, res) => {
+    const barangayId = req.session.barangayId;
+    if (!barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const existingCompletion = await storage.getKpiCompletion(req.params.id);
+    if (!existingCompletion) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+
+    if (existingCompletion.barangayId !== barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const template = await storage.getKpiTemplate(existingCompletion.kpiTemplateId);
+    if (template && isAutoDependencyTemplate(template)) {
+      return res.status(400).json({ error: "This KPI is auto-tracked by dependencies and is completed automatically." });
+    }
+
+    const completion = await storage.markKpiCompleted(req.params.id);
+    if (!completion) {
+      return res.status(404).json({ error: "KPI completion not found" });
+    }
+    return res.json(completion);
   });
 
   app.post("/api/kpi-completions", requireChapterAuth, async (req, res) => {
@@ -3353,8 +4798,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const chapterId = req.session.chapterId!;
       const validated = insertKpiCompletionSchema.parse({
         ...req.body,
-        chapterId
+        chapterId,
+        barangayId: null,
       });
+
+      const template = await storage.getKpiTemplate(validated.kpiTemplateId);
+      if (!template) {
+        return res.status(404).json({ error: "KPI template not found" });
+      }
+
+      if (isBarangayOnlyKpiTemplateScope(template)) {
+        return res.status(403).json({
+          error: "This KPI is assigned to barangays. Chapter is not a recipient of this KPI.",
+        });
+      }
+
+      if (isAutoDependencyTemplate(template)) {
+        return res.status(400).json({ error: "This KPI is auto-tracked by dependencies and cannot be submitted manually." });
+      }
       
       const existing = await storage.getKpiCompletionByTemplateAndChapter(validated.kpiTemplateId, chapterId);
       if (existing) {
@@ -3381,8 +4842,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
+      const template = await storage.getKpiTemplate(existingCompletion.kpiTemplateId);
+      if (template && isBarangayOnlyKpiTemplateScope(template)) {
+        return res.status(403).json({
+          error: "This KPI is assigned to barangays. Chapter is not a recipient of this KPI.",
+        });
+      }
+
+      if (template && isAutoDependencyTemplate(template)) {
+        return res.status(400).json({ error: "This KPI is auto-tracked by dependencies and cannot be edited manually." });
+      }
+
       const validated = insertKpiCompletionSchema.partial().parse(req.body) as Record<string, unknown>;
       delete validated.chapterId;
+      delete validated.barangayId;
       delete validated.kpiTemplateId;
 
       const completion = await storage.updateKpiCompletion(req.params.id, validated as any);
@@ -3404,6 +4877,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     if (existingCompletion.chapterId !== req.session.chapterId) {
       return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (existingCompletion.barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const template = await storage.getKpiTemplate(existingCompletion.kpiTemplateId);
+    if (template && isBarangayOnlyKpiTemplateScope(template)) {
+      return res.status(403).json({
+        error: "This KPI is assigned to barangays. Chapter is not a recipient of this KPI.",
+      });
+    }
+
+    if (template && isAutoDependencyTemplate(template)) {
+      return res.status(400).json({ error: "This KPI is auto-tracked by dependencies and is completed automatically." });
     }
 
     const completion = await storage.markKpiCompleted(req.params.id);
@@ -3451,8 +4939,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/volunteer-opportunities/chapter", requireChapterAuth, volunteerUpload.single("photo"), async (req, res) => {
     try {
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
       const chapterId = req.session.chapterId!;
       const chapter = await storage.getChapter(chapterId);
+      const targetScope = req.body.targetScope === "barangay" ? "barangay" : "chapter";
+      let connectedBarangayIds: string[] = [];
+      let chapterLabel = chapter?.name || "";
+
+      if (targetScope === "barangay") {
+        const requestedBarangayIds = parseBarangayIdsCsv(req.body.barangayIds ?? req.body.barangayId);
+        if (requestedBarangayIds.length === 0) {
+          return res.status(400).json({ error: "Please select a barangay" });
+        }
+
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterId);
+        const activeBarangayById = new Map(
+          chapterBarangays
+            .filter((barangay) => barangay.isActive)
+            .map((barangay) => [barangay.id, barangay]),
+        );
+        const connectedBarangays = requestedBarangayIds.map((barangayId) => activeBarangayById.get(barangayId));
+        if (connectedBarangays.some((barangay) => !barangay)) {
+          return res.status(400).json({ error: "Invalid barangay selected" });
+        }
+
+        connectedBarangayIds = requestedBarangayIds;
+        const connectedBarangayNames = connectedBarangays
+          .map((barangay) => barangay!.barangayName)
+          .filter((name, index, source) => source.indexOf(name) === index);
+        chapterLabel = `${chapter?.name || "Chapter"} - ${connectedBarangayNames.join(", ")}`;
+      }
+
+      const primaryBarangayId = connectedBarangayIds[0];
+      const barangayIdsCsv = connectedBarangayIds.length > 0 ? connectedBarangayIds.join(",") : undefined;
+
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
       console.log("[volunteer-image-upload] chapter create", {
         route: req.originalUrl,
@@ -3462,10 +4989,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const validated = insertVolunteerOpportunitySchema.parse({
-        ...req.body,
+        eventName: req.body.eventName,
+        date: req.body.date,
+        time: req.body.time,
+        venue: req.body.venue,
         chapterId,
-        chapter: chapter?.name || "",
-        sdgs: req.body.sdgs || "",
+        barangayId: primaryBarangayId,
+        barangayIds: barangayIdsCsv,
+        chapter: chapterLabel,
+        description: normalizeOptionalText(req.body.description),
+        sdgs: normalizeOptionalText(req.body.sdgs) || "",
+        contactName: req.body.contactName,
+        contactPhone: req.body.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail),
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl),
+        applyUrl: normalizeOptionalText(req.body.applyUrl),
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt),
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || "18+",
         photoUrl
       });
       const opportunity = await storage.createVolunteerOpportunity(validated);
@@ -3480,13 +5020,296 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/volunteer-opportunities/chapter/:id", requireChapterAuth, volunteerUpload.single("photo"), async (req, res) => {
+    try {
+      const existing = await storage.getVolunteerOpportunity(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Volunteer opportunity not found" });
+      }
+
+      const chapterId = req.session.chapterId!;
+      if (existing.chapterId !== chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
+      const chapter = await storage.getChapter(chapterId);
+      const requestedScope = typeof req.body.targetScope === "string" ? req.body.targetScope : "";
+      const targetScope = requestedScope
+        ? (requestedScope === "barangay" ? "barangay" : "chapter")
+        : (existing.barangayIds || existing.barangayId ? "barangay" : "chapter");
+
+      let connectedBarangayIds: string[] = [];
+      let chapterLabel = chapter?.name || existing.chapter || "Chapter";
+
+      if (targetScope === "barangay") {
+        const fallbackBarangayIds = existing.barangayIds || existing.barangayId || "";
+        const requestedBarangayIds = parseBarangayIdsCsv(req.body.barangayIds ?? req.body.barangayId ?? fallbackBarangayIds);
+        if (requestedBarangayIds.length === 0) {
+          return res.status(400).json({ error: "Please select at least one barangay" });
+        }
+
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterId);
+        const activeBarangayById = new Map(
+          chapterBarangays
+            .filter((barangay) => barangay.isActive)
+            .map((barangay) => [barangay.id, barangay]),
+        );
+        const connectedBarangays = requestedBarangayIds.map((barangayId) => activeBarangayById.get(barangayId));
+        if (connectedBarangays.some((barangay) => !barangay)) {
+          return res.status(400).json({ error: "Invalid barangay selected" });
+        }
+
+        connectedBarangayIds = requestedBarangayIds;
+        const connectedBarangayNames = connectedBarangays
+          .map((barangay) => barangay!.barangayName)
+          .filter((name, index, source) => source.indexOf(name) === index);
+        chapterLabel = `${chapter?.name || "Chapter"} - ${connectedBarangayNames.join(", ")}`;
+      }
+
+      const primaryBarangayId = connectedBarangayIds[0];
+      const barangayIdsCsv = connectedBarangayIds.length > 0 ? connectedBarangayIds.join(",") : undefined;
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+
+      const validated = insertVolunteerOpportunitySchema.parse({
+        eventName: normalizeOptionalText(req.body.eventName) || existing.eventName,
+        date: req.body.date || existing.date,
+        time: normalizeOptionalText(req.body.time) || existing.time || "TBD",
+        venue: normalizeOptionalText(req.body.venue) || existing.venue || "TBD",
+        chapterId,
+        barangayId: primaryBarangayId,
+        barangayIds: barangayIdsCsv,
+        chapter: chapterLabel,
+        description: normalizeOptionalText(req.body.description) || existing.description,
+        sdgs: normalizeOptionalText(req.body.sdgs) || existing.sdgs || "",
+        contactName: normalizeOptionalText(req.body.contactName) || existing.contactName,
+        contactPhone: normalizeOptionalText(req.body.contactPhone) || existing.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail) || existing.contactEmail,
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl) || existing.learnMoreUrl,
+        applyUrl: normalizeOptionalText(req.body.applyUrl) || existing.applyUrl,
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt) || existing.deadlineAt,
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || existing.ageRequirement || "18+",
+        photoUrl: photoUrl || existing.photoUrl || undefined,
+      });
+
+      const updated = await storage.updateVolunteerOpportunity(req.params.id, validated);
+      res.json(updated);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/volunteer-opportunities/chapter/:id", requireChapterAuth, async (req, res) => {
+    const existing = await storage.getVolunteerOpportunity(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Volunteer opportunity not found" });
+    }
+
+    if (existing.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteVolunteerOpportunity(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Volunteer opportunity not found" });
+    }
+
+    res.json({ success: true });
+  });
+
   app.get("/api/volunteer-opportunities/by-chapter", requireAuth, async (req, res) => {
-    const chapterId = req.query.chapterId as string;
+    let chapterId = typeof req.query.chapterId === "string" ? req.query.chapterId : "";
+
+    if (req.session.role === "chapter" || req.session.role === "barangay") {
+      if (!req.session.chapterId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (chapterId && chapterId !== req.session.chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      chapterId = req.session.chapterId;
+    }
+
     if (!chapterId) {
       return res.status(400).json({ error: "chapterId required" });
     }
+
     const opportunities = await storage.getVolunteerOpportunitiesByChapter(chapterId);
     res.json(opportunities);
+  });
+
+  app.get("/api/volunteer-opportunities/by-barangay", requireBarangayAuth, async (req, res) => {
+    const barangayId = req.session.barangayId;
+    if (!barangayId) {
+      return res.status(400).json({ error: "barangayId required" });
+    }
+
+    const opportunities = await storage.getVolunteerOpportunitiesByBarangay(barangayId);
+    res.json(opportunities);
+  });
+
+  app.post("/api/volunteer-opportunities/barangay", requireBarangayAuth, volunteerUpload.single("photo"), async (req, res) => {
+    try {
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
+      const chapterId = req.session.chapterId;
+      const barangayId = req.session.barangayId;
+      if (!chapterId || !barangayId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const [chapter, barangay] = await Promise.all([
+        storage.getChapter(chapterId),
+        storage.getBarangayUser(barangayId),
+      ]);
+
+      if (!barangay || barangay.chapterId !== chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const chapterLabel = `${chapter?.name || "Chapter"} - ${barangay.barangayName}`;
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+      console.log("[volunteer-image-upload] barangay create", {
+        route: req.originalUrl,
+        chapterId,
+        barangayId,
+        hasFile: Boolean(req.file),
+        photoUrl,
+      });
+
+      const validated = insertVolunteerOpportunitySchema.parse({
+        eventName: req.body.eventName,
+        date: req.body.date,
+        time: req.body.time,
+        venue: req.body.venue,
+        chapterId,
+        barangayId,
+        barangayIds: barangayId,
+        chapter: chapterLabel,
+        description: normalizeOptionalText(req.body.description),
+        sdgs: normalizeOptionalText(req.body.sdgs) || "",
+        contactName: req.body.contactName,
+        contactPhone: req.body.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail),
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl),
+        applyUrl: normalizeOptionalText(req.body.applyUrl),
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt),
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || "18+",
+        photoUrl,
+      });
+
+      const opportunity = await storage.createVolunteerOpportunity(validated);
+      res.json(opportunity);
+    } catch (error: any) {
+      console.error("[volunteer-image-upload] barangay create failed", {
+        route: req.originalUrl,
+        message: error?.message,
+      });
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/volunteer-opportunities/barangay/:id", requireBarangayAuth, volunteerUpload.single("photo"), async (req, res) => {
+    try {
+      const existing = await storage.getVolunteerOpportunity(req.params.id);
+      if (!existing) {
+        return res.status(404).json({ error: "Volunteer opportunity not found" });
+      }
+
+      const chapterId = req.session.chapterId;
+      const barangayId = req.session.barangayId;
+      if (!chapterId || !barangayId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      if (existing.chapterId !== chapterId || existing.barangayId !== barangayId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const normalizeOptionalText = (value: unknown) => {
+        if (typeof value !== "string") {
+          return undefined;
+        }
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+
+      const [chapter, barangay] = await Promise.all([
+        storage.getChapter(chapterId),
+        storage.getBarangayUser(barangayId),
+      ]);
+
+      const chapterLabel = `${chapter?.name || "Chapter"} - ${barangay?.barangayName || existing.chapter}`;
+      const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+
+      const validated = insertVolunteerOpportunitySchema.parse({
+        eventName: normalizeOptionalText(req.body.eventName) || existing.eventName,
+        date: req.body.date || existing.date,
+        time: normalizeOptionalText(req.body.time) || existing.time || "TBD",
+        venue: normalizeOptionalText(req.body.venue) || existing.venue || "TBD",
+        chapterId,
+        barangayId,
+        barangayIds: barangayId,
+        chapter: chapterLabel,
+        description: normalizeOptionalText(req.body.description) || existing.description,
+        sdgs: normalizeOptionalText(req.body.sdgs) || existing.sdgs || "",
+        contactName: normalizeOptionalText(req.body.contactName) || existing.contactName,
+        contactPhone: normalizeOptionalText(req.body.contactPhone) || existing.contactPhone,
+        contactEmail: normalizeOptionalText(req.body.contactEmail) || existing.contactEmail,
+        learnMoreUrl: normalizeOptionalText(req.body.learnMoreUrl) || existing.learnMoreUrl,
+        applyUrl: normalizeOptionalText(req.body.applyUrl) || existing.applyUrl,
+        deadlineAt: normalizeOptionalText(req.body.deadlineAt) || existing.deadlineAt,
+        ageRequirement: normalizeOptionalText(req.body.ageRequirement) || existing.ageRequirement || "18+",
+        photoUrl: photoUrl || existing.photoUrl || undefined,
+      });
+
+      const updated = await storage.updateVolunteerOpportunity(req.params.id, validated);
+      res.json(updated);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/volunteer-opportunities/barangay/:id", requireBarangayAuth, async (req, res) => {
+    const existing = await storage.getVolunteerOpportunity(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Volunteer opportunity not found" });
+    }
+
+    const chapterId = req.session.chapterId;
+    const barangayId = req.session.barangayId;
+    if (!chapterId || !barangayId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (existing.chapterId !== chapterId || existing.barangayId !== barangayId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const deleted = await storage.deleteVolunteerOpportunity(req.params.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Volunteer opportunity not found" });
+    }
+
+    res.json({ success: true });
   });
 
   app.get("/api/important-documents", requireAuth, async (req, res) => {
@@ -3786,6 +5609,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void ensureMembersApplicationReferenceInfra().catch((error: any) => {
       console.error("[startup] Failed to ensure members application reference infra", {
+        message: error?.message,
+      });
+    });
+    void ensureVolunteerOpportunityInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure volunteer opportunity infra", {
         message: error?.message,
       });
     });

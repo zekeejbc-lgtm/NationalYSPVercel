@@ -52,7 +52,7 @@ export default function EnhancedLeaderboard({ currentChapterId }: EnhancedLeader
       case 1:
         return <Crown className="h-6 w-6 text-yellow-500" />;
       case 2:
-        return <Medal className="h-5 w-5 text-gray-400" />;
+        return <Medal className="h-5 w-5 text-slate-400 dark:text-slate-300" />;
       case 3:
         return <Award className="h-5 w-5 text-amber-600" />;
       default:
@@ -63,9 +63,9 @@ export default function EnhancedLeaderboard({ currentChapterId }: EnhancedLeader
   const getRankBadgeColor = (rank: number) => {
     switch (rank) {
       case 1:
-        return "bg-yellow-500 text-black";
+        return "bg-yellow-500 text-zinc-900";
       case 2:
-        return "bg-gray-300 text-black";
+        return "bg-slate-300 text-zinc-900 dark:bg-slate-400";
       case 3:
         return "bg-amber-600 text-white";
       default:

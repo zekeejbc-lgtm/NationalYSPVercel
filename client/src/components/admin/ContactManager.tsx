@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -54,12 +55,7 @@ export default function ContactManager() {
   };
 
   if (isLoading) {
-    return (
-      <div className="space-y-3" role="status" aria-label="Loading contact info">
-        <div className="h-5 w-48 rounded-md bg-muted skeleton-shimmer" />
-        <div className="h-20 w-full rounded-lg bg-muted skeleton-shimmer" />
-      </div>
-    );
+    return <LoadingState label="Loading contact information..." rows={1} />;
   }
 
   return (

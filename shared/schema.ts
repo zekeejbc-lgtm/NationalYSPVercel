@@ -83,6 +83,7 @@ export const kpiCompletions = pgTable("kpi_completions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   kpiTemplateId: varchar("kpi_template_id").notNull().references(() => kpiTemplates.id),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),
+  barangayId: varchar("barangay_id").references(() => barangayUsers.id),
   numericValue: integer("numeric_value"),
   textValue: text("text_value"),
   isCompleted: boolean("is_completed").default(false).notNull(),
@@ -188,15 +189,21 @@ export const programs = pgTable("programs", {
 export const volunteerOpportunities = pgTable("volunteer_opportunities", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").references(() => chapters.id),
+  barangayId: varchar("barangay_id").references(() => barangayUsers.id),
+  barangayIds: text("barangay_ids"),
   eventName: text("event_name").notNull(),
   date: timestamp("date").notNull(),
   time: text("time").notNull(),
   venue: text("venue").notNull(),
   chapter: text("chapter").notNull(),
+  description: text("description"),
   sdgs: text("sdgs"),
   contactName: text("contact_name").notNull(),
   contactPhone: text("contact_phone").notNull(),
   contactEmail: text("contact_email"),
+  learnMoreUrl: text("learn_more_url"),
+  applyUrl: text("apply_url"),
+  deadlineAt: timestamp("deadline_at"),
   ageRequirement: text("age_requirement").default("18+").notNull(),
   photoUrl: text("photo_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -313,6 +320,15 @@ export const insertVolunteerOpportunitySchema = createInsertSchema(volunteerOppo
   date: z.preprocess(
     (val) => (typeof val === "string" ? new Date(val) : val),
     z.date()
+  ),
+  deadlineAt: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === "") {
+        return undefined;
+      }
+      return typeof val === "string" ? new Date(val) : val;
+    },
+    z.date().optional()
   ),
 });
 

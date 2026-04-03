@@ -3,6 +3,8 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 const SESSION_QUERY_CACHE_KEY = "ysp-query-cache-v1";
 const SESSION_QUERY_CACHE_TTL_MS = 1000 * 60 * 30;
 const MAX_QUERY_RETRIES = 2;
+const MUTATION_NETWORK_RETRY_ATTEMPTS = 2;
+const MUTATION_NETWORK_RETRY_DELAY_MS = 250;
 
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -75,22 +77,53 @@ function shouldRetryQuery(failureCount: number, error: unknown) {
   return true;
 }
 
+function isTransientNetworkError(error: unknown) {
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+
+  return /failed to fetch|networkerror|load failed/i.test(error.message);
+}
+
+function waitFor(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<any> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  for (let attempt = 0; attempt <= MUTATION_NETWORK_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: data ? { "Content-Type": "application/json" } : {},
+        body: data ? JSON.stringify(data) : undefined,
+        credentials: "include",
+      });
 
-  await throwIfResNotOk(res);
+      await throwIfResNotOk(res);
 
-  const payload = await readResponsePayload(res);
-  return payload.data;
+      const payload = await readResponsePayload(res);
+      return payload.data;
+    } catch (error) {
+      if (isTransientNetworkError(error) && attempt < MUTATION_NETWORK_RETRY_ATTEMPTS) {
+        await waitFor((attempt + 1) * MUTATION_NETWORK_RETRY_DELAY_MS);
+        continue;
+      }
+
+      if (isTransientNetworkError(error)) {
+        throw new Error("Network error: Unable to reach the server. Please retry.");
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("Request failed after retries.");
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
