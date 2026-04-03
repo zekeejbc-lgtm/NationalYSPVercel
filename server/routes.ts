@@ -25,7 +25,8 @@ import {
   insertImportantDocumentSchema,
   insertMouSubmissionSchema,
   insertChapterRequestSchema,
-  insertNationalRequestSchema
+  insertNationalRequestSchema,
+  type Publication
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { createClient } from "@supabase/supabase-js";
@@ -36,6 +37,7 @@ import {
   formatKpiDependencyRuleDescription,
   KPI_DEPENDENCY_METRIC_LABELS,
   KPI_DEPENDENCY_OPERATOR_LABELS,
+  parseKpiDependencyStartDateToDate,
   parseKpiDependencyConfig,
   summarizeKpiDependencyConfig,
   type KpiDependencyMetric,
@@ -619,21 +621,31 @@ function hasKpiCompletionPayloadChanges(
   );
 }
 
+function getDependencyMetricCacheKey(metric: KpiDependencyMetric, startDate?: string): string {
+  return `${metric}|${startDate ?? "all_time"}`;
+}
+
 async function evaluateAutoDependencyForBarangayTemplate(
   chapterId: string,
   barangayId: string,
   config: NonNullable<ReturnType<typeof parseKpiDependencyConfig>>,
-  chapterMetricCache: Map<KpiDependencyMetric, number>,
+  chapterMetricCache: Map<string, number>,
 ): Promise<BarangayAutoDependencyEvaluation> {
   const ruleOutcomes: Array<{ value: number; passed: boolean; ruleLine: string }> = [];
 
   for (const rule of config.rules) {
-    const value = await resolveDependencyMetricByBarangay(rule.metric, chapterId, barangayId, chapterMetricCache);
+    const value = await resolveDependencyMetricByBarangay(
+      rule.metric,
+      chapterId,
+      barangayId,
+      chapterMetricCache,
+      rule.startDate,
+    );
     const passed = evaluateKpiDependencyRule(value, rule.operator, rule.targetValue);
     ruleOutcomes.push({
       value,
       passed,
-      ruleLine: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue),
+      ruleLine: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue, rule.startDate),
     });
   }
 
@@ -689,7 +701,7 @@ async function syncAutoDependencyKpiCompletionsForBarangay(
 
   const refreshedCompletions = await storage.getBarangayKpiCompletions(options.barangayId, options.year, options.quarter);
   const existingByTemplateId = new Map(refreshedCompletions.map((completion) => [completion.kpiTemplateId, completion]));
-  const chapterMetricCache = new Map<KpiDependencyMetric, number>();
+  const chapterMetricCache = new Map<string, number>();
 
   for (const { template, config } of autoTemplates) {
     const evaluation = await evaluateAutoDependencyForBarangayTemplate(
@@ -734,8 +746,11 @@ async function resolveDependencyMetricByBarangay(
   metric: KpiDependencyMetric,
   chapterId: string,
   barangayId: string,
-  chapterMetricCache: Map<KpiDependencyMetric, number>,
+  chapterMetricCache: Map<string, number>,
+  startDate?: string,
 ) {
+  const resolvedStartDate = parseKpiDependencyStartDateToDate(startDate);
+
   if (
     metric === "project_reports_count" ||
     metric === "documents_acknowledged_count" ||
@@ -744,14 +759,15 @@ async function resolveDependencyMetricByBarangay(
     metric === "chapter_requests_count" ||
     metric === "publications_count"
   ) {
-    const cached = chapterMetricCache.get(metric);
+    const cacheKey = getDependencyMetricCacheKey(metric, startDate);
+    const cached = chapterMetricCache.get(cacheKey);
     if (cached !== undefined) {
       return cached;
     }
 
     let chapterMetricValue = 0;
     if (metric === "project_reports_count") {
-      const reports = await storage.getProjectReportsByChapter(chapterId);
+      const reports = await storage.getProjectReportsByChapter(chapterId, { startDate: resolvedStartDate });
       chapterMetricValue = reports.length;
     } else if (metric === "documents_acknowledged_count") {
       const acknowledgements = await storage.getChapterDocumentAcks(chapterId);
@@ -766,16 +782,16 @@ async function resolveDependencyMetricByBarangay(
       const requests = await storage.getChapterRequestsByChapter(chapterId);
       chapterMetricValue = requests.length;
     } else if (metric === "publications_count") {
-      const publications = await storage.getPublicationsByChapter(chapterId);
+      const publications = await storage.getPublicationsByChapter(chapterId, { startDate: resolvedStartDate });
       chapterMetricValue = publications.length;
     }
 
-    chapterMetricCache.set(metric, chapterMetricValue);
+    chapterMetricCache.set(cacheKey, chapterMetricValue);
     return chapterMetricValue;
   }
 
   if (metric === "members_directory_count") {
-    const members = await storage.getMembersByBarangay(barangayId);
+    const members = await storage.getMembersByBarangay(barangayId, { startDate: resolvedStartDate });
     return members.filter((member) => member.isActive).length;
   }
 
@@ -937,6 +953,8 @@ let memberApplicationReferenceBackfillCompleted = false;
 let memberApplicationReferenceBackfillPromise: Promise<void> | null = null;
 let kpiCompletionBarangayInfraEnsured = false;
 let volunteerOpportunityInfraEnsured = false;
+let publicationsModerationInfraEnsured = false;
+let publicationShowcaseInfraEnsured = false;
 
 function normalizeApplicationReferenceId(value: string) {
   return value.trim().toUpperCase();
@@ -1050,6 +1068,88 @@ async function ensureVolunteerOpportunityInfra() {
   `);
 
   volunteerOpportunityInfraEnsured = true;
+}
+
+async function ensurePublicationsModerationInfra() {
+  if (publicationsModerationInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS is_rejected boolean`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS rejection_reason text`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS rejected_at timestamp`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS rejected_by_admin_id varchar`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS resubmission_count integer`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS last_resubmitted_at timestamp`);
+
+  await pool.query(`UPDATE publications SET is_rejected = false WHERE is_rejected IS NULL`);
+  await pool.query(`UPDATE publications SET resubmission_count = 0 WHERE resubmission_count IS NULL OR resubmission_count < 0`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN is_rejected SET DEFAULT false`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN is_rejected SET NOT NULL`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN resubmission_count SET DEFAULT 0`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN resubmission_count SET NOT NULL`);
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'publications_rejected_by_admin_id_fkey'
+      ) THEN
+        ALTER TABLE publications
+          ADD CONSTRAINT publications_rejected_by_admin_id_fkey
+          FOREIGN KEY (rejected_by_admin_id)
+          REFERENCES admin_users(id)
+          ON DELETE SET NULL;
+      END IF;
+    END
+    $$
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS publications_is_rejected_idx
+    ON publications (is_rejected)
+  `);
+
+  publicationsModerationInfraEnsured = true;
+}
+
+async function ensurePublicationShowcaseInfra() {
+  if (publicationShowcaseInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS is_hidden boolean DEFAULT false`);
+  await pool.query(`ALTER TABLE publications ADD COLUMN IF NOT EXISTS showcase_order integer`);
+  await pool.query(`UPDATE publications SET is_hidden = false WHERE is_hidden IS NULL`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN is_hidden SET DEFAULT false`);
+  await pool.query(`ALTER TABLE publications ALTER COLUMN is_hidden SET NOT NULL`);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS publications_showcase_order_idx
+    ON publications (is_approved, is_hidden, showcase_order, published_at DESC)
+  `);
+  await pool.query(`
+    WITH ranked AS (
+      SELECT
+        id,
+        ROW_NUMBER() OVER (
+          ORDER BY
+            CASE WHEN showcase_order IS NULL THEN 1 ELSE 0 END,
+            showcase_order ASC,
+            published_at DESC,
+            id ASC
+        ) AS position
+      FROM publications
+      WHERE is_approved = true
+    )
+    UPDATE publications AS publication
+    SET showcase_order = ranked.position
+    FROM ranked
+    WHERE publication.id = ranked.id
+  `);
+
+  publicationShowcaseInfraEnsured = true;
 }
 
 async function ensureBackfilledMemberApplicationReferenceIds() {
@@ -1237,6 +1337,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await ensureKpiCompletionBarangayInfra();
       await ensureVolunteerOpportunityInfra();
+      await ensurePublicationsModerationInfra();
     } catch (error: any) {
       console.error("[startup] Failed to ensure startup schema infra", {
         message: error?.message,
@@ -3213,6 +3314,288 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ url: imageUrl });
   });
 
+  type PublicationAnalyticsRecord = Publication & { chapterName: string };
+
+  function normalizeLooseText(value?: string | null) {
+    return (value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function normalizeComparableUrl(value?: string | null) {
+    return (value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/$/, "");
+  }
+
+  function buildBigrams(value: string) {
+    const normalizedValue = normalizeLooseText(value);
+    if (normalizedValue.length < 2) {
+      return normalizedValue ? [normalizedValue] : [];
+    }
+
+    const bigrams: string[] = [];
+    for (let index = 0; index < normalizedValue.length - 1; index += 1) {
+      bigrams.push(normalizedValue.slice(index, index + 2));
+    }
+
+    return bigrams;
+  }
+
+  function diceSimilarity(a: string, b: string) {
+    const aBigrams = buildBigrams(a);
+    const bBigrams = buildBigrams(b);
+
+    if (aBigrams.length === 0 || bBigrams.length === 0) {
+      return 0;
+    }
+
+    const aCounts = new Map<string, number>();
+    for (const token of aBigrams) {
+      aCounts.set(token, (aCounts.get(token) || 0) + 1);
+    }
+
+    let intersection = 0;
+    for (const token of bBigrams) {
+      const existingCount = aCounts.get(token) || 0;
+      if (existingCount > 0) {
+        intersection += 1;
+        aCounts.set(token, existingCount - 1);
+      }
+    }
+
+    return (2 * intersection) / (aBigrams.length + bBigrams.length);
+  }
+
+  function tokenOverlapSimilarity(a: string, b: string) {
+    const aTokens = new Set(normalizeLooseText(a).split(" ").filter(Boolean));
+    const bTokens = new Set(normalizeLooseText(b).split(" ").filter(Boolean));
+
+    if (aTokens.size === 0 || bTokens.size === 0) {
+      return 0;
+    }
+
+    let overlap = 0;
+    for (const token of Array.from(aTokens)) {
+      if (bTokens.has(token)) {
+        overlap += 1;
+      }
+    }
+
+    return overlap / Math.max(aTokens.size, bTokens.size);
+  }
+
+  function getPublicationDuplicateRiskLevel(probability: number): "high" | "medium" | "low" | "none" {
+    if (probability >= 0.86) return "high";
+    if (probability >= 0.73) return "medium";
+    if (probability >= 0.58) return "low";
+    return "none";
+  }
+
+  function resolvePublicationModerationStatus(publication: Pick<Publication, "isApproved" | "isRejected">) {
+    if (publication.isApproved) {
+      return "approved" as const;
+    }
+
+    if (publication.isRejected) {
+      return "rejected" as const;
+    }
+
+    return "pending" as const;
+  }
+
+  function computePublicationDuplicateProbability(
+    a: PublicationAnalyticsRecord,
+    b: PublicationAnalyticsRecord,
+    options?: { ignoreTitleSimilarity?: boolean },
+  ) {
+    const ignoreTitleSimilarity = Boolean(options?.ignoreTitleSimilarity);
+
+    const normalizedTitleA = normalizeLooseText(a.title);
+    const normalizedTitleB = normalizeLooseText(b.title);
+    const titleScore = normalizedTitleA === normalizedTitleB
+      ? 1
+      : Math.max(
+          diceSimilarity(normalizedTitleA, normalizedTitleB),
+          tokenOverlapSimilarity(normalizedTitleA, normalizedTitleB),
+        );
+
+    const normalizedContentA = normalizeLooseText(a.content).slice(0, 900);
+    const normalizedContentB = normalizeLooseText(b.content).slice(0, 900);
+    const contentScore = normalizedContentA && normalizedContentB
+      ? (normalizedContentA === normalizedContentB
+          ? 1
+          : Math.max(
+              diceSimilarity(normalizedContentA, normalizedContentB),
+              tokenOverlapSimilarity(normalizedContentA, normalizedContentB),
+            ))
+      : 0;
+
+    const normalizedFacebookA = normalizeComparableUrl(a.facebookLink);
+    const normalizedFacebookB = normalizeComparableUrl(b.facebookLink);
+    const facebookScore = normalizedFacebookA && normalizedFacebookB
+      ? (normalizedFacebookA === normalizedFacebookB
+          ? 1
+          : Math.max(
+              diceSimilarity(normalizedFacebookA, normalizedFacebookB) * 0.9,
+              tokenOverlapSimilarity(normalizedFacebookA, normalizedFacebookB),
+            ))
+      : 0;
+
+    const normalizedPhotoA = normalizeComparableUrl(a.photoUrl);
+    const normalizedPhotoB = normalizeComparableUrl(b.photoUrl);
+    const photoScore = normalizedPhotoA && normalizedPhotoB
+      ? (normalizedPhotoA === normalizedPhotoB ? 1 : diceSimilarity(normalizedPhotoA, normalizedPhotoB) * 0.8)
+      : 0;
+
+    const sourceReportScore = a.sourceProjectReportId && b.sourceProjectReportId
+      ? (a.sourceProjectReportId === b.sourceProjectReportId ? 1 : 0)
+      : 0;
+
+    const chapterScore = a.chapterId && b.chapterId
+      ? (a.chapterId === b.chapterId ? 1 : 0)
+      : (!a.chapterId && !b.chapterId ? 0.65 : 0);
+
+    const scoreBreakdown = {
+      title: titleScore,
+      content: contentScore,
+      facebook: facebookScore,
+      photo: photoScore,
+      chapter: chapterScore,
+      sourceReport: sourceReportScore,
+    };
+
+    const weightedScores = [
+      {
+        score: scoreBreakdown.title,
+        weight: 0.28,
+        available: !ignoreTitleSimilarity && Boolean(normalizedTitleA && normalizedTitleB),
+      },
+      { score: scoreBreakdown.content, weight: 0.32, available: Boolean(normalizedContentA && normalizedContentB) },
+      { score: scoreBreakdown.facebook, weight: 0.18, available: Boolean(normalizedFacebookA && normalizedFacebookB) },
+      { score: scoreBreakdown.sourceReport, weight: 0.12, available: Boolean(a.sourceProjectReportId && b.sourceProjectReportId) },
+      { score: scoreBreakdown.photo, weight: 0.06, available: Boolean(normalizedPhotoA && normalizedPhotoB) },
+      { score: scoreBreakdown.chapter, weight: 0.04, available: true },
+    ];
+
+    const availableWeight = weightedScores.reduce((sum, entry) => sum + (entry.available ? entry.weight : 0), 0);
+    const weightedTotal = weightedScores.reduce(
+      (sum, entry) => sum + (entry.available ? entry.score * entry.weight : 0),
+      0,
+    );
+
+    let probability = availableWeight > 0 ? weightedTotal / availableWeight : 0;
+
+    if (normalizedFacebookA && normalizedFacebookA === normalizedFacebookB) {
+      probability = Math.max(probability, 0.92);
+    }
+
+    if (a.sourceProjectReportId && a.sourceProjectReportId === b.sourceProjectReportId) {
+      probability = Math.max(probability, 0.95);
+    }
+
+    if (!ignoreTitleSimilarity && scoreBreakdown.title >= 0.9 && scoreBreakdown.content >= 0.9) {
+      probability = Math.max(probability, 0.9);
+    }
+
+    return {
+      probability,
+      scoreBreakdown,
+    };
+  }
+
+  function buildPublicationDuplicateCandidates(
+    publications: PublicationAnalyticsRecord[],
+    options?: { minProbability?: number; maxPairs?: number; ignoreTitleSimilarity?: boolean },
+  ) {
+    const minProbability = typeof options?.minProbability === "number" ? Math.min(Math.max(options.minProbability, 0), 1) : 0.58;
+    const maxPairs = typeof options?.maxPairs === "number" ? Math.max(1, Math.floor(options.maxPairs)) : 120;
+    const ignoreTitleSimilarity = Boolean(options?.ignoreTitleSimilarity);
+
+    const candidates: Array<{
+      id: string;
+      probability: number;
+      riskLevel: "high" | "medium" | "low";
+      statusPair: string;
+      scoreBreakdown: {
+        title: number;
+        content: number;
+        facebook: number;
+        photo: number;
+        chapter: number;
+        sourceReport: number;
+      };
+      primaryPublication: PublicationAnalyticsRecord;
+      duplicatePublication: PublicationAnalyticsRecord;
+    }> = [];
+
+    const reviewablePublications = publications.filter((publication) => !publication.isRejected);
+
+    for (let leftIndex = 0; leftIndex < reviewablePublications.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < reviewablePublications.length; rightIndex += 1) {
+        const primaryPublication = reviewablePublications[leftIndex];
+        const duplicatePublication = reviewablePublications[rightIndex];
+
+        const { probability, scoreBreakdown } = computePublicationDuplicateProbability(
+          primaryPublication,
+          duplicatePublication,
+          { ignoreTitleSimilarity },
+        );
+        const riskLevel = getPublicationDuplicateRiskLevel(probability);
+
+        if (riskLevel === "none" || probability < minProbability) {
+          continue;
+        }
+
+        const primaryStatus = resolvePublicationModerationStatus(primaryPublication);
+        const duplicateStatus = resolvePublicationModerationStatus(duplicatePublication);
+
+        candidates.push({
+          id: `${primaryPublication.id}:${duplicatePublication.id}`,
+          probability,
+          riskLevel,
+          statusPair: `${primaryStatus}-${duplicateStatus}`,
+          scoreBreakdown,
+          primaryPublication,
+          duplicatePublication,
+        });
+      }
+    }
+
+    return candidates.sort((left, right) => right.probability - left.probability).slice(0, maxPairs);
+  }
+
+  function sortPublicationsForShowcase(items: Publication[]) {
+    return [...items].sort((left, right) => {
+      const leftOrder = typeof left.showcaseOrder === "number" ? left.showcaseOrder : Number.POSITIVE_INFINITY;
+      const rightOrder = typeof right.showcaseOrder === "number" ? right.showcaseOrder : Number.POSITIVE_INFINITY;
+
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+
+      const leftPublishedAt = new Date(left.publishedAt).getTime();
+      const rightPublishedAt = new Date(right.publishedAt).getTime();
+
+      if (leftPublishedAt !== rightPublishedAt) {
+        return rightPublishedAt - leftPublishedAt;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
+  }
+
+  if (process.env.DATABASE_URL) {
+    try {
+      await ensurePublicationShowcaseInfra();
+    } catch (error: any) {
+      console.error("[startup] Failed to ensure publication showcase infra", {
+        message: error?.message,
+      });
+    }
+  }
+
   app.get("/api/publications", async (req, res) => {
     const chapterId = req.query.chapterId as string | undefined;
     const includeAll = (req.query.includeAll as string | undefined) === "true";
@@ -3234,6 +3617,296 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(publications);
   });
 
+  app.get("/api/publications/analytics", requireAdminAuth, async (req, res) => {
+    const minProbabilityRaw = Number.parseFloat(String(req.query.minProbability || ""));
+    const maxPairsRaw = Number.parseInt(String(req.query.maxPairs || ""), 10);
+    const minProbability = Number.isFinite(minProbabilityRaw)
+      ? Math.min(Math.max(minProbabilityRaw, 0), 1)
+      : 0.58;
+    const maxPairs = Number.isFinite(maxPairsRaw)
+      ? Math.min(Math.max(maxPairsRaw, 10), 400)
+      : 120;
+    const ignoreTitleSimilarity =
+      String(req.query.ignoreTitleSimilarity || "").toLowerCase() === "true" ||
+      String(req.query.ignoreTitleSimilarity || "") === "1";
+
+    const [allPublications, chapters] = await Promise.all([
+      storage.getPublications(),
+      storage.getChapters(),
+    ]);
+
+    const chapterNameById = new Map(chapters.map((chapter) => [chapter.id, chapter.name]));
+    const publicationsWithChapter: PublicationAnalyticsRecord[] = allPublications.map((publication) => ({
+      ...publication,
+      chapterName: publication.chapterId
+        ? chapterNameById.get(publication.chapterId) || "Unknown Chapter"
+        : "National / Unassigned",
+    }));
+
+    const chapterStatsMap = new Map<string, { chapterId: string | null; chapterName: string; total: number; approved: number; pending: number }>();
+
+    for (const publication of publicationsWithChapter) {
+      const chapterMapKey = publication.chapterId || "none";
+      const existingChapterStat = chapterStatsMap.get(chapterMapKey);
+      const isPendingModeration = !publication.isApproved && !publication.isRejected;
+
+      if (existingChapterStat) {
+        existingChapterStat.total += 1;
+        if (publication.isApproved) {
+          existingChapterStat.approved += 1;
+        } else if (isPendingModeration) {
+          existingChapterStat.pending += 1;
+        }
+      } else {
+        chapterStatsMap.set(chapterMapKey, {
+          chapterId: publication.chapterId,
+          chapterName: publication.chapterName,
+          total: 1,
+          approved: publication.isApproved ? 1 : 0,
+          pending: isPendingModeration ? 1 : 0,
+        });
+      }
+    }
+
+    const chapterStats = Array.from(chapterStatsMap.values()).sort((left, right) => right.total - left.total);
+    const leaderboard = chapterStats.map((chapterStat) => ({
+      chapterId: chapterStat.chapterId,
+      chapterName: chapterStat.chapterName,
+      submissions: chapterStat.total,
+      approved: chapterStat.approved,
+      pending: chapterStat.pending,
+    }));
+
+    const duplicateCandidates = buildPublicationDuplicateCandidates(publicationsWithChapter, {
+      minProbability,
+      maxPairs,
+      ignoreTitleSimilarity,
+    });
+    const highRiskDuplicates = duplicateCandidates.filter((candidate) => candidate.riskLevel === "high").length;
+
+    const rejectedSubmissions = publicationsWithChapter
+      .filter((publication) => publication.isRejected)
+      .sort((left, right) => {
+        const leftTime = new Date(left.rejectedAt || left.publishedAt).getTime();
+        const rightTime = new Date(right.rejectedAt || right.publishedAt).getTime();
+        return rightTime - leftTime;
+      });
+
+    const resubmittedSubmissions = publicationsWithChapter
+      .filter((publication) => (publication.resubmissionCount || 0) > 0 || Boolean(publication.lastResubmittedAt))
+      .sort((left, right) => {
+        const leftTime = new Date(left.lastResubmittedAt || left.publishedAt).getTime();
+        const rightTime = new Date(right.lastResubmittedAt || right.publishedAt).getTime();
+        return rightTime - leftTime;
+      });
+
+    const approvedCount = publicationsWithChapter.filter((publication) => publication.isApproved).length;
+    const pendingCount = publicationsWithChapter.filter(
+      (publication) => !publication.isApproved && !publication.isRejected,
+    ).length;
+
+    res.json({
+      summary: {
+        total: publicationsWithChapter.length,
+        approved: approvedCount,
+        pending: pendingCount,
+        rejected: rejectedSubmissions.length,
+        resubmitted: resubmittedSubmissions.length,
+        withFacebookLink: publicationsWithChapter.filter((publication) => Boolean(publication.facebookLink?.trim())).length,
+        duplicateCandidates: duplicateCandidates.length,
+        highRiskDuplicates,
+      },
+      chapterStats,
+      leaderboard,
+      duplicateCandidates,
+      rejectedSubmissions,
+      resubmittedSubmissions,
+      appliedFilters: {
+        minProbability,
+        maxPairs,
+        ignoreTitleSimilarity,
+      },
+    });
+  });
+
+  app.post("/api/publications/duplicates/merge", requireAdminAuth, async (req, res) => {
+    const primaryPublicationId = typeof req.body?.primaryPublicationId === "string"
+      ? req.body.primaryPublicationId.trim()
+      : "";
+    const duplicatePublicationId = typeof req.body?.duplicatePublicationId === "string"
+      ? req.body.duplicatePublicationId.trim()
+      : "";
+
+    if (!primaryPublicationId || !duplicatePublicationId) {
+      return res.status(400).json({ error: "primaryPublicationId and duplicatePublicationId are required" });
+    }
+
+    if (primaryPublicationId === duplicatePublicationId) {
+      return res.status(400).json({ error: "Cannot merge a publication with itself" });
+    }
+
+    const [primaryPublication, duplicatePublication] = await Promise.all([
+      storage.getPublication(primaryPublicationId),
+      storage.getPublication(duplicatePublicationId),
+    ]);
+
+    if (!primaryPublication || !duplicatePublication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    const rawFieldSources = req.body?.fieldSources;
+    if (
+      rawFieldSources !== undefined &&
+      (typeof rawFieldSources !== "object" || rawFieldSources === null || Array.isArray(rawFieldSources))
+    ) {
+      return res.status(400).json({ error: "fieldSources must be an object" });
+    }
+
+    const mergeSelectableFields = ["title", "content", "photoUrl", "facebookLink", "chapterId", "sourceProjectReportId"] as const;
+    type MergeSelectableField = typeof mergeSelectableFields[number];
+    const mergeFieldSourceByKey = new Map<MergeSelectableField, "primary" | "duplicate">();
+
+    if (rawFieldSources) {
+      const fieldSourcesRecord = rawFieldSources as Record<string, unknown>;
+      for (const fieldKey of mergeSelectableFields) {
+        const requestedSource = fieldSourcesRecord[fieldKey];
+        if (requestedSource === undefined || requestedSource === null) {
+          continue;
+        }
+
+        if (requestedSource === "primary" || requestedSource === primaryPublication.id) {
+          mergeFieldSourceByKey.set(fieldKey, "primary");
+          continue;
+        }
+
+        if (requestedSource === "duplicate" || requestedSource === duplicatePublication.id) {
+          mergeFieldSourceByKey.set(fieldKey, "duplicate");
+          continue;
+        }
+
+        return res.status(400).json({
+          error: `fieldSources.${fieldKey} must be \"primary\", \"duplicate\", or one of the merged publication IDs`,
+        });
+      }
+    }
+
+    const normalizeOptionalString = (value: string | null | undefined) => {
+      if (!value) {
+        return null;
+      }
+
+      const trimmedValue = value.trim();
+      return trimmedValue || null;
+    };
+
+    const hasMeaningfulValue = (value: string | null | undefined) => Boolean(value && value.trim());
+
+    const getSourcePublicationForField = (fieldKey: MergeSelectableField) => {
+      const selectedSource = mergeFieldSourceByKey.get(fieldKey);
+      if (!selectedSource) {
+        return null;
+      }
+
+      return selectedSource === "primary" ? primaryPublication : duplicatePublication;
+    };
+
+    const getRequiredFieldValue = (fieldKey: Extract<MergeSelectableField, "title" | "content">, fallbackValue: string) => {
+      const selectedSourcePublication = getSourcePublicationForField(fieldKey);
+      if (selectedSourcePublication && hasMeaningfulValue(selectedSourcePublication[fieldKey])) {
+        return selectedSourcePublication[fieldKey]!.trim();
+      }
+
+      if (hasMeaningfulValue(primaryPublication[fieldKey])) {
+        return primaryPublication[fieldKey]!.trim();
+      }
+
+      if (hasMeaningfulValue(duplicatePublication[fieldKey])) {
+        return duplicatePublication[fieldKey]!.trim();
+      }
+
+      return fallbackValue;
+    };
+
+    const getOptionalStringFieldValue = (fieldKey: Extract<MergeSelectableField, "photoUrl" | "facebookLink">) => {
+      const selectedSourcePublication = getSourcePublicationForField(fieldKey);
+      if (selectedSourcePublication && hasMeaningfulValue(selectedSourcePublication[fieldKey])) {
+        return normalizeOptionalString(selectedSourcePublication[fieldKey]);
+      }
+
+      if (hasMeaningfulValue(primaryPublication[fieldKey])) {
+        return normalizeOptionalString(primaryPublication[fieldKey]);
+      }
+
+      if (hasMeaningfulValue(duplicatePublication[fieldKey])) {
+        return normalizeOptionalString(duplicatePublication[fieldKey]);
+      }
+
+      return null;
+    };
+
+    const getOptionalIdFieldValue = (fieldKey: Extract<MergeSelectableField, "chapterId" | "sourceProjectReportId">) => {
+      const selectedSourcePublication = getSourcePublicationForField(fieldKey);
+      if (selectedSourcePublication && selectedSourcePublication[fieldKey]) {
+        return selectedSourcePublication[fieldKey];
+      }
+
+      if (primaryPublication[fieldKey]) {
+        return primaryPublication[fieldKey];
+      }
+
+      if (duplicatePublication[fieldKey]) {
+        return duplicatePublication[fieldKey];
+      }
+
+      return null;
+    };
+
+    const mergedIsApproved = primaryPublication.isApproved || duplicatePublication.isApproved;
+    const mergedIsRejected = !mergedIsApproved && (primaryPublication.isRejected || duplicatePublication.isRejected);
+    const mergedPublication = await storage.updatePublication(primaryPublication.id, {
+      title: getRequiredFieldValue("title", primaryPublication.title),
+      content: getRequiredFieldValue("content", primaryPublication.content),
+      photoUrl: getOptionalStringFieldValue("photoUrl"),
+      facebookLink: getOptionalStringFieldValue("facebookLink"),
+      chapterId: getOptionalIdFieldValue("chapterId"),
+      sourceProjectReportId: getOptionalIdFieldValue("sourceProjectReportId"),
+      isApproved: mergedIsApproved,
+      approvedAt: mergedIsApproved
+        ? (primaryPublication.approvedAt || duplicatePublication.approvedAt || new Date())
+        : null,
+      approvedByAdminId: mergedIsApproved
+        ? (primaryPublication.approvedByAdminId || duplicatePublication.approvedByAdminId || req.session.userId!)
+        : null,
+      isRejected: mergedIsRejected,
+      rejectionReason: mergedIsRejected
+        ? (primaryPublication.rejectionReason || duplicatePublication.rejectionReason || null)
+        : null,
+      rejectedAt: mergedIsRejected
+        ? (primaryPublication.rejectedAt || duplicatePublication.rejectedAt || new Date())
+        : null,
+      rejectedByAdminId: mergedIsRejected
+        ? (primaryPublication.rejectedByAdminId || duplicatePublication.rejectedByAdminId || req.session.userId!)
+        : null,
+      resubmissionCount: Math.max(primaryPublication.resubmissionCount || 0, duplicatePublication.resubmissionCount || 0),
+      lastResubmittedAt: primaryPublication.lastResubmittedAt || duplicatePublication.lastResubmittedAt || null,
+    });
+
+    if (!mergedPublication) {
+      return res.status(404).json({ error: "Primary publication not found" });
+    }
+
+    const deleted = await storage.deletePublication(duplicatePublication.id);
+    if (!deleted) {
+      return res.status(404).json({ error: "Duplicate publication not found" });
+    }
+
+    res.json({
+      success: true,
+      mergedPublication,
+      deletedPublicationId: duplicatePublication.id,
+    });
+  });
+
   app.get("/api/publications/:id", async (req, res) => {
     const publication = await storage.getPublication(req.params.id);
     if (!publication) {
@@ -3241,7 +3914,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const isAdmin = req.session?.role === "admin" && Boolean(req.session?.userId);
-    if (!publication.isApproved && !isAdmin) {
+    if ((!publication.isApproved || publication.isHidden) && !isAdmin) {
       return res.status(404).json({ error: "Publication not found" });
     }
 
@@ -3266,11 +3939,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payload.imageUrl;
 
       const validated = insertPublicationSchema.parse(payload);
+
+      if (pool) {
+        await pool.query(`
+          UPDATE publications
+          SET showcase_order = COALESCE(showcase_order, 0) + 1
+          WHERE is_approved = true
+        `);
+      }
+
       const publication = await storage.createPublication({
         ...validated,
         isApproved: true,
+        isHidden: false,
+        showcaseOrder: 1,
         approvedAt: new Date(),
         approvedByAdminId: req.session.userId!,
+        isRejected: false,
+        rejectionReason: null,
+        rejectedAt: null,
+        rejectedByAdminId: null,
+        resubmissionCount: 0,
+        lastResubmittedAt: null,
       });
       res.json(publication);
     } catch (error: any) {
@@ -3296,8 +3986,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       delete payload.imageUrl;
       delete payload.isApproved;
+      delete payload.isHidden;
+      delete payload.showcaseOrder;
       delete payload.approvedAt;
       delete payload.approvedByAdminId;
+      delete payload.isRejected;
+      delete payload.rejectionReason;
+      delete payload.rejectedAt;
+      delete payload.rejectedByAdminId;
+      delete payload.resubmissionCount;
+      delete payload.lastResubmittedAt;
 
       const validated = insertPublicationSchema.partial().parse(payload);
       const publication = await storage.updatePublication(req.params.id, validated);
@@ -3321,10 +4019,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(existing);
     }
 
+    if (pool) {
+      await pool.query(`
+        UPDATE publications
+        SET showcase_order = COALESCE(showcase_order, 0) + 1
+        WHERE is_approved = true
+      `);
+    }
+
     const publication = await storage.updatePublication(req.params.id, {
       isApproved: true,
+      isHidden: false,
+      showcaseOrder: 1,
       approvedAt: new Date(),
       approvedByAdminId: req.session.userId!,
+      isRejected: false,
+      rejectionReason: null,
+      rejectedAt: null,
+      rejectedByAdminId: null,
     });
 
     if (!publication) {
@@ -3332,6 +4044,138 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     res.json(publication);
+  });
+
+  app.patch("/api/publications/:id/reject", requireAdminAuth, async (req, res) => {
+    const existing = await storage.getPublication(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!reason) {
+      return res.status(400).json({ error: "Rejection reason is required" });
+    }
+
+    const publication = await storage.updatePublication(req.params.id, {
+      isApproved: false,
+      isHidden: true,
+      showcaseOrder: null,
+      approvedAt: null,
+      approvedByAdminId: null,
+      isRejected: true,
+      rejectionReason: reason,
+      rejectedAt: new Date(),
+      rejectedByAdminId: req.session.userId!,
+    });
+
+    if (!publication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    res.json(publication);
+  });
+
+  app.patch("/api/publications/:id/unreject", requireAdminAuth, async (req, res) => {
+    const existing = await storage.getPublication(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    if (!existing.isRejected) {
+      return res.json(existing);
+    }
+
+    const publication = await storage.updatePublication(req.params.id, {
+      isApproved: false,
+      isHidden: true,
+      showcaseOrder: null,
+      approvedAt: null,
+      approvedByAdminId: null,
+      isRejected: false,
+      rejectionReason: null,
+      rejectedAt: null,
+      rejectedByAdminId: null,
+    });
+
+    if (!publication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    res.json(publication);
+  });
+
+  app.patch("/api/publications/:id/visibility", requireAdminAuth, async (req, res) => {
+    const { isHidden } = req.body || {};
+    if (typeof isHidden !== "boolean") {
+      return res.status(400).json({ error: "isHidden must be a boolean" });
+    }
+
+    const existing = await storage.getPublication(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    const publication = await storage.updatePublication(req.params.id, {
+      isHidden,
+    });
+
+    if (!publication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    res.json(publication);
+  });
+
+  app.post("/api/publications/reorder", requireAdminAuth, async (req, res) => {
+    const orderedIdsRaw = req.body?.orderedIds;
+    if (!Array.isArray(orderedIdsRaw)) {
+      return res.status(400).json({ error: "orderedIds must be an array" });
+    }
+
+    const orderedIds = orderedIdsRaw
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter(Boolean);
+
+    if (orderedIds.length === 0) {
+      return res.status(400).json({ error: "orderedIds must include at least one publication ID" });
+    }
+
+    const uniqueOrderedIds = new Set(orderedIds);
+    if (uniqueOrderedIds.size !== orderedIds.length) {
+      return res.status(400).json({ error: "orderedIds must not contain duplicates" });
+    }
+
+    const allPublications = await storage.getPublications();
+    const approvedPublications = sortPublicationsForShowcase(
+      allPublications.filter((publication) => publication.isApproved),
+    );
+    const approvedById = new Map(approvedPublications.map((publication) => [publication.id, publication]));
+
+    for (const publicationId of orderedIds) {
+      if (!approvedById.has(publicationId)) {
+        return res.status(400).json({ error: `Publication ${publicationId} is not approved or does not exist` });
+      }
+    }
+
+    const missingIds = approvedPublications
+      .map((publication) => publication.id)
+      .filter((publicationId) => !uniqueOrderedIds.has(publicationId));
+
+    const finalOrderedIds = [...orderedIds, ...missingIds];
+
+    await Promise.all(
+      finalOrderedIds.map((publicationId, index) =>
+        storage.updatePublication(publicationId, { showcaseOrder: index + 1 }),
+      ),
+    );
+
+    const refreshedPublications = await storage.getPublications();
+    const refreshedApprovedPublications = sortPublicationsForShowcase(
+      refreshedPublications.filter((publication) => publication.isApproved),
+    );
+
+    res.json(refreshedApprovedPublications);
   });
 
   app.delete("/api/publications/:id", requireAdminAuth, async (req, res) => {
@@ -3376,8 +4220,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         photoUrl: report.photoUrl,
         facebookLink: report.facebookPostLink,
         isApproved: false,
+        isHidden: true,
+        showcaseOrder: null,
         approvedAt: null,
         approvedByAdminId: null,
+        isRejected: false,
+        rejectionReason: null,
+        rejectedAt: null,
+        rejectedByAdminId: null,
+        resubmissionCount: 0,
+        lastResubmittedAt: null,
       });
       
       res.json(report);
@@ -3414,22 +4266,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Project report not found" });
       }
 
-      await storage.updatePublicationBySourceProjectReportId(report.id, {
-        chapterId: report.chapterId,
-        title: report.projectName,
-        content: report.projectWriteup,
-        photoUrl: report.photoUrl,
-        facebookLink: report.facebookPostLink,
-        isApproved: false,
-        approvedAt: null,
-        approvedByAdminId: null,
-      });
+      const linkedPublication = await storage.getPublicationBySourceProjectReportId(report.id);
+
+      if (linkedPublication?.isRejected) {
+        // Keep rejected moderation state unchanged on edit; explicit resubmit endpoint handles transitions.
+        await storage.updatePublicationBySourceProjectReportId(report.id, {
+          chapterId: report.chapterId,
+          title: report.projectName,
+          content: report.projectWriteup,
+          photoUrl: report.photoUrl,
+          facebookLink: report.facebookPostLink,
+        });
+      } else {
+        await storage.updatePublicationBySourceProjectReportId(report.id, {
+          chapterId: report.chapterId,
+          title: report.projectName,
+          content: report.projectWriteup,
+          photoUrl: report.photoUrl,
+          facebookLink: report.facebookPostLink,
+          isApproved: false,
+          isHidden: true,
+          showcaseOrder: null,
+          approvedAt: null,
+          approvedByAdminId: null,
+          isRejected: false,
+          rejectionReason: null,
+          rejectedAt: null,
+          rejectedByAdminId: null,
+        });
+      }
 
       res.json(report);
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
+  });
+
+  app.patch("/api/project-reports/:id/resubmit", requireAuth, async (req, res) => {
+    const existing = await storage.getProjectReport(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Project report not found" });
+    }
+
+    if (req.session.role === "chapter" && existing.chapterId !== req.session.chapterId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role !== "admin" && req.session.role !== "chapter") {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const linkedPublication = await storage.getPublicationBySourceProjectReportId(existing.id);
+    if (!linkedPublication) {
+      return res.status(404).json({ error: "Linked publication not found" });
+    }
+
+    if (!linkedPublication.isRejected) {
+      return res.status(400).json({ error: "Only rejected reports can be resubmitted" });
+    }
+
+    const publication = await storage.updatePublication(linkedPublication.id, {
+      chapterId: existing.chapterId,
+      title: existing.projectName,
+      content: existing.projectWriteup,
+      photoUrl: existing.photoUrl,
+      facebookLink: existing.facebookPostLink,
+      isApproved: false,
+      isHidden: true,
+      showcaseOrder: null,
+      approvedAt: null,
+      approvedByAdminId: null,
+      isRejected: false,
+      rejectionReason: null,
+      rejectedAt: null,
+      rejectedByAdminId: null,
+      resubmissionCount: (linkedPublication.resubmissionCount || 0) + 1,
+      lastResubmittedAt: new Date(),
+    });
+
+    if (!publication) {
+      return res.status(404).json({ error: "Linked publication not found" });
+    }
+
+    res.json({
+      success: true,
+      report: existing,
+      publication,
+    });
   });
 
   app.delete("/api/project-reports/:id", requireAuth, async (req, res) => {
@@ -4425,7 +5349,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const dependencyConfig = parseKpiDependencyConfig(template.linkedEntityId);
-    const chapterMetricCache = new Map<KpiDependencyMetric, number>();
+    const chapterMetricCache = new Map<string, number>();
 
     const assignedBarangayEntries = await Promise.all(
       assignedBarangayIds.map(async (barangayId) => {
@@ -4454,6 +5378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               chapterId,
               barangayId,
               chapterMetricCache,
+              rule.startDate,
             );
             const passed = evaluateKpiDependencyRule(currentValue, rule.operator, rule.targetValue);
             ruleEvaluations.push({
@@ -4464,7 +5389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               targetValue: rule.targetValue,
               currentValue,
               passed,
-              description: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue),
+              description: formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue, rule.startDate),
             });
           }
 
@@ -5614,6 +6539,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void ensureVolunteerOpportunityInfra().catch((error: any) => {
       console.error("[startup] Failed to ensure volunteer opportunity infra", {
+        message: error?.message,
+      });
+    });
+    void ensurePublicationsModerationInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure publications moderation infra", {
         message: error?.message,
       });
     });

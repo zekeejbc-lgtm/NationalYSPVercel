@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import { useToast } from "@/hooks/use-toast";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -211,13 +212,7 @@ export default function AdminAccounts() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-full max-w-3xl px-4">
-          <LoadingState label="Loading admin accounts..." rows={4} />
-        </div>
-      </div>
-    );
+    return <AuthLoadingScreen label="Loading admin accounts..." />;
   }
 
   if (!authenticated) {

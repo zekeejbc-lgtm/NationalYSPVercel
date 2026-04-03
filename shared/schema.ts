@@ -164,8 +164,16 @@ export const publications = pgTable("publications", {
   photoUrl: text("photo_url"),
   facebookLink: text("facebook_link"),
   isApproved: boolean("is_approved").default(true).notNull(),
+  isHidden: boolean("is_hidden").default(false).notNull(),
+  showcaseOrder: integer("showcase_order"),
   approvedAt: timestamp("approved_at"),
   approvedByAdminId: varchar("approved_by_admin_id").references(() => adminUsers.id),
+  isRejected: boolean("is_rejected").default(false).notNull(),
+  rejectionReason: text("rejection_reason"),
+  rejectedAt: timestamp("rejected_at"),
+  rejectedByAdminId: varchar("rejected_by_admin_id").references(() => adminUsers.id),
+  resubmissionCount: integer("resubmission_count").default(0).notNull(),
+  lastResubmittedAt: timestamp("last_resubmitted_at"),
   publishedAt: timestamp("published_at").defaultNow().notNull(),
 });
 

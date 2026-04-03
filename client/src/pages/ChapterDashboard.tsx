@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/use-pagination";
@@ -44,6 +45,7 @@ import {
   ClipboardList,
   Send,
   MessageSquare,
+  RotateCcw,
   ImageOff,
   UserRound,
   X
@@ -148,6 +150,7 @@ export default function ChapterDashboard() {
   const [chapterSearch, setChapterSearch] = useState("");
   const [chapterSort, setChapterSort] = useState<"asc" | "desc">("asc");
   const [reportSearch, setReportSearch] = useState("");
+  const [showPendingResubmissionsOnly, setShowPendingResubmissionsOnly] = useState(false);
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [editProjectName, setEditProjectName] = useState("");
   const [editProjectWriteup, setEditProjectWriteup] = useState("");
@@ -424,6 +427,22 @@ export default function ChapterDashboard() {
     }
   });
 
+  const resubmitReportMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("PATCH", `/api/project-reports/${id}/resubmit`, {});
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "Report re-submitted for admin review" });
+      queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: [chapterPublicationStatusUrl] });
+      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  });
+
   const changePasswordMutation = useMutation({
     mutationFn: async (newPassword: string) => {
       return await apiRequest("POST", "/api/auth/change-password", { newPassword });
@@ -589,6 +608,13 @@ export default function ChapterDashboard() {
     return publicationMap;
   }, [chapterPublicationsWithStatus]);
 
+  const getPublicationModerationStatus = (publication?: Publication | null) => {
+    if (!publication) return "pending" as const;
+    if (publication.isApproved) return "approved" as const;
+    if (publication.isRejected) return "rejected" as const;
+    return "pending" as const;
+  };
+
   const filteredPublications = useMemo(() => {
     const normalizedQuery = publicationSearch.trim().toLowerCase();
 
@@ -619,11 +645,22 @@ export default function ChapterDashboard() {
 
   const filteredSubmittedReports = useMemo(() => {
     const normalizedQuery = reportSearch.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return submittedReports;
-    }
-
     return submittedReports.filter((report) => {
+      const linkedPublication = publicationBySourceReportId.get(report.id);
+      const moderationStatus = getPublicationModerationStatus(linkedPublication);
+      const resubmissionCount = linkedPublication?.resubmissionCount || 0;
+      const matchesPendingResubmissionFilter =
+        !showPendingResubmissionsOnly ||
+        (resubmissionCount > 0 && moderationStatus === "pending");
+
+      if (!matchesPendingResubmissionFilter) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
       const collaboratingChapterName = report.collaboratingChapterId
         ? chapterNameById.get(report.collaboratingChapterId) || ""
         : "";
@@ -635,7 +672,27 @@ export default function ChapterDashboard() {
         collaboratingChapterName.toLowerCase().includes(normalizedQuery)
       );
     });
-  }, [submittedReports, reportSearch, chapterNameById]);
+  }, [
+    submittedReports,
+    reportSearch,
+    chapterNameById,
+    publicationBySourceReportId,
+    showPendingResubmissionsOnly,
+  ]);
+
+  const pendingResubmissionCount = useMemo(() => {
+    return submittedReports.reduce((count, report) => {
+      const linkedPublication = publicationBySourceReportId.get(report.id);
+      const moderationStatus = getPublicationModerationStatus(linkedPublication);
+      const resubmissionCount = linkedPublication?.resubmissionCount || 0;
+
+      if (resubmissionCount > 0 && moderationStatus === "pending") {
+        return count + 1;
+      }
+
+      return count;
+    }, 0);
+  }, [submittedReports, publicationBySourceReportId]);
 
   const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
     const raw = publication.photoUrl || publication.imageUrl || "";
@@ -681,6 +738,10 @@ export default function ChapterDashboard() {
     deleteReportMutation.mutate(id);
   };
 
+  const handleResubmitReport = (id: string) => {
+    resubmitReportMutation.mutate(id);
+  };
+
   const filteredChapters = chapters
     .filter(chapter => 
       chapter.name.toLowerCase().includes(chapterSearch.toLowerCase()) ||
@@ -707,7 +768,7 @@ export default function ChapterDashboard() {
 
   const reportsPagination = usePagination(filteredSubmittedReports, {
     pageSize: 5,
-    resetKey: `${reportSearch}|${filteredSubmittedReports.length}`,
+    resetKey: `${reportSearch}|${showPendingResubmissionsOnly}|${filteredSubmittedReports.length}`,
   });
 
   const chaptersPagination = usePagination(filteredChapters, {
@@ -731,13 +792,7 @@ export default function ChapterDashboard() {
   ];
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
-        <div className="w-full max-w-3xl">
-          <LoadingState label="Loading dashboard..." rows={4} />
-        </div>
-      </div>
-    );
+    return <AuthLoadingScreen label="Preparing chapter dashboard..." />;
   }
 
   const renderTabFallback = (label: string) => (
@@ -931,16 +986,40 @@ export default function ChapterDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="relative max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search submitted reports..."
-                      value={reportSearch}
-                      onChange={(e) => setReportSearch(e.target.value)}
-                      className="pl-9"
-                      data-testid="input-submitted-report-search"
-                    />
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="relative max-w-md w-full">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search submitted reports..."
+                        value={reportSearch}
+                        onChange={(e) => setReportSearch(e.target.value)}
+                        className="pl-9"
+                        data-testid="input-submitted-report-search"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className="whitespace-nowrap"
+                        data-testid="badge-pending-resubmissions-count-chapter"
+                      >
+                        Pending Resubmissions: {pendingResubmissionCount}
+                      </Badge>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={showPendingResubmissionsOnly ? "default" : "outline"}
+                        onClick={() => setShowPendingResubmissionsOnly((previous) => !previous)}
+                        data-testid="button-filter-pending-resubmissions-chapter"
+                      >
+                        {showPendingResubmissionsOnly ? "Show All Reports" : "Pending Resubmissions Only"}
+                      </Button>
+                    </div>
                   </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Showing {filteredSubmittedReports.length} of {submittedReports.length} submitted reports
+                  </p>
 
                   {submittedReportsLoading ? (
                     <LoadingState label="Loading submitted reports..." rows={3} compact />
@@ -952,7 +1031,9 @@ export default function ChapterDashboard() {
                     <p className="text-sm text-muted-foreground">
                       {submittedReports.length === 0
                         ? "No reports submitted yet."
-                        : "No submitted reports match your search."}
+                        : showPendingResubmissionsOnly
+                          ? "No pending resubmissions match your search."
+                          : "No submitted reports match your search."}
                     </p>
                   ) : (
                     <>
@@ -960,8 +1041,12 @@ export default function ChapterDashboard() {
                         {reportsPagination.paginatedItems.map((report) => {
                           const reportPhotoUrl = getDisplayImageUrl((report.photoUrl || "").trim());
                           const linkedPublication = publicationBySourceReportId.get(report.id);
-                          const isPublished = Boolean(linkedPublication?.isApproved);
-                          const isAwaitingAdminReview = !isPublished;
+                          const moderationStatus = getPublicationModerationStatus(linkedPublication);
+                          const isPublished = moderationStatus === "approved";
+                          const isRejected = moderationStatus === "rejected";
+                          const isAwaitingAdminReview = moderationStatus === "pending";
+                          const rejectionReason = linkedPublication?.rejectionReason?.trim() || "";
+                          const resubmissionCount = linkedPublication?.resubmissionCount || 0;
 
                           return (
                             <Card
@@ -981,6 +1066,14 @@ export default function ChapterDashboard() {
                                       >
                                         Awaiting Admin Review
                                       </Badge>
+                                    ) : isRejected ? (
+                                      <Badge
+                                        variant="destructive"
+                                        className="shrink-0"
+                                        data-testid={`badge-report-rejected-${report.id}`}
+                                      >
+                                        Rejected
+                                      </Badge>
                                     ) : (
                                       <Badge
                                         variant="outline"
@@ -988,6 +1081,11 @@ export default function ChapterDashboard() {
                                         data-testid={`badge-report-published-${report.id}`}
                                       >
                                         Published
+                                      </Badge>
+                                    )}
+                                    {resubmissionCount > 0 && (
+                                      <Badge variant="outline" className="shrink-0" data-testid={`badge-report-resubmission-${report.id}`}>
+                                        Resubmission #{resubmissionCount}
                                       </Badge>
                                     )}
                                     <Badge variant="outline" className="shrink-0">
@@ -1020,6 +1118,14 @@ export default function ChapterDashboard() {
                                 <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words text-justify">
                                   {report.projectWriteup}
                                 </p>
+                                {isRejected && (
+                                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                                    <p className="text-xs font-medium uppercase tracking-wide text-destructive">Reason for rejection</p>
+                                    <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                      {rejectionReason || "No rejection reason provided."}
+                                    </p>
+                                  </div>
+                                )}
                                 {report.collaborationType === "ANOTHER_CHAPTER" && report.collaboratingChapterId && (
                                   <p className="text-sm text-muted-foreground">
                                     Collaborating chapter: {getChapterName(report.collaboratingChapterId)}
@@ -1049,6 +1155,19 @@ export default function ChapterDashboard() {
                                     </a>
                                   )}
                                   <div className="ml-auto flex items-center gap-2">
+                                    {isRejected && (
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={resubmitReportMutation.isPending}
+                                        onClick={() => handleResubmitReport(report.id)}
+                                        data-testid={`button-resubmit-report-${report.id}`}
+                                      >
+                                        <RotateCcw className="h-4 w-4 mr-1" />
+                                        {resubmitReportMutation.isPending ? "Re-submitting..." : "Re-submit"}
+                                      </Button>
+                                    )}
                                     <Button
                                       type="button"
                                       variant="outline"
@@ -1210,6 +1329,10 @@ export default function ChapterDashboard() {
                         </Select>
                       </div>
                     )}
+
+                    <p className="text-xs text-muted-foreground">
+                      Editing does not re-submit. Use Re-submit button to send for review.
+                    </p>
 
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="outline" onClick={resetEditReportForm}>

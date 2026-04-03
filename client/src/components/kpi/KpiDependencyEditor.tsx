@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Plus, Settings2, Trash2 } from "lucide-react";
 import {
   createDefaultKpiDependencyRule,
+  isKpiDependencyMetricStartDateCapable,
   KPI_DEPENDENCY_METRIC_LABELS,
   KPI_DEPENDENCY_OPERATOR_LABELS,
   KPI_DEPENDENCY_METRICS,
@@ -133,16 +134,25 @@ export default function KpiDependencyEditor({
                       Add Rule
                     </Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    For members, reports, and publications, you can set a start date so old records are excluded.
+                  </p>
 
                   {rules.length === 0 ? (
                     <p className="text-xs text-muted-foreground">No rules yet. Add at least one rule.</p>
                   ) : (
                     <div className="space-y-2">
                       {rules.map((rule) => (
-                        <div key={rule.id} className="grid gap-2 rounded-md border bg-background p-2 md:grid-cols-[2fr_1fr_0.9fr_auto]">
+                        <div key={rule.id} className="grid gap-2 rounded-md border bg-background p-2 md:grid-cols-[2fr_1fr_0.9fr_1.3fr_auto]">
                           <Select
                             value={rule.metric}
-                            onValueChange={(value) => updateRule(rule.id, { metric: value as KpiDependencyRule["metric"] })}
+                            onValueChange={(value) => {
+                              const nextMetric = value as KpiDependencyRule["metric"];
+                              updateRule(rule.id, {
+                                metric: nextMetric,
+                                ...(isKpiDependencyMetricStartDateCapable(nextMetric) ? {} : { startDate: undefined }),
+                              });
+                            }}
                           >
                             <SelectTrigger data-testid={`${dataTestIdPrefix}-select-metric-${rule.id}`}>
                               <SelectValue />
@@ -183,6 +193,21 @@ export default function KpiDependencyEditor({
                             placeholder="Target"
                             data-testid={`${dataTestIdPrefix}-input-target-${rule.id}`}
                           />
+
+                          {isKpiDependencyMetricStartDateCapable(rule.metric) ? (
+                            <Input
+                              type="date"
+                              value={rule.startDate || ""}
+                              onChange={(event) => {
+                                updateRule(rule.id, { startDate: event.target.value || undefined });
+                              }}
+                              data-testid={`${dataTestIdPrefix}-input-start-date-${rule.id}`}
+                            />
+                          ) : (
+                            <div className="flex items-center rounded-md border px-3 text-xs text-muted-foreground">
+                              Counts all-time
+                            </div>
+                          )}
 
                           <Button
                             type="button"

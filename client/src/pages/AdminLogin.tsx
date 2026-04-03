@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 
 export default function AdminLogin() {
   const [, setLocation] = useLocation();
@@ -35,6 +36,10 @@ export default function AdminLogin() {
       setLoading(false);
     }
   };
+
+  if (loading) {
+    return <AuthLoadingScreen label="Preparing admin dashboard..." />;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 py-12 px-4">

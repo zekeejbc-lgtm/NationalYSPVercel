@@ -162,7 +162,21 @@ function canUseSessionStorage() {
 }
 
 function shouldPersistQuery(queryKey: unknown): queryKey is unknown[] {
-  return Array.isArray(queryKey) && typeof queryKey[0] === "string" && queryKey[0].startsWith("/api/");
+  if (!Array.isArray(queryKey) || typeof queryKey[0] !== "string") {
+    return false;
+  }
+
+  const key = queryKey[0];
+  if (!key.startsWith("/api/")) {
+    return false;
+  }
+
+  // Publication ordering should always come from live backend data, not restored session cache.
+  if (key.startsWith("/api/publications")) {
+    return false;
+  }
+
+  return true;
 }
 
 function readSessionPayload(): SessionQueryCachePayload | null {
@@ -203,6 +217,18 @@ function restoreQueryCacheFromSession(client: QueryClient) {
   const payload = readSessionPayload();
   if (!payload) {
     return;
+  }
+
+  const hadStalePublicationEntries = payload.entries.some(
+    (entry) => Array.isArray(entry.queryKey) && typeof entry.queryKey[0] === "string" && entry.queryKey[0].startsWith("/api/publications"),
+  );
+  if (hadStalePublicationEntries) {
+    writeSessionPayload({
+      ...payload,
+      entries: payload.entries.filter(
+        (entry) => !(Array.isArray(entry.queryKey) && typeof entry.queryKey[0] === "string" && entry.queryKey[0].startsWith("/api/publications")),
+      ),
+    });
   }
 
   const now = Date.now();

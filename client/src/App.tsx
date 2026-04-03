@@ -273,6 +273,8 @@ function writeScrollPositions(positions: Record<string, number>) {
 }
 
 function Router() {
+  const MyProfileRoute = () => <MyProfile />;
+
   return (
     <Switch>
       <Route path="/" component={Home} />
@@ -287,7 +289,7 @@ function Router() {
       <Route path="/admin/accounts" component={AdminAccounts} />
       <Route path="/chapter-dashboard" component={ChapterDashboard} />
       <Route path="/barangay-dashboard" component={BarangayDashboard} />
-      <Route path="/my-profile" component={MyProfile} />
+      <Route path="/my-profile" component={MyProfileRoute} />
       <Route component={NotFound} />
     </Switch>
   );

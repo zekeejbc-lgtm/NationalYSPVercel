@@ -64,8 +64,12 @@ import {
   nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, asc, isNull } from "drizzle-orm";
+import { eq, desc, and, sql, asc, isNull, gte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+
+type DateScopedListOptions = {
+  startDate?: Date | null;
+};
 
 export type ImportantDocumentAcknowledgement = {
   documentId: string;
@@ -118,7 +122,7 @@ export interface IStorage {
   updateBarangayUser(id: string, user: Partial<InsertBarangayUser>): Promise<BarangayUser | undefined>;
   deleteBarangayUser(id: string): Promise<boolean>;
 
-  getMembersByBarangay(barangayId: string): Promise<Member[]>;
+  getMembersByBarangay(barangayId: string, options?: DateScopedListOptions): Promise<Member[]>;
   getOfficersByBarangay(barangayId: string): Promise<ChapterOfficer[]>;
   getMemberTotals(chapterId?: string, barangayId?: string): Promise<number>;
   getBirthdaysToday(): Promise<{ members: Member[]; officers: ChapterOfficer[] }>;
@@ -149,16 +153,17 @@ export interface IStorage {
 
   getPublications(): Promise<Publication[]>;
   getApprovedPublications(): Promise<Publication[]>;
-  getPublicationsByChapter(chapterId: string): Promise<Publication[]>;
+  getPublicationsByChapter(chapterId: string, options?: DateScopedListOptions): Promise<Publication[]>;
   getApprovedPublicationsByChapter(chapterId: string): Promise<Publication[]>;
   getPublication(id: string): Promise<Publication | undefined>;
+  getPublicationBySourceProjectReportId(sourceProjectReportId: string): Promise<Publication | undefined>;
   createPublication(publication: InsertPublication): Promise<Publication>;
   updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
   updatePublicationBySourceProjectReportId(sourceProjectReportId: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
   deletePublication(id: string): Promise<boolean>;
 
   getProjectReports(): Promise<ProjectReport[]>;
-  getProjectReportsByChapter(chapterId: string): Promise<ProjectReport[]>;
+  getProjectReportsByChapter(chapterId: string, options?: DateScopedListOptions): Promise<ProjectReport[]>;
   getProjectReport(id: string): Promise<ProjectReport | undefined>;
   createProjectReport(report: InsertProjectReport): Promise<ProjectReport>;
   updateProjectReport(id: string, report: Partial<InsertProjectReport>): Promise<ProjectReport | undefined>;
@@ -174,7 +179,7 @@ export interface IStorage {
   getBarangayLeaderboard(chapterId: string): Promise<{ barangayId: string; barangayName: string; memberCount: number; rank: number }[]>;
 
   getMembers(): Promise<Member[]>;
-  getMembersByChapter(chapterId: string): Promise<Member[]>;
+  getMembersByChapter(chapterId: string, options?: DateScopedListOptions): Promise<Member[]>;
   getMember(id: string): Promise<Member | undefined>;
   getMemberByApplicationReferenceId(referenceId: string): Promise<Member | undefined>;
   createMember(member: InsertMember): Promise<Member>;
@@ -352,8 +357,13 @@ export class DbStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getMembersByBarangay(barangayId: string): Promise<Member[]> {
-    return db.select().from(members).where(eq(members.barangayId, barangayId)).orderBy(desc(members.createdAt));
+  async getMembersByBarangay(barangayId: string, options?: DateScopedListOptions): Promise<Member[]> {
+    const conditions = [eq(members.barangayId, barangayId)];
+    if (options?.startDate) {
+      conditions.push(gte(members.createdAt, options.startDate));
+    }
+
+    return db.select().from(members).where(and(...conditions)).orderBy(desc(members.createdAt));
   }
 
   async getOfficersByBarangay(barangayId: string): Promise<ChapterOfficer[]> {
@@ -521,31 +531,76 @@ export class DbStorage implements IStorage {
   }
 
   async getPublications(): Promise<Publication[]> {
-    return db.select().from(publications).orderBy(desc(publications.publishedAt));
+    return db
+      .select()
+      .from(publications)
+      .orderBy(
+        sql`CASE WHEN ${publications.isApproved} THEN 0 ELSE 1 END`,
+        sql`CASE WHEN ${publications.isApproved} THEN CASE WHEN ${publications.showcaseOrder} IS NULL THEN 1 ELSE 0 END ELSE 0 END`,
+        asc(publications.showcaseOrder),
+        desc(publications.publishedAt),
+      );
   }
 
   async getApprovedPublications(): Promise<Publication[]> {
     return db
       .select()
       .from(publications)
-      .where(eq(publications.isApproved, true))
-      .orderBy(desc(publications.publishedAt));
+      .where(and(eq(publications.isApproved, true), eq(publications.isHidden, false)))
+      .orderBy(
+        sql`CASE WHEN ${publications.showcaseOrder} IS NULL THEN 1 ELSE 0 END`,
+        asc(publications.showcaseOrder),
+        desc(publications.publishedAt),
+      );
   }
 
-  async getPublicationsByChapter(chapterId: string): Promise<Publication[]> {
-    return db.select().from(publications).where(eq(publications.chapterId, chapterId)).orderBy(desc(publications.publishedAt));
+  async getPublicationsByChapter(chapterId: string, options?: DateScopedListOptions): Promise<Publication[]> {
+    const conditions = [eq(publications.chapterId, chapterId)];
+    if (options?.startDate) {
+      conditions.push(gte(publications.publishedAt, options.startDate));
+    }
+
+    return db
+      .select()
+      .from(publications)
+      .where(and(...conditions))
+      .orderBy(
+        sql`CASE WHEN ${publications.isApproved} THEN 0 ELSE 1 END`,
+        sql`CASE WHEN ${publications.isApproved} THEN CASE WHEN ${publications.showcaseOrder} IS NULL THEN 1 ELSE 0 END ELSE 0 END`,
+        asc(publications.showcaseOrder),
+        desc(publications.publishedAt),
+      );
   }
 
   async getApprovedPublicationsByChapter(chapterId: string): Promise<Publication[]> {
     return db
       .select()
       .from(publications)
-      .where(and(eq(publications.chapterId, chapterId), eq(publications.isApproved, true)))
-      .orderBy(desc(publications.publishedAt));
+      .where(
+        and(
+          eq(publications.chapterId, chapterId),
+          eq(publications.isApproved, true),
+          eq(publications.isHidden, false),
+        ),
+      )
+      .orderBy(
+        sql`CASE WHEN ${publications.showcaseOrder} IS NULL THEN 1 ELSE 0 END`,
+        asc(publications.showcaseOrder),
+        desc(publications.publishedAt),
+      );
   }
 
   async getPublication(id: string): Promise<Publication | undefined> {
     const result = await db.select().from(publications).where(eq(publications.id, id));
+    return result[0];
+  }
+
+  async getPublicationBySourceProjectReportId(sourceProjectReportId: string): Promise<Publication | undefined> {
+    const result = await db
+      .select()
+      .from(publications)
+      .where(eq(publications.sourceProjectReportId, sourceProjectReportId))
+      .limit(1);
     return result[0];
   }
 
@@ -577,8 +632,13 @@ export class DbStorage implements IStorage {
     return db.select().from(projectReports).orderBy(desc(projectReports.createdAt));
   }
 
-  async getProjectReportsByChapter(chapterId: string): Promise<ProjectReport[]> {
-    return db.select().from(projectReports).where(eq(projectReports.chapterId, chapterId)).orderBy(desc(projectReports.createdAt));
+  async getProjectReportsByChapter(chapterId: string, options?: DateScopedListOptions): Promise<ProjectReport[]> {
+    const conditions = [eq(projectReports.chapterId, chapterId)];
+    if (options?.startDate) {
+      conditions.push(gte(projectReports.createdAt, options.startDate));
+    }
+
+    return db.select().from(projectReports).where(and(...conditions)).orderBy(desc(projectReports.createdAt));
   }
 
   async getProjectReport(id: string): Promise<ProjectReport | undefined> {
@@ -700,8 +760,13 @@ export class DbStorage implements IStorage {
     return db.select().from(members).orderBy(desc(members.createdAt));
   }
 
-  async getMembersByChapter(chapterId: string): Promise<Member[]> {
-    return db.select().from(members).where(eq(members.chapterId, chapterId)).orderBy(members.fullName);
+  async getMembersByChapter(chapterId: string, options?: DateScopedListOptions): Promise<Member[]> {
+    const conditions = [eq(members.chapterId, chapterId)];
+    if (options?.startDate) {
+      conditions.push(gte(members.createdAt, options.startDate));
+    }
+
+    return db.select().from(members).where(and(...conditions)).orderBy(members.fullName);
   }
 
   async getMember(id: string): Promise<Member | undefined> {

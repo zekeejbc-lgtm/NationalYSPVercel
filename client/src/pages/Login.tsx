@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { Eye, EyeOff } from "lucide-react";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 
 interface AuthResponse {
   authenticated: boolean;
@@ -260,14 +261,19 @@ export default function Login() {
 
   if (checkingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-muted/30">
+      <>
         <DebugBanner />
-        <div className="w-full max-w-md space-y-4 px-4" role="status" aria-label="Loading login">
-          <div className="h-8 w-40 rounded-md bg-muted skeleton-shimmer mx-auto" />
-          <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
-          <div className="h-12 w-full rounded-lg bg-muted skeleton-shimmer" />
-        </div>
-      </div>
+        <AuthLoadingScreen label="Checking your session..." />
+      </>
+    );
+  }
+
+  if (loading) {
+    return (
+      <>
+        <DebugBanner />
+        <AuthLoadingScreen label="Preparing your dashboard..." />
+      </>
     );
   }
 
@@ -328,7 +334,7 @@ export default function Login() {
               disabled={loading}
               data-testid="button-login-submit"
             >
-              {loading ? "Signing in..." : "Sign In"}
+              Sign In
             </Button>
             <Button
               type="button"

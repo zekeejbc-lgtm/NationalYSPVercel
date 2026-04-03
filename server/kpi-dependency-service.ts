@@ -2,6 +2,7 @@ import type { KpiCompletion, KpiTemplate } from "@shared/schema";
 import {
   evaluateKpiDependencyRule,
   formatKpiDependencyRuleDescription,
+  parseKpiDependencyStartDateToDate,
   parseKpiDependencyConfig,
   summarizeKpiDependencyConfig,
   type KpiDependencyConfig,
@@ -25,14 +26,20 @@ function getDependencyTemplateConfig(template: KpiTemplate): KpiDependencyConfig
   return parseKpiDependencyConfig(template.linkedEntityId);
 }
 
+function getMetricCacheKey(metric: KpiDependencyMetric, startDate?: string): string {
+  return `${metric}|${startDate ?? "all_time"}`;
+}
+
 export function isAutoDependencyTemplate(template: Pick<KpiTemplate, "linkedEntityId">): boolean {
   return Boolean(parseKpiDependencyConfig(template.linkedEntityId));
 }
 
-async function resolveMetricValue(chapterId: string, metric: KpiDependencyMetric): Promise<number> {
+async function resolveMetricValue(chapterId: string, metric: KpiDependencyMetric, startDate?: string): Promise<number> {
+  const resolvedStartDate = parseKpiDependencyStartDateToDate(startDate);
+
   switch (metric) {
     case "members_directory_count": {
-      const members = await storage.getMembersByChapter(chapterId);
+      const members = await storage.getMembersByChapter(chapterId, { startDate: resolvedStartDate });
       return members.filter((member) => member.isActive).length;
     }
     case "officers_count": {
@@ -40,7 +47,7 @@ async function resolveMetricValue(chapterId: string, metric: KpiDependencyMetric
       return officers.length;
     }
     case "project_reports_count": {
-      const reports = await storage.getProjectReportsByChapter(chapterId);
+      const reports = await storage.getProjectReportsByChapter(chapterId, { startDate: resolvedStartDate });
       return reports.length;
     }
     case "documents_acknowledged_count": {
@@ -64,7 +71,7 @@ async function resolveMetricValue(chapterId: string, metric: KpiDependencyMetric
       return chapterRequests.length;
     }
     case "publications_count": {
-      const publications = await storage.getPublicationsByChapter(chapterId);
+      const publications = await storage.getPublicationsByChapter(chapterId, { startDate: resolvedStartDate });
       return publications.length;
     }
     case "active_barangay_accounts_count": {
@@ -79,19 +86,20 @@ async function resolveMetricValue(chapterId: string, metric: KpiDependencyMetric
 async function evaluateAutoDependencyConfig(
   chapterId: string,
   config: KpiDependencyConfig,
-  metricCache: Map<KpiDependencyMetric, number>,
+  metricCache: Map<string, number>,
 ): Promise<AutoDependencyEvaluation> {
   const ruleOutcomes: Array<{ ruleLine: string; passed: boolean; value: number }> = [];
 
   for (const rule of config.rules) {
-    let actualValue = metricCache.get(rule.metric);
+    const cacheKey = getMetricCacheKey(rule.metric, rule.startDate);
+    let actualValue = metricCache.get(cacheKey);
     if (actualValue === undefined) {
-      actualValue = await resolveMetricValue(chapterId, rule.metric);
-      metricCache.set(rule.metric, actualValue);
+      actualValue = await resolveMetricValue(chapterId, rule.metric, rule.startDate);
+      metricCache.set(cacheKey, actualValue);
     }
 
     const passed = evaluateKpiDependencyRule(actualValue, rule.operator, rule.targetValue);
-    const expectedRule = formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue);
+    const expectedRule = formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue, rule.startDate);
     const ruleLine = `${expectedRule}; current value is ${actualValue}`;
     ruleOutcomes.push({
       ruleLine,
@@ -160,7 +168,7 @@ export async function syncAutoDependencyKpiCompletions(
   }
 
   const existingByTemplateId = new Map(existingCompletions.map((completion) => [completion.kpiTemplateId, completion]));
-  const metricCache = new Map<KpiDependencyMetric, number>();
+  const metricCache = new Map<string, number>();
 
   for (const { template, config } of autoTemplates) {
     const evaluation = await evaluateAutoDependencyConfig(options.chapterId, config, metricCache);

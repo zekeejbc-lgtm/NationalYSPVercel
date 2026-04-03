@@ -12,6 +12,7 @@ import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/da
 import { useTheme } from "@/hooks/use-theme";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import MyProfile from "@/pages/MyProfile";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
 const ChaptersManager = lazy(() => import("@/components/admin/ChaptersManager"));
@@ -149,13 +150,7 @@ export default function Admin() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-full max-w-3xl px-4">
-          <LoadingState label="Loading dashboard..." rows={4} />
-        </div>
-      </div>
-    );
+    return <AuthLoadingScreen label="Preparing admin dashboard..." />;
   }
 
   if (!authenticated) {

@@ -13,17 +13,26 @@ export const KPI_DEPENDENCY_METRICS = [
   "active_barangay_accounts_count",
 ] as const;
 
+export const KPI_DEPENDENCY_START_DATE_METRICS = [
+  "members_directory_count",
+  "project_reports_count",
+  "publications_count",
+] as const;
+
 export const KPI_DEPENDENCY_OPERATORS = [">=", ">", "=", "<=", "<"] as const;
 
 export type KpiDependencyMetric = typeof KPI_DEPENDENCY_METRICS[number];
 export type KpiDependencyOperator = typeof KPI_DEPENDENCY_OPERATORS[number];
 export type KpiDependencyAggregation = "all" | "any";
 
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 export type KpiDependencyRule = {
   id: string;
   metric: KpiDependencyMetric;
   operator: KpiDependencyOperator;
   targetValue: number;
+  startDate?: string;
 };
 
 export type KpiDependencyConfig = {
@@ -77,6 +86,54 @@ function toFiniteNumber(value: unknown): number | null {
   return null;
 }
 
+function normalizeDateOnly(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!DATE_ONLY_PATTERN.test(trimmed)) {
+    return null;
+  }
+
+  const [yearPart, monthPart, dayPart] = trimmed.split("-");
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  const day = Number(dayPart);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+export function isKpiDependencyMetricStartDateCapable(metric: KpiDependencyMetric): boolean {
+  return (KPI_DEPENDENCY_START_DATE_METRICS as readonly string[]).includes(metric);
+}
+
+export function parseKpiDependencyStartDateToDate(startDate: string | null | undefined): Date | null {
+  const normalized = normalizeDateOnly(startDate);
+  if (!normalized) {
+    return null;
+  }
+
+  const [yearPart, monthPart, dayPart] = normalized.split("-");
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  const day = Number(dayPart);
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
 function normalizeRule(raw: unknown): KpiDependencyRule | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -97,11 +154,16 @@ function normalizeRule(raw: unknown): KpiDependencyRule | null {
       ? candidate.id.trim()
       : `rule_${Math.random().toString(36).slice(2, 10)}`;
 
+  const normalizedStartDate = isKpiDependencyMetricStartDateCapable(candidate.metric)
+    ? normalizeDateOnly(candidate.startDate)
+    : null;
+
   return {
     id: ruleId,
     metric: candidate.metric,
     operator: candidate.operator,
     targetValue: Math.round(normalizedTarget),
+    ...(normalizedStartDate ? { startDate: normalizedStartDate } : {}),
   };
 }
 
@@ -111,6 +173,7 @@ export function createDefaultKpiDependencyRule(): KpiDependencyRule {
     metric: "members_directory_count",
     operator: ">=",
     targetValue: 1,
+    startDate: undefined,
   };
 }
 
@@ -195,14 +258,16 @@ export function formatKpiDependencyRuleDescription(
   metric: KpiDependencyMetric,
   operator: KpiDependencyOperator,
   targetValue: number,
+  startDate?: string,
 ): string {
-  return `${KPI_DEPENDENCY_METRIC_LABELS[metric]} ${KPI_DEPENDENCY_OPERATOR_LABELS[operator]} ${targetValue}`;
+  const suffix = startDate ? ` (counting from ${startDate})` : "";
+  return `${KPI_DEPENDENCY_METRIC_LABELS[metric]} ${KPI_DEPENDENCY_OPERATOR_LABELS[operator]} ${targetValue}${suffix}`;
 }
 
 export function summarizeKpiDependencyConfig(config: KpiDependencyConfig): string {
   const modeLabel = config.aggregation === "any" ? "Any rule can pass" : "All rules must pass";
   const parts = config.rules.map(
-    (rule) => formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue),
+    (rule) => formatKpiDependencyRuleDescription(rule.metric, rule.operator, rule.targetValue, rule.startDate),
   );
 
   return `${modeLabel}: ${parts.join("; ")}`;

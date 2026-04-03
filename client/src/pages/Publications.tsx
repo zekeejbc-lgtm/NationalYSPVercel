@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar, ChevronDown, Facebook, ExternalLink, Image, ImageOff, X } from "lucide-react";
+import { Calendar, ChevronDown, Facebook, ExternalLink, Image, ImageOff, Search, X } from "lucide-react";
 import { format } from "date-fns";
-import type { Publication } from "@shared/schema";
+import type { Chapter, Publication } from "@shared/schema";
 import {
   applyImageFallback,
   DEFAULT_IMAGE_FALLBACK_SRC,
@@ -49,13 +50,77 @@ function PublicationCardSkeleton({ isAlternatingRow }: { isAlternatingRow: boole
 }
 
 export default function Publications() {
+  const [searchInput, setSearchInput] = useState("");
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const [fallbackImages, setFallbackImages] = useState<Record<string, boolean>>({});
   const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
   const [visibleCount, setVisibleCount] = useState(PUBLICATIONS_BATCH_SIZE);
+
   const { data: publications = [], isLoading, isError } = useQuery<Publication[]>({
-    queryKey: ["/api/publications"]
+    queryKey: ["/api/publications"],
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
   });
+  const { data: chapters = [] } = useQuery<Chapter[]>({
+    queryKey: ["/api/chapters"],
+  });
+
+  const chapterNameById = useMemo(
+    () => new Map(chapters.map((chapter) => [chapter.id, chapter.name])),
+    [chapters],
+  );
+
+  const searchTerms = useMemo(
+    () => searchInput.split(",").map((term) => term.trim().toLowerCase()).filter(Boolean),
+    [searchInput],
+  );
+
+  const getPublicationSearchBlob = (publication: Publication) => {
+    const chapterName = publication.chapterId
+      ? chapterNameById.get(publication.chapterId) || ""
+      : "National / Unassigned";
+    const publishedAtDate = new Date(publication.publishedAt);
+    const formattedDateParts = Number.isNaN(publishedAtDate.getTime())
+      ? []
+      : [
+          format(publishedAtDate, "MMMM d, yyyy 'at' h:mm a"),
+          format(publishedAtDate, "MMMM d, yyyy"),
+          format(publishedAtDate, "MMM d, yyyy"),
+          format(publishedAtDate, "yyyy-MM-dd"),
+          format(publishedAtDate, "MM/dd/yyyy"),
+          String(publishedAtDate.getFullYear()),
+        ];
+
+    const publicationValues = Object.values(publication)
+      .filter((value) => value !== null && value !== undefined)
+      .map((value) => String(value));
+
+    return [
+      ...publicationValues,
+      chapterName,
+      ...formattedDateParts,
+    ]
+      .join(" ")
+      .toLowerCase();
+  };
+
+  const filteredPublications = useMemo(
+    () => {
+      if (searchTerms.length === 0) {
+        return publications;
+      }
+
+      return publications.filter((publication) => {
+        const searchBlob = getPublicationSearchBlob(publication);
+        return searchTerms.some((term) => searchBlob.includes(term));
+      });
+    },
+    [publications, searchTerms, chapterNameById],
+  );
+
+  useEffect(() => {
+    setVisibleCount(PUBLICATIONS_BATCH_SIZE);
+  }, [searchInput]);
 
   const getPublicationPhotoUrl = (publication: Publication & { imageUrl?: string | null }) => {
     const raw = publication.photoUrl || publication.imageUrl || "";
@@ -70,12 +135,12 @@ export default function Publications() {
     return `${cleaned.slice(0, maxLength).trimEnd()}...`;
   };
 
-  const visiblePublications = publications.slice(0, visibleCount);
-  const canShowMore = visibleCount < publications.length;
-  const canHide = publications.length > PUBLICATIONS_BATCH_SIZE && visibleCount > PUBLICATIONS_BATCH_SIZE;
+  const visiblePublications = filteredPublications.slice(0, visibleCount);
+  const canShowMore = visibleCount < filteredPublications.length;
+  const canHide = filteredPublications.length > PUBLICATIONS_BATCH_SIZE && visibleCount > PUBLICATIONS_BATCH_SIZE;
 
   const handleShowMore = () => {
-    setVisibleCount((current) => Math.min(current + PUBLICATIONS_BATCH_SIZE, publications.length));
+    setVisibleCount((current) => Math.min(current + PUBLICATIONS_BATCH_SIZE, filteredPublications.length));
   };
 
   const handleHide = () => {
@@ -119,6 +184,32 @@ export default function Publications() {
             </div>
           ) : (
             <div className="space-y-8">
+              <div className="rounded-xl border bg-background p-4 md:p-5">
+                <label htmlFor="publications-search" className="mb-2 block text-sm font-medium">
+                  Search Publications
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="publications-search"
+                    value={searchInput}
+                    onChange={(event) => setSearchInput(event.target.value)}
+                    placeholder="Search title, info, chapter, date, year, links (comma-separated: Tagum, Cavite)"
+                    className="pl-9"
+                    data-testid="input-publications-search"
+                  />
+                </div>
+              </div>
+
+              {filteredPublications.length === 0 && (
+                <div className="text-center py-10 rounded-xl border bg-background" data-testid="empty-publication-search-results">
+                  <h3 className="text-lg font-semibold">No matching publications found</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Try another keyword or use comma-separated terms like Tagum, Cavite.
+                  </p>
+                </div>
+              )}
+
               {visiblePublications.map((publication, index) => {
                 const photoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
                 const usesFallbackImage = Boolean(fallbackImages[publication.id]);

@@ -380,3 +380,208 @@
     inset: -1px;
   }
 }
+
+@keyframes auth-loader-logo {
+  0% {
+    transform: scale(0.992);
+    filter: drop-shadow(0 0 0 rgba(255, 140, 38, 0.12));
+  }
+
+  100% {
+    transform: scale(1.015);
+    filter: drop-shadow(0 0 12px rgba(255, 140, 38, 0.22));
+  }
+}
+
+@keyframes auth-loader-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(230%);
+  }
+}
+
+@keyframes auth-loader-shadow-pulse {
+  0% {
+    opacity: 0.16;
+    transform: translate3d(0, 0, 0) scale(0.94);
+  }
+
+  50% {
+    opacity: 0.26;
+    transform: translate3d(0, -0.5rem, 0) scale(1.02);
+  }
+
+  100% {
+    opacity: 0.16;
+    transform: translate3d(0, 0, 0) scale(0.95);
+  }
+}
+
+@keyframes auth-loader-texture-pulse {
+  0% {
+    opacity: 0.28;
+  }
+
+  100% {
+    opacity: 0.4;
+  }
+}
+
+.auth-loading-screen {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 1.5rem;
+}
+
+.auth-loading-screen-light {
+  color: #1f1b16;
+  background:
+    linear-gradient(180deg, #faf9f7 0%, #f3f2ef 100%);
+}
+
+.auth-loading-screen-dark {
+  color: #fff3e6;
+  background:
+    linear-gradient(180deg, #151412 0%, #0f0e0d 100%);
+}
+
+.auth-loading-screen__atmosphere {
+  position: absolute;
+  inset: -12%;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.auth-loading-screen__gradient-layer {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(255, 153, 71, 0.18) 0%, rgba(255, 153, 71, 0) 46%),
+    radial-gradient(circle at 78% 24%, rgba(255, 129, 39, 0.16) 0%, rgba(255, 129, 39, 0) 42%),
+    radial-gradient(circle at 50% 82%, rgba(255, 172, 96, 0.14) 0%, rgba(255, 172, 96, 0) 48%);
+}
+
+.auth-loading-screen__texture-layer {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(
+      -35deg,
+      rgba(255, 255, 255, 0.045) 0,
+      rgba(255, 255, 255, 0.045) 2px,
+      transparent 2px,
+      transparent 11px
+    );
+  animation: auth-loader-texture-pulse 6.8s ease-in-out infinite alternate;
+}
+
+.auth-loading-screen-dark .auth-loading-screen__texture-layer {
+  background-image:
+    repeating-linear-gradient(
+      -35deg,
+      rgba(255, 255, 255, 0.022) 0,
+      rgba(255, 255, 255, 0.022) 2px,
+      transparent 2px,
+      transparent 11px
+    );
+}
+
+.auth-loading-screen__shadow {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgba(255, 161, 84, 0.3) 0%,
+    rgba(255, 124, 34, 0.16) 44%,
+    rgba(255, 124, 34, 0) 76%
+  );
+  filter: blur(26px);
+  animation: auth-loader-shadow-pulse 7.2s ease-in-out infinite;
+  transform: translate3d(0, 0, 0);
+}
+
+.auth-loading-screen__shadow-1 {
+  left: 14%;
+  top: 12%;
+  width: clamp(10rem, 27vw, 17rem);
+  height: clamp(10rem, 27vw, 17rem);
+}
+
+.auth-loading-screen__shadow-2 {
+  right: 12%;
+  bottom: 10%;
+  width: clamp(11rem, 29vw, 18rem);
+  height: clamp(11rem, 29vw, 18rem);
+  animation-delay: 1.7s;
+}
+
+.auth-loading-screen__content {
+  position: relative;
+  z-index: 1;
+  width: min(92vw, 30rem);
+  text-align: center;
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
+}
+
+.auth-loading-screen__logo {
+  width: auto;
+  height: clamp(4.75rem, 16vw, 6.5rem);
+  animation: auth-loader-logo 2.4s ease-in-out infinite alternate;
+}
+
+.auth-loading-screen__org {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: clamp(1rem, 2.9vw, 1.25rem);
+}
+
+.auth-loading-screen__label {
+  margin: 0;
+  opacity: 0.84;
+  font-size: clamp(0.86rem, 2.4vw, 0.98rem);
+}
+
+.auth-loading-screen__progress {
+  position: relative;
+  margin-top: 0.35rem;
+  height: 0.42rem;
+  width: min(70vw, 14.5rem);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.auth-loading-screen-light .auth-loading-screen__progress {
+  background: rgba(40, 28, 16, 0.14);
+}
+
+.auth-loading-screen-dark .auth-loading-screen__progress {
+  background: rgba(255, 244, 232, 0.18);
+}
+
+.auth-loading-screen__progress-bar {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #ffb46f 0%, #ff7b17 52%, #ffc68f 100%);
+  animation: auth-loader-progress 1.55s cubic-bezier(0.3, 0, 0.7, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-loading-screen__logo,
+  .auth-loading-screen__progress-bar,
+  .auth-loading-screen__texture-layer,
+  .auth-loading-screen__shadow {
+    animation: none;
+  }
+}

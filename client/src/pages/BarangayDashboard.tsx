@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
+import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
@@ -168,13 +169,7 @@ export default function BarangayDashboard() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-4 bg-muted/30">
-        <div className="w-full max-w-2xl">
-          <LoadingState label="Loading dashboard..." rows={3} compact />
-        </div>
-      </div>
-    );
+    return <AuthLoadingScreen label="Preparing barangay dashboard..." />;
   }
 
   if (!authenticated || !authUser) {
