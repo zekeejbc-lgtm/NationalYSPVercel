@@ -353,6 +353,34 @@ export default function VolunteerManager() {
     return filteredDetailOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0);
   }, [filteredDetailOpportunities]);
 
+  const globalChapterScopedCount = useMemo(() => {
+    return opportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0).length;
+  }, [opportunities]);
+
+  const globalBarangayScopedCount = useMemo(() => {
+    return opportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length > 0).length;
+  }, [opportunities]);
+
+  const globalAverageBarangaySharePercent = useMemo(() => {
+    if (opportunities.length === 0) {
+      return 0;
+    }
+
+    return Math.round((globalBarangayScopedCount / opportunities.length) * 100);
+  }, [globalBarangayScopedCount, opportunities.length]);
+
+  const detailBarangayScopedCount = useMemo(() => {
+    return filteredDetailOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length > 0).length;
+  }, [filteredDetailOpportunities]);
+
+  const detailAverageBarangaySharePercent = useMemo(() => {
+    if (filteredDetailOpportunities.length === 0) {
+      return 0;
+    }
+
+    return Math.round((detailBarangayScopedCount / filteredDetailOpportunities.length) * 100);
+  }, [detailBarangayScopedCount, filteredDetailOpportunities.length]);
+
   const barangayGroups = useMemo<BarangayOpportunityGroup[]>(() => {
     const groups = new Map<string, BarangayOpportunityGroup>();
 
@@ -779,6 +807,25 @@ export default function VolunteerManager() {
                 </Select>
               </div>
 
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">All Opportunities</p>
+                  <p className="mt-1 text-2xl font-semibold">{opportunities.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Chapter</p>
+                  <p className="mt-1 text-2xl font-semibold">{globalChapterScopedCount}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Barangay</p>
+                  <p className="mt-1 text-2xl font-semibold">{globalBarangayScopedCount}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Average %</p>
+                  <p className="mt-1 text-2xl font-semibold">{globalAverageBarangaySharePercent}%</p>
+                </div>
+              </div>
+
               {filteredChapterSummaries.length === 0 ? (
                 <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                   No chapters match your current filters.
@@ -860,6 +907,25 @@ export default function VolunteerManager() {
                     <SelectItem value="barangay">Barangay</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">All Opportunities</p>
+                  <p className="mt-1 text-2xl font-semibold">{filteredDetailOpportunities.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Chapter</p>
+                  <p className="mt-1 text-2xl font-semibold">{cityOpportunities.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Barangay</p>
+                  <p className="mt-1 text-2xl font-semibold">{detailBarangayScopedCount}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Average %</p>
+                  <p className="mt-1 text-2xl font-semibold">{detailAverageBarangaySharePercent}%</p>
+                </div>
               </div>
 
               <section className="space-y-3">

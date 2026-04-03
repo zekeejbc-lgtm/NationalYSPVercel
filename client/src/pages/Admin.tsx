@@ -2,16 +2,13 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound, ShieldCheck, Monitor, Moon, Sun, X } from "lucide-react";
+import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, ShieldCheck } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
-import { useTheme } from "@/hooks/use-theme";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
-import MyProfile from "@/pages/MyProfile";
+import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
@@ -69,11 +66,9 @@ interface BirthdayData {
 export default function Admin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { themeMode, resolvedTheme, cycleThemeMode } = useTheme();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState(readInitialAdminTab);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   const { data: householdSummary } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
@@ -157,15 +152,6 @@ export default function Admin() {
     return null;
   }
 
-  const themeActionIcon = themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor;
-  const ThemeActionIcon = themeActionIcon;
-  const currentThemeLabel =
-    themeMode === "system"
-      ? `System (${resolvedTheme === "dark" ? "Dark" : "Light"})`
-      : themeMode === "dark"
-        ? "Dark"
-        : "Light";
-
   const dashboardTabs: AdaptiveDashboardTab[] = [
     { value: "stats", label: "Stats", icon: BarChart3, group: "Insights", dataTestId: "tab-stats", mobilePriority: true, desktopPriority: true },
     { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
@@ -200,101 +186,11 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <div className="border-b bg-background">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <img 
-                src="/images/ysp-logo.png" 
-                alt="YSP Logo" 
-                className="h-10 w-auto"
-              />
-              <div>
-                <h1 className="text-xl font-bold">Admin Dashboard</h1>
-                <p className="text-sm text-muted-foreground">Manage website content</p>
-              </div>
-            </div>
-            <div className="hidden sm:flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={cycleThemeMode}
-                data-testid="button-theme-toggle-header"
-                aria-label={`Current theme ${currentThemeLabel}. Click to cycle theme.`}
-                title="Cycle theme: Light -> Dark -> System"
-              >
-                <ThemeActionIcon className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setProfileModalOpen(true)}
-                data-testid="button-my-profile"
-              >
-                <UserRound className="h-4 w-4 mr-2" />
-                My Profile
-              </Button>
-            </div>
-            <div className="sm:hidden flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={cycleThemeMode}
-                data-testid="button-theme-toggle-header-mobile"
-                aria-label={`Current theme ${currentThemeLabel}. Click to cycle theme.`}
-                title="Cycle theme: Light -> Dark -> System"
-              >
-                <ThemeActionIcon className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="sm:hidden mt-3 grid gap-2">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setProfileModalOpen(true)}
-              data-testid="button-my-profile-mobile"
-            >
-              <UserRound className="h-4 w-4 mr-2" />
-              My Profile
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <Dialog open={profileModalOpen} onOpenChange={setProfileModalOpen}>
-        <DialogContent className="max-w-4xl p-0 overflow-hidden" hideClose>
-          <div className="flex h-[85dvh] flex-col">
-            <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold">My Profile</h2>
-                <p className="text-sm text-muted-foreground">Manage your account information and password</p>
-              </div>
-              <DialogClose asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  data-testid="button-my-profile-modal-close"
-                  aria-label="Close profile panel"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </DialogClose>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <MyProfile embedded hideEmbeddedHeading />
-            </div>
-            <div className="flex justify-end border-t px-6 py-4">
-              <Button
-                variant="outline"
-                onClick={handleLogout}
-                data-testid="button-my-profile-modal-logout"
-              >
-                Logout
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <UniversalDashboardHeader
+        title="Admin Dashboard"
+        subtitle="Manage website content"
+        onLogout={handleLogout}
+      />
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-24 md:pb-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">

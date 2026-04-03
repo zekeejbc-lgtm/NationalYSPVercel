@@ -26,7 +26,8 @@ import {
   insertMouSubmissionSchema,
   insertChapterRequestSchema,
   insertNationalRequestSchema,
-  type Publication
+  type Publication,
+  type VolunteerOpportunity,
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { createClient } from "@supabase/supabase-js";
@@ -67,6 +68,21 @@ type DbDiagnostics = {
   pingMs?: number;
   errorCode?: string;
 };
+
+type VolunteerAffiliationStatus = "pending" | "approved" | "rejected";
+
+type VolunteerOpportunityWithAffiliation = VolunteerOpportunity & {
+  isAffiliatedOpportunity?: boolean;
+  affiliationId?: string;
+  affiliationStatus?: VolunteerAffiliationStatus;
+  affiliationShowName?: boolean;
+  affiliationSourceChapterId?: string;
+  affiliationSourceChapterName?: string;
+  affiliatedChapterIds?: string[];
+  affiliatedChapterNames?: string[];
+};
+
+const VOLUNTEER_AFFILIATION_TABLE = "volunteer_opportunity_affiliations";
 
 const DEFAULT_DATA_INIT_TIMEOUT_MS = 6000;
 
@@ -953,6 +969,7 @@ let memberApplicationReferenceBackfillCompleted = false;
 let memberApplicationReferenceBackfillPromise: Promise<void> | null = null;
 let kpiCompletionBarangayInfraEnsured = false;
 let volunteerOpportunityInfraEnsured = false;
+let volunteerOpportunityAffiliationInfraEnsured = false;
 let publicationsModerationInfraEnsured = false;
 let publicationShowcaseInfraEnsured = false;
 
@@ -1068,6 +1085,46 @@ async function ensureVolunteerOpportunityInfra() {
   `);
 
   volunteerOpportunityInfraEnsured = true;
+}
+
+async function ensureVolunteerOpportunityAffiliationInfra() {
+  if (volunteerOpportunityAffiliationInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${VOLUNTEER_AFFILIATION_TABLE} (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      opportunity_id varchar NOT NULL REFERENCES volunteer_opportunities(id) ON DELETE CASCADE,
+      source_chapter_id varchar NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+      affiliated_chapter_id varchar NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+      status varchar NOT NULL DEFAULT 'pending',
+      show_affiliated_name boolean NOT NULL DEFAULT false,
+      reviewed_by_chapter_id varchar NULL REFERENCES chapters(id) ON DELETE SET NULL,
+      reviewed_at timestamp without time zone NULL,
+      created_at timestamp without time zone NOT NULL DEFAULT now(),
+      updated_at timestamp without time zone NOT NULL DEFAULT now(),
+      CONSTRAINT volunteer_opportunity_affiliations_status_check
+        CHECK (status IN ('pending', 'approved', 'rejected')),
+      CONSTRAINT volunteer_opportunity_affiliations_unique_connection
+        UNIQUE (opportunity_id, affiliated_chapter_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS volunteer_opportunity_affiliations_affiliated_chapter_idx
+    ON ${VOLUNTEER_AFFILIATION_TABLE} (affiliated_chapter_id, status)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS volunteer_opportunity_affiliations_source_chapter_idx
+    ON ${VOLUNTEER_AFFILIATION_TABLE} (source_chapter_id)
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS volunteer_opportunity_affiliations_opportunity_idx
+    ON ${VOLUNTEER_AFFILIATION_TABLE} (opportunity_id)
+  `);
+
+  volunteerOpportunityAffiliationInfraEnsured = true;
 }
 
 async function ensurePublicationsModerationInfra() {
@@ -1337,6 +1394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await ensureKpiCompletionBarangayInfra();
       await ensureVolunteerOpportunityInfra();
+      await ensureVolunteerOpportunityAffiliationInfra();
       await ensurePublicationsModerationInfra();
     } catch (error: any) {
       console.error("[startup] Failed to ensure startup schema infra", {
@@ -1982,6 +2040,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!user) {
         return res.json({ authenticated: false });
       }
+      if (!req.session.chapterId) {
+        req.session.chapterId = user.chapterId;
+      }
       const chapter = await storage.getChapter(user.chapterId);
       return res.json({ 
         authenticated: true, 
@@ -2000,6 +2061,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getBarangayUser(req.session.userId);
       if (!user) {
         return res.json({ authenticated: false });
+      }
+      if (!req.session.chapterId) {
+        req.session.chapterId = user.chapterId;
+      }
+      if (!req.session.barangayId) {
+        req.session.barangayId = user.id;
+      }
+      if (!req.session.barangayName) {
+        req.session.barangayName = user.barangayName;
       }
       const chapter = await storage.getChapter(user.chapterId);
       return res.json({ 
@@ -3061,12 +3131,276 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
   };
 
+  const parseChapterIdsCsv = (value: unknown) => {
+    if (typeof value !== "string") {
+      return [] as string[];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .split(",")
+          .map((segment) => segment.trim())
+          .filter((segment) => segment.length > 0),
+      ),
+    );
+  };
+
+  const resolveAffiliatedChapterTargets = async (sourceChapterId: string, rawAffiliatedChapterIds: unknown) => {
+    const requestedChapterIds = parseChapterIdsCsv(rawAffiliatedChapterIds).filter(
+      (candidateId) => candidateId !== sourceChapterId,
+    );
+
+    if (requestedChapterIds.length === 0) {
+      return [] as string[];
+    }
+
+    const chapters = await storage.getChapters();
+    const validChapterIdSet = new Set(chapters.map((chapter) => chapter.id));
+    const invalidSelection = requestedChapterIds.find((candidateId) => !validChapterIdSet.has(candidateId));
+    if (invalidSelection) {
+      throw new Error("Invalid affiliated chapter selected");
+    }
+
+    return requestedChapterIds;
+  };
+
+  const syncVolunteerOpportunityAffiliations = async (
+    opportunityId: string,
+    sourceChapterId: string,
+    affiliatedChapterIds: string[],
+  ) => {
+    if (!pool) {
+      return;
+    }
+
+    await ensureVolunteerOpportunityAffiliationInfra();
+
+    if (affiliatedChapterIds.length === 0) {
+      await pool.query(
+        `
+          DELETE FROM ${VOLUNTEER_AFFILIATION_TABLE}
+          WHERE opportunity_id = $1 AND source_chapter_id = $2
+        `,
+        [opportunityId, sourceChapterId],
+      );
+      return;
+    }
+
+    await pool.query(
+      `
+        DELETE FROM ${VOLUNTEER_AFFILIATION_TABLE}
+        WHERE opportunity_id = $1
+          AND source_chapter_id = $2
+          AND NOT (affiliated_chapter_id = ANY($3::text[]))
+      `,
+      [opportunityId, sourceChapterId, affiliatedChapterIds],
+    );
+
+    for (const affiliatedChapterId of affiliatedChapterIds) {
+      await pool.query(
+        `
+          INSERT INTO ${VOLUNTEER_AFFILIATION_TABLE} (
+            opportunity_id,
+            source_chapter_id,
+            affiliated_chapter_id
+          )
+          VALUES ($1, $2, $3)
+          ON CONFLICT (opportunity_id, affiliated_chapter_id)
+          DO UPDATE SET
+            source_chapter_id = EXCLUDED.source_chapter_id,
+            updated_at = now()
+        `,
+        [opportunityId, sourceChapterId, affiliatedChapterId],
+      );
+    }
+  };
+
+  const getIncomingAffiliatedOpportunities = async (
+    chapterId: string,
+  ): Promise<VolunteerOpportunityWithAffiliation[]> => {
+    if (!pool) {
+      return [];
+    }
+
+    await ensureVolunteerOpportunityAffiliationInfra();
+
+    const [affiliationResult, allOpportunities] = await Promise.all([
+      pool.query<{
+        affiliation_id: string;
+        opportunity_id: string;
+        source_chapter_id: string;
+        source_chapter_name: string | null;
+        status: VolunteerAffiliationStatus;
+        show_affiliated_name: boolean;
+      }>(
+        `
+          SELECT
+            voa.id AS affiliation_id,
+            voa.opportunity_id,
+            voa.source_chapter_id,
+            source_chapter.name AS source_chapter_name,
+            voa.status,
+            voa.show_affiliated_name
+          FROM ${VOLUNTEER_AFFILIATION_TABLE} voa
+          LEFT JOIN chapters source_chapter
+            ON source_chapter.id = voa.source_chapter_id
+          WHERE voa.affiliated_chapter_id = $1
+            AND voa.source_chapter_id <> $1
+          ORDER BY voa.created_at DESC
+        `,
+        [chapterId],
+      ),
+      storage.getVolunteerOpportunities(),
+    ]);
+
+    const opportunityById = new Map(allOpportunities.map((opportunity) => [opportunity.id, opportunity]));
+
+    return affiliationResult.rows.reduce<VolunteerOpportunityWithAffiliation[]>((accumulator, row) => {
+      const opportunity = opportunityById.get(row.opportunity_id);
+      if (!opportunity) {
+        return accumulator;
+      }
+
+      accumulator.push({
+        ...opportunity,
+        isAffiliatedOpportunity: true,
+        affiliationId: row.affiliation_id,
+        affiliationStatus: row.status,
+        affiliationShowName: row.show_affiliated_name,
+        affiliationSourceChapterId: row.source_chapter_id,
+        affiliationSourceChapterName: row.source_chapter_name || opportunity.chapter || "Unknown Chapter",
+      });
+
+      return accumulator;
+    }, []);
+  };
+
+  const attachOutgoingAffiliationSelections = async (
+    sourceChapterId: string,
+    opportunities: VolunteerOpportunityWithAffiliation[],
+  ): Promise<VolunteerOpportunityWithAffiliation[]> => {
+    if (!pool || opportunities.length === 0) {
+      return opportunities.map((opportunity) => ({
+        ...opportunity,
+        affiliatedChapterIds: opportunity.affiliatedChapterIds || [],
+        affiliatedChapterNames: opportunity.affiliatedChapterNames || [],
+      }));
+    }
+
+    await ensureVolunteerOpportunityAffiliationInfra();
+
+    const opportunityIds = opportunities.map((opportunity) => opportunity.id);
+    const rows = await pool.query<{
+      opportunity_id: string;
+      affiliated_chapter_id: string;
+      affiliated_chapter_name: string | null;
+    }>(
+      `
+        SELECT
+          voa.opportunity_id,
+          voa.affiliated_chapter_id,
+          affiliated_chapter.name AS affiliated_chapter_name
+        FROM ${VOLUNTEER_AFFILIATION_TABLE} voa
+        LEFT JOIN chapters affiliated_chapter
+          ON affiliated_chapter.id = voa.affiliated_chapter_id
+        WHERE voa.source_chapter_id = $1
+          AND voa.opportunity_id = ANY($2::text[])
+      `,
+      [sourceChapterId, opportunityIds],
+    );
+
+    const idsByOpportunity = new Map<string, string[]>();
+    const namesByOpportunity = new Map<string, string[]>();
+    for (const row of rows.rows) {
+      const existingIds = idsByOpportunity.get(row.opportunity_id) || [];
+      if (!existingIds.includes(row.affiliated_chapter_id)) {
+        existingIds.push(row.affiliated_chapter_id);
+      }
+      idsByOpportunity.set(row.opportunity_id, existingIds);
+
+      if (row.affiliated_chapter_name) {
+        const existingNames = namesByOpportunity.get(row.opportunity_id) || [];
+        if (!existingNames.includes(row.affiliated_chapter_name)) {
+          existingNames.push(row.affiliated_chapter_name);
+        }
+        namesByOpportunity.set(row.opportunity_id, existingNames);
+      }
+    }
+
+    return opportunities.map((opportunity) => ({
+      ...opportunity,
+      affiliatedChapterIds: idsByOpportunity.get(opportunity.id) || [],
+      affiliatedChapterNames: namesByOpportunity.get(opportunity.id) || [],
+    }));
+  };
+
+  const attachApprovedAffiliationLabelsForPublic = async (
+    opportunities: VolunteerOpportunity[],
+  ): Promise<VolunteerOpportunityWithAffiliation[]> => {
+    if (!pool || opportunities.length === 0) {
+      return opportunities;
+    }
+
+    await ensureVolunteerOpportunityAffiliationInfra();
+
+    const opportunityIds = opportunities.map((opportunity) => opportunity.id);
+    const rows = await pool.query<{
+      opportunity_id: string;
+      affiliated_chapter_name: string | null;
+    }>(
+      `
+        SELECT
+          voa.opportunity_id,
+          affiliated_chapter.name AS affiliated_chapter_name
+        FROM ${VOLUNTEER_AFFILIATION_TABLE} voa
+        LEFT JOIN chapters affiliated_chapter
+          ON affiliated_chapter.id = voa.affiliated_chapter_id
+        WHERE voa.opportunity_id = ANY($1::text[])
+          AND voa.status = 'approved'
+          AND voa.show_affiliated_name = true
+      `,
+      [opportunityIds],
+    );
+
+    const affiliatedNamesByOpportunity = new Map<string, string[]>();
+    for (const row of rows.rows) {
+      if (!row.affiliated_chapter_name) {
+        continue;
+      }
+
+      const existingNames = affiliatedNamesByOpportunity.get(row.opportunity_id) || [];
+      if (!existingNames.includes(row.affiliated_chapter_name)) {
+        existingNames.push(row.affiliated_chapter_name);
+      }
+      affiliatedNamesByOpportunity.set(row.opportunity_id, existingNames);
+    }
+
+    return opportunities.map((opportunity) => {
+      const affiliatedNames = affiliatedNamesByOpportunity.get(opportunity.id) || [];
+      if (affiliatedNames.length === 0) {
+        return {
+          ...opportunity,
+          affiliatedChapterNames: [],
+        };
+      }
+
+      const baseLabel = (opportunity.chapter || "Chapter").trim() || "Chapter";
+      return {
+        ...opportunity,
+        chapter: `${baseLabel} + ${affiliatedNames.join(", ")}`,
+        affiliatedChapterNames: affiliatedNames,
+      };
+    });
+  };
+
   app.get("/api/volunteer-opportunities", async (req, res) => {
     const opportunities = await storage.getVolunteerOpportunities();
-    res.json(opportunities);
+    const opportunitiesWithApprovedAffiliations = await attachApprovedAffiliationLabelsForPublic(opportunities);
+    res.json(opportunitiesWithApprovedAffiliations);
   });
 
-  app.get("/api/volunteer-opportunities/:id", async (req, res) => {
+  app.get("/api/volunteer-opportunities/:id([0-9a-fA-F-]{36})", async (req, res) => {
     const opportunity = await storage.getVolunteerOpportunity(req.params.id);
     if (!opportunity) {
       return res.status(404).json({ error: "Volunteer opportunity not found" });
@@ -5874,6 +6208,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const chapterId = req.session.chapterId!;
       const chapter = await storage.getChapter(chapterId);
+      const affiliatedChapterIds = await resolveAffiliatedChapterTargets(chapterId, req.body.affiliatedChapterIds);
       const targetScope = req.body.targetScope === "barangay" ? "barangay" : "chapter";
       let connectedBarangayIds: string[] = [];
       let chapterLabel = chapter?.name || "";
@@ -5934,7 +6269,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         photoUrl
       });
       const opportunity = await storage.createVolunteerOpportunity(validated);
-      res.json(opportunity);
+      await syncVolunteerOpportunityAffiliations(opportunity.id, chapterId, affiliatedChapterIds);
+      const [responseOpportunity] = await attachOutgoingAffiliationSelections(chapterId, [opportunity]);
+      res.json(responseOpportunity || opportunity);
     } catch (error: any) {
       console.error("[volunteer-image-upload] chapter create failed", {
         route: req.originalUrl,
@@ -5970,6 +6307,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const targetScope = requestedScope
         ? (requestedScope === "barangay" ? "barangay" : "chapter")
         : (existing.barangayIds || existing.barangayId ? "barangay" : "chapter");
+      const hasAffiliatedChapterIdsPayload = typeof req.body.affiliatedChapterIds === "string";
+      const affiliatedChapterIds = hasAffiliatedChapterIdsPayload
+        ? await resolveAffiliatedChapterTargets(chapterId, req.body.affiliatedChapterIds)
+        : null;
 
       let connectedBarangayIds: string[] = [];
       let chapterLabel = chapter?.name || existing.chapter || "Chapter";
@@ -6025,7 +6366,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const updated = await storage.updateVolunteerOpportunity(req.params.id, validated);
-      res.json(updated);
+      if (!updated) {
+        return res.status(404).json({ error: "Volunteer opportunity not found" });
+      }
+
+      if (affiliatedChapterIds !== null) {
+        await syncVolunteerOpportunityAffiliations(updated.id, chapterId, affiliatedChapterIds);
+      }
+
+      const [responseOpportunity] = await attachOutgoingAffiliationSelections(chapterId, [updated]);
+      res.json(responseOpportunity || updated);
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
@@ -6051,36 +6401,215 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/volunteer-opportunities/by-chapter", requireAuth, async (req, res) => {
-    let chapterId = typeof req.query.chapterId === "string" ? req.query.chapterId : "";
+    try {
+      let chapterId = typeof req.query.chapterId === "string" ? req.query.chapterId : "";
 
-    if (req.session.role === "chapter" || req.session.role === "barangay") {
-      if (!req.session.chapterId) {
-        return res.status(401).json({ error: "Unauthorized" });
+      if (req.session.role === "chapter" || req.session.role === "barangay") {
+        let resolvedSessionChapterId = req.session.chapterId;
+        if (!resolvedSessionChapterId) {
+          if (req.session.role === "chapter") {
+            const chapterUser = req.session.userId ? await storage.getChapterUser(req.session.userId) : undefined;
+            resolvedSessionChapterId = chapterUser?.chapterId;
+          } else if (req.session.role === "barangay") {
+            const barangayUser = req.session.userId ? await storage.getBarangayUser(req.session.userId) : undefined;
+            resolvedSessionChapterId = barangayUser?.chapterId;
+          }
+
+          if (resolvedSessionChapterId) {
+            req.session.chapterId = resolvedSessionChapterId;
+          }
+        }
+
+        if (!resolvedSessionChapterId) {
+          return res.status(401).json({ error: "Unauthorized: missing chapter scope" });
+        }
+
+        if (chapterId && chapterId !== resolvedSessionChapterId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+
+        chapterId = resolvedSessionChapterId;
       }
 
-      if (chapterId && chapterId !== req.session.chapterId) {
-        return res.status(403).json({ error: "Access denied" });
+      if (!chapterId) {
+        return res.status(400).json({ error: "chapterId required" });
       }
 
-      chapterId = req.session.chapterId;
-    }
+      const [baseOpportunities, incomingAffiliatedOpportunities] = await Promise.all([
+        storage.getVolunteerOpportunitiesByChapter(chapterId),
+        getIncomingAffiliatedOpportunities(chapterId),
+      ]);
 
-    if (!chapterId) {
-      return res.status(400).json({ error: "chapterId required" });
-    }
+      const opportunitiesWithOutgoingSelections = await attachOutgoingAffiliationSelections(
+        chapterId,
+        baseOpportunities,
+      );
 
-    const opportunities = await storage.getVolunteerOpportunitiesByChapter(chapterId);
-    res.json(opportunities);
+      const mergedById = new Map<string, VolunteerOpportunityWithAffiliation>();
+      for (const opportunity of opportunitiesWithOutgoingSelections) {
+        mergedById.set(opportunity.id, opportunity);
+      }
+      for (const opportunity of incomingAffiliatedOpportunities) {
+        if (!mergedById.has(opportunity.id)) {
+          mergedById.set(opportunity.id, opportunity);
+        }
+      }
+
+      const opportunities = Array.from(mergedById.values()).sort((left, right) => {
+        const leftDate = new Date(left.deadlineAt || left.date).getTime();
+        const rightDate = new Date(right.deadlineAt || right.date).getTime();
+        return rightDate - leftDate;
+      });
+
+      res.json(opportunities);
+    } catch (error: any) {
+      console.error("[volunteer-opportunities/by-chapter] failed", {
+        role: req.session.role,
+        userId: req.session.userId,
+        chapterId: req.session.chapterId,
+        message: error?.message,
+      });
+      res.status(500).json({ error: "Failed to load chapter volunteer opportunities" });
+    }
   });
 
   app.get("/api/volunteer-opportunities/by-barangay", requireBarangayAuth, async (req, res) => {
-    const barangayId = req.session.barangayId;
-    if (!barangayId) {
-      return res.status(400).json({ error: "barangayId required" });
-    }
+    try {
+      let barangayId = req.session.barangayId;
+      if (!barangayId) {
+        const barangayUser = req.session.userId ? await storage.getBarangayUser(req.session.userId) : undefined;
+        if (barangayUser) {
+          barangayId = barangayUser.id;
+          req.session.barangayId = barangayUser.id;
+          if (!req.session.chapterId) {
+            req.session.chapterId = barangayUser.chapterId;
+          }
+          if (!req.session.barangayName) {
+            req.session.barangayName = barangayUser.barangayName;
+          }
+        }
+      }
 
-    const opportunities = await storage.getVolunteerOpportunitiesByBarangay(barangayId);
-    res.json(opportunities);
+      if (!barangayId) {
+        return res.status(400).json({ error: "barangayId required" });
+      }
+
+      const baseOpportunities = await storage.getVolunteerOpportunitiesByBarangay(barangayId);
+      const chapterScopedIncomingAffiliations = req.session.chapterId
+        ? await getIncomingAffiliatedOpportunities(req.session.chapterId)
+        : [];
+
+      const mergedById = new Map<string, VolunteerOpportunityWithAffiliation>();
+      for (const opportunity of baseOpportunities) {
+        mergedById.set(opportunity.id, opportunity);
+      }
+      for (const opportunity of chapterScopedIncomingAffiliations) {
+        if (!mergedById.has(opportunity.id)) {
+          mergedById.set(opportunity.id, opportunity);
+        }
+      }
+
+      const opportunities = Array.from(mergedById.values()).sort((left, right) => {
+        const leftDate = new Date(left.deadlineAt || left.date).getTime();
+        const rightDate = new Date(right.deadlineAt || right.date).getTime();
+        return rightDate - leftDate;
+      });
+
+      res.json(opportunities);
+    } catch (error: any) {
+      console.error("[volunteer-opportunities/by-barangay] failed", {
+        role: req.session.role,
+        userId: req.session.userId,
+        chapterId: req.session.chapterId,
+        barangayId: req.session.barangayId,
+        message: error?.message,
+      });
+      res.status(500).json({ error: "Failed to load barangay volunteer opportunities" });
+    }
+  });
+
+  app.patch("/api/volunteer-opportunities/affiliations/:id/review", requireChapterAuth, async (req, res) => {
+    try {
+      if (!pool) {
+        return res.status(500).json({ error: "Database unavailable" });
+      }
+
+      const chapterId = req.session.chapterId;
+      if (!chapterId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const action = typeof req.body.action === "string" ? req.body.action.trim().toLowerCase() : "";
+      if (action !== "approve" && action !== "reject") {
+        return res.status(400).json({ error: "Invalid action" });
+      }
+
+      await ensureVolunteerOpportunityAffiliationInfra();
+
+      const existingResult = await pool.query<{
+        id: string;
+        opportunity_id: string;
+        affiliated_chapter_id: string;
+      }>(
+        `
+          SELECT id, opportunity_id, affiliated_chapter_id
+          FROM ${VOLUNTEER_AFFILIATION_TABLE}
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [req.params.id],
+      );
+
+      const existing = existingResult.rows[0];
+      if (!existing) {
+        return res.status(404).json({ error: "Affiliation request not found" });
+      }
+
+      if (existing.affiliated_chapter_id !== chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const nextStatus: VolunteerAffiliationStatus = action === "approve" ? "approved" : "rejected";
+      const showAffiliatedName = action === "approve";
+
+      const updatedResult = await pool.query<{
+        id: string;
+        opportunity_id: string;
+        source_chapter_id: string;
+        affiliated_chapter_id: string;
+        status: VolunteerAffiliationStatus;
+        show_affiliated_name: boolean;
+        reviewed_by_chapter_id: string | null;
+        reviewed_at: Date | null;
+        updated_at: Date;
+      }>(
+        `
+          UPDATE ${VOLUNTEER_AFFILIATION_TABLE}
+          SET
+            status = $1,
+            show_affiliated_name = $2,
+            reviewed_by_chapter_id = $3,
+            reviewed_at = now(),
+            updated_at = now()
+          WHERE id = $4
+          RETURNING
+            id,
+            opportunity_id,
+            source_chapter_id,
+            affiliated_chapter_id,
+            status,
+            show_affiliated_name,
+            reviewed_by_chapter_id,
+            reviewed_at,
+            updated_at
+        `,
+        [nextStatus, showAffiliatedName, chapterId, req.params.id],
+      );
+
+      res.json(updatedResult.rows[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to review affiliation" });
+    }
   });
 
   app.post("/api/volunteer-opportunities/barangay", requireBarangayAuth, volunteerUpload.single("photo"), async (req, res) => {
@@ -6539,6 +7068,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void ensureVolunteerOpportunityInfra().catch((error: any) => {
       console.error("[startup] Failed to ensure volunteer opportunity infra", {
+        message: error?.message,
+      });
+    });
+    void ensureVolunteerOpportunityAffiliationInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure volunteer opportunity affiliation infra", {
         message: error?.message,
       });
     });

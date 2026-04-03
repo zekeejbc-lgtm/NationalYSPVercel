@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,19 +37,23 @@ import {
   AlertTriangle,
   Image,
   ExternalLink,
+  Eye,
   Edit,
   Trash2,
   Search,
   ListFilter,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { format } from "date-fns";
-import type { VolunteerOpportunity } from "@shared/schema";
+import type { Chapter, VolunteerOpportunity } from "@shared/schema";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 const VOLUNTEER_DISCLAIMER = "Volunteers are reminded that they are responsible for their own safety and situational awareness during activities. Participation is advised for individuals 18 years old and above. Volunteers below 18 years old must submit a Parent's Consent Form prior to participation.";
 
 type ScopeFilter = "all" | "city" | "barangay";
 type StatusFilter = "all" | "open" | "done";
+type AffiliationModerationFilter = "all" | VolunteerAffiliationStatus;
 
 type VolunteerFormState = {
   eventName: string;
@@ -80,7 +84,20 @@ interface ChapterBarangayOption {
 interface BarangayOpportunityGroup {
   key: string;
   label: string;
-  opportunities: VolunteerOpportunity[];
+  opportunities: VolunteerOpportunityRow[];
+}
+
+type VolunteerAffiliationStatus = "pending" | "approved" | "rejected";
+
+interface VolunteerOpportunityRow extends VolunteerOpportunity {
+  isAffiliatedOpportunity?: boolean;
+  affiliationId?: string;
+  affiliationStatus?: VolunteerAffiliationStatus;
+  affiliationShowName?: boolean;
+  affiliationSourceChapterId?: string;
+  affiliationSourceChapterName?: string;
+  affiliatedChapterIds?: string[];
+  affiliatedChapterNames?: string[];
 }
 
 const EMPTY_FORM: VolunteerFormState = {
@@ -128,28 +145,163 @@ export default function VolunteerOpportunityPanel({
   const { toast } = useToast();
   const confirmDelete = useDeleteConfirmation();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingOpportunity, setEditingOpportunity] = useState<VolunteerOpportunity | null>(null);
+  const [editingOpportunity, setEditingOpportunity] = useState<VolunteerOpportunityRow | null>(null);
   const [targetScope, setTargetScope] = useState<"chapter" | "barangay">("chapter");
   const [selectedBarangayIds, setSelectedBarangayIds] = useState<string[]>([]);
+  const [selectedAffiliatedChapterIds, setSelectedAffiliatedChapterIds] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [publicPreviewOpportunity, setPublicPreviewOpportunity] = useState<VolunteerOpportunity | null>(null);
+  const [publicPreviewFullImageUrl, setPublicPreviewFullImageUrl] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [affiliationModerationFilter, setAffiliationModerationFilter] = useState<AffiliationModerationFilter>("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastCreatedOpportunityIdRef = useRef<string | null>(null);
   const [formData, setFormData] = useState<VolunteerFormState>(EMPTY_FORM);
 
-  const { data: opportunities = [], isLoading } = useQuery<VolunteerOpportunity[]>({
+  const selectedFilePreviewUrl = useMemo(() => {
+    if (!selectedFile) {
+      return "";
+    }
+    return URL.createObjectURL(selectedFile);
+  }, [selectedFile]);
+
+  useEffect(() => {
+    if (!selectedFilePreviewUrl) {
+      return;
+    }
+
+    return () => {
+      URL.revokeObjectURL(selectedFilePreviewUrl);
+    };
+  }, [selectedFilePreviewUrl]);
+
+  const existingPhotoPreviewUrl = useMemo(() => {
+    if (!editingOpportunity?.photoUrl) {
+      return "";
+    }
+    return getDisplayImageUrl(editingOpportunity.photoUrl);
+  }, [editingOpportunity?.photoUrl]);
+
+  const activePhotoPreviewUrl = selectedFilePreviewUrl || existingPhotoPreviewUrl;
+
+  const publicPreviewDisplayPhoto = publicPreviewOpportunity?.photoUrl
+    ? getDisplayImageUrl(publicPreviewOpportunity.photoUrl)
+    : "";
+  const publicPreviewIsDone = publicPreviewOpportunity
+    ? isPastDateTime(publicPreviewOpportunity.deadlineAt || publicPreviewOpportunity.date)
+    : false;
+  const publicPreviewLinkedBarangayIds = publicPreviewOpportunity
+    ? getConnectedBarangayIds(publicPreviewOpportunity)
+    : [];
+  const publicPreviewLinkedBarangayNames = publicPreviewLinkedBarangayIds
+    .map((id) => barangayNameById.get(id) || id)
+    .filter((name, index, source) => source.indexOf(name) === index);
+  const publicPreviewConnectionType = !publicPreviewOpportunity
+    ? "city"
+    : !publicPreviewOpportunity.chapterId
+    ? "national"
+    : publicPreviewLinkedBarangayIds.length > 0
+    ? "barangay"
+    : "city";
+  const publicPreviewConnectionLabel = !publicPreviewOpportunity
+    ? ""
+    : publicPreviewConnectionType === "national"
+    ? "National Chapter"
+    : publicPreviewOpportunity.chapter || "Chapter";
+  const publicPreviewSdgs = publicPreviewOpportunity?.sdgs
+    ? publicPreviewOpportunity.sdgs
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+    : [];
+
+  const {
+    data: opportunities = [],
+    isLoading,
+    isError: opportunitiesQueryFailed,
+    error: opportunitiesQueryError,
+  } = useQuery<VolunteerOpportunityRow[]>({
     queryKey: ["/api/volunteer-opportunities", role, chapterId, barangayId],
     queryFn: async () => {
       const endpoint = role === "barangay"
         ? "/api/volunteer-opportunities/by-barangay"
         : `/api/volunteer-opportunities/by-chapter?chapterId=${chapterId}`;
 
+      console.log("[VolunteerDebug] fetch opportunities start", {
+        role,
+        chapterId,
+        barangayId,
+        endpoint,
+      });
+
       const response = await fetch(endpoint, { credentials: "include" });
       if (!response.ok) {
-        throw new Error("Failed to fetch volunteer opportunities");
+        const errorText = await response.text().catch(() => "");
+        const canUseChapterFallback =
+          role === "chapter" &&
+          response.status === 404 &&
+          errorText.includes("Volunteer opportunity not found");
+
+        if (canUseChapterFallback) {
+          console.warn("[VolunteerDebug] by-chapter endpoint returned 404; using fallback list endpoint", {
+            chapterId,
+            endpoint,
+          });
+
+          const fallbackResponse = await fetch("/api/volunteer-opportunities", {
+            credentials: "include",
+          });
+
+          if (fallbackResponse.ok) {
+            const fallbackItems = (await fallbackResponse.json()) as VolunteerOpportunityRow[];
+            const chapterScoped = fallbackItems.filter((item) => item.chapterId === chapterId);
+            console.log("[VolunteerDebug] fallback list success", {
+              chapterId,
+              totalFallbackCount: fallbackItems.length,
+              chapterScopedCount: chapterScoped.length,
+              chapterScopedIds: chapterScoped.slice(0, 10).map((item) => item.id),
+            });
+            return chapterScoped;
+          }
+
+          const fallbackErrorText = await fallbackResponse.text().catch(() => "");
+          console.error("[VolunteerDebug] fallback list failed", {
+            chapterId,
+            status: fallbackResponse.status,
+            statusText: fallbackResponse.statusText,
+            errorText: fallbackErrorText,
+          });
+        }
+
+        console.error("[VolunteerDebug] fetch opportunities failed", {
+          role,
+          chapterId,
+          barangayId,
+          endpoint,
+          status: response.status,
+          statusText: response.statusText,
+          errorText,
+        });
+        const safeDetails = (errorText || "").trim();
+        throw new Error(
+          safeDetails
+            ? `Failed to fetch volunteer opportunities (${response.status}): ${safeDetails}`
+            : `Failed to fetch volunteer opportunities (${response.status})`,
+        );
       }
-      return response.json();
+
+      const fetched = (await response.json()) as VolunteerOpportunityRow[];
+      console.log("[VolunteerDebug] fetch opportunities success", {
+        role,
+        chapterId,
+        barangayId,
+        endpoint,
+        count: fetched.length,
+        ids: fetched.slice(0, 10).map((item) => item.id),
+      });
+      return fetched;
     },
     enabled: role === "barangay" ? Boolean(barangayId) : Boolean(chapterId),
   });
@@ -166,6 +318,18 @@ export default function VolunteerOpportunityPanel({
     enabled: Boolean(chapterId),
   });
 
+  const { data: chapters = [] } = useQuery<Chapter[]>({
+    queryKey: ["/api/chapters", "volunteer-panel", "affiliations"],
+    queryFn: async () => {
+      const response = await fetch("/api/chapters", { credentials: "include" });
+      if (!response.ok) {
+        throw new Error("Failed to fetch chapters");
+      }
+      return response.json();
+    },
+    enabled: role === "chapter",
+  });
+
   const barangayNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const item of barangays) {
@@ -173,6 +337,18 @@ export default function VolunteerOpportunityPanel({
     }
     return map;
   }, [barangays]);
+
+  const chapterNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of chapters) {
+      map.set(item.id, item.name);
+    }
+    return map;
+  }, [chapters]);
+
+  const availableAffiliatedChapters = useMemo(() => {
+    return chapters.filter((chapter) => chapter.id !== chapterId);
+  }, [chapterId, chapters]);
 
   const selectedBarangayLabel = useMemo(() => {
     if (selectedBarangayIds.length === 0) {
@@ -189,6 +365,22 @@ export default function VolunteerOpportunityPanel({
 
     return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
   }, [barangayNameById, selectedBarangayIds]);
+
+  const selectedAffiliatedChapterLabel = useMemo(() => {
+    if (selectedAffiliatedChapterIds.length === 0) {
+      return "Select affiliated chapters (optional)";
+    }
+
+    const names = selectedAffiliatedChapterIds
+      .map((id) => chapterNameById.get(id) || id)
+      .filter((name, index, source) => source.indexOf(name) === index);
+
+    if (names.length <= 2) {
+      return names.join(", ");
+    }
+
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
+  }, [chapterNameById, selectedAffiliatedChapterIds]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -217,6 +409,7 @@ export default function VolunteerOpportunityPanel({
     setIsDialogOpen(false);
     setTargetScope(role === "chapter" ? "chapter" : "barangay");
     setSelectedBarangayIds([]);
+    setSelectedAffiliatedChapterIds([]);
     setSelectedFile(null);
     setFormData(EMPTY_FORM);
     if (fileInputRef.current) {
@@ -228,6 +421,7 @@ export default function VolunteerOpportunityPanel({
     setEditingOpportunity(null);
     setTargetScope(role === "chapter" ? "chapter" : "barangay");
     setSelectedBarangayIds([]);
+    setSelectedAffiliatedChapterIds([]);
     setFormData(EMPTY_FORM);
     setSelectedFile(null);
     if (fileInputRef.current) {
@@ -236,11 +430,12 @@ export default function VolunteerOpportunityPanel({
     setIsDialogOpen(true);
   };
 
-  const openEditDialog = (opportunity: VolunteerOpportunity) => {
+  const openEditDialog = (opportunity: VolunteerOpportunityRow) => {
     const connectedBarangayIds = getConnectedBarangayIds(opportunity);
     setEditingOpportunity(opportunity);
     setTargetScope(role === "chapter" && connectedBarangayIds.length > 0 ? "barangay" : "chapter");
     setSelectedBarangayIds(connectedBarangayIds);
+    setSelectedAffiliatedChapterIds(opportunity.affiliatedChapterIds || []);
     setSelectedFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -269,6 +464,21 @@ export default function VolunteerOpportunityPanel({
       const payload = new FormData();
       const deadlineAt = toManilaUtcIsoFromInput(data.deadlineAt);
 
+      console.log("[VolunteerDebug] create submit start", {
+        role,
+        chapterId,
+        barangayId,
+        targetScope,
+        selectedBarangayIds,
+        hasPhoto: Boolean(file),
+        eventName: data.eventName,
+        date: data.date,
+        time: data.time,
+        venue: data.venue,
+        contactName: data.contactName,
+        deadlineAt,
+      });
+
       payload.append("eventName", data.eventName);
       payload.append("date", data.date);
       payload.append("time", data.time);
@@ -288,6 +498,7 @@ export default function VolunteerOpportunityPanel({
           payload.append("barangayIds", selectedBarangayIds.join(","));
           payload.append("barangayId", selectedBarangayIds[0]);
         }
+        payload.append("affiliatedChapterIds", selectedAffiliatedChapterIds.join(","));
       }
 
       if (file) {
@@ -306,18 +517,52 @@ export default function VolunteerOpportunityPanel({
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        console.error("[VolunteerDebug] create submit failed", {
+          role,
+          chapterId,
+          barangayId,
+          endpoint,
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+        });
         throw new Error(errorData?.error || "Failed to create volunteer opportunity");
       }
 
-      return response.json();
+      const created = (await response.json()) as VolunteerOpportunity;
+      console.log("[VolunteerDebug] create submit success", {
+        role,
+        chapterId,
+        barangayId,
+        endpoint,
+        createdId: created?.id,
+        createdEventName: created?.eventName,
+        createdChapterId: created?.chapterId,
+        createdBarangayId: created?.barangayId,
+        createdBarangayIds: created?.barangayIds,
+      });
+      return created;
     },
-    onSuccess: () => {
+    onSuccess: (createdOpportunity) => {
+      lastCreatedOpportunityIdRef.current = createdOpportunity?.id || null;
+      console.log("[VolunteerDebug] invalidating volunteer opportunities queries after create", {
+        role,
+        chapterId,
+        barangayId,
+        createdId: createdOpportunity?.id,
+      });
       toast({ title: "Success", description: "Volunteer opportunity saved successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
       queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities", role, chapterId, barangayId] });
       resetForm();
     },
     onError: (error: any) => {
+      console.error("[VolunteerDebug] create mutation onError", {
+        role,
+        chapterId,
+        barangayId,
+        message: error?.message,
+      });
       toast({ title: "Error", description: error?.message || "Failed to create volunteer opportunity", variant: "destructive" });
     },
   });
@@ -346,6 +591,7 @@ export default function VolunteerOpportunityPanel({
           payload.append("barangayIds", selectedBarangayIds.join(","));
           payload.append("barangayId", selectedBarangayIds[0]);
         }
+        payload.append("affiliatedChapterIds", selectedAffiliatedChapterIds.join(","));
       }
 
       if (file) {
@@ -408,8 +654,60 @@ export default function VolunteerOpportunityPanel({
     },
   });
 
+  const reviewAffiliationMutation = useMutation({
+    mutationFn: async ({
+      affiliationId,
+      action,
+    }: {
+      affiliationId: string;
+      action: "approve" | "reject";
+    }) => {
+      const response = await fetch(`/api/volunteer-opportunities/affiliations/${affiliationId}/review`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData?.error || "Failed to review affiliation");
+      }
+
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      toast({
+        title: "Success",
+        description:
+          variables.action === "approve"
+            ? "Affiliation approved. Chapter name is now visible on landing page."
+            : "Affiliation rejected. Chapter name is now hidden on landing page.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/volunteer-opportunities", role, chapterId, barangayId] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error?.message || "Failed to review affiliation", variant: "destructive" });
+    },
+  });
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+
+    console.log("[VolunteerDebug] form submit", {
+      mode: editingOpportunity ? "update" : "create",
+      role,
+      chapterId,
+      barangayId,
+      targetScope,
+      selectedBarangayIds,
+      selectedAffiliatedChapterIds,
+      eventName: formData.eventName,
+      date: formData.date,
+      time: formData.time,
+      venue: formData.venue,
+    });
 
     if (!formData.eventName || !formData.date || !formData.time || !formData.venue || !formData.description || !formData.contactName || !formData.contactPhone) {
       toast({ title: "Error", description: "Please fill in all required fields", variant: "destructive" });
@@ -436,6 +734,15 @@ export default function VolunteerOpportunityPanel({
     deleteMutation.mutate(opportunity.id);
   };
 
+  const openPublicPreview = (opportunity: VolunteerOpportunity) => {
+    setPublicPreviewOpportunity(opportunity);
+    setPublicPreviewFullImageUrl(null);
+    console.log("[VolunteerDebug] open public preview", {
+      opportunityId: opportunity.id,
+      mode: "modal",
+    });
+  };
+
   const toggleBarangaySelection = (candidateId: string, checked: boolean) => {
     if (checked) {
       setSelectedBarangayIds((current) => {
@@ -448,6 +755,20 @@ export default function VolunteerOpportunityPanel({
     }
 
     setSelectedBarangayIds((current) => current.filter((id) => id !== candidateId));
+  };
+
+  const toggleAffiliatedChapterSelection = (candidateId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedAffiliatedChapterIds((current) => {
+        if (current.includes(candidateId)) {
+          return current;
+        }
+        return [...current, candidateId];
+      });
+      return;
+    }
+
+    setSelectedAffiliatedChapterIds((current) => current.filter((id) => id !== candidateId));
   };
 
   const sortedOpportunities = useMemo(() => {
@@ -506,14 +827,32 @@ export default function VolunteerOpportunityPanel({
     });
   }, [barangayNameById, role, scopeFilter, searchTerm, sortedOpportunities, statusFilter]);
 
-  const cityChapterOpportunities = useMemo(() => {
-    return filteredOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0);
+  const localFilteredOpportunities = useMemo(() => {
+    return filteredOpportunities.filter((opportunity) => !opportunity.isAffiliatedOpportunity);
   }, [filteredOpportunities]);
+
+  const affiliatedFilteredOpportunities = useMemo(() => {
+    return filteredOpportunities.filter((opportunity) => opportunity.isAffiliatedOpportunity);
+  }, [filteredOpportunities]);
+
+  const moderatedAffiliatedOpportunities = useMemo(() => {
+    if (role !== "chapter" || affiliationModerationFilter === "all") {
+      return affiliatedFilteredOpportunities;
+    }
+
+    return affiliatedFilteredOpportunities.filter(
+      (opportunity) => opportunity.affiliationStatus === affiliationModerationFilter,
+    );
+  }, [affiliatedFilteredOpportunities, affiliationModerationFilter, role]);
+
+  const cityChapterOpportunities = useMemo(() => {
+    return localFilteredOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0);
+  }, [localFilteredOpportunities]);
 
   const barangayOpportunityGroups = useMemo<BarangayOpportunityGroup[]>(() => {
     const groups = new Map<string, BarangayOpportunityGroup>();
 
-    for (const opportunity of filteredOpportunities) {
+    for (const opportunity of localFilteredOpportunities) {
       const linkedBarangayIds = getConnectedBarangayIds(opportunity);
       if (linkedBarangayIds.length === 0) {
         continue;
@@ -536,31 +875,152 @@ export default function VolunteerOpportunityPanel({
     }
 
     return Array.from(groups.values()).sort((left, right) => left.label.localeCompare(right.label));
-  }, [barangayNameById, filteredOpportunities]);
+  }, [barangayNameById, localFilteredOpportunities]);
+
+  const affiliatedCityChapterOpportunities = useMemo(() => {
+    return moderatedAffiliatedOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0);
+  }, [moderatedAffiliatedOpportunities]);
+
+  const affiliatedBarangayOpportunities = useMemo(() => {
+    return moderatedAffiliatedOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length > 0);
+  }, [moderatedAffiliatedOpportunities]);
 
   const barangayOwnedOpportunities = useMemo(() => {
     if (!barangayId) {
-      return [] as VolunteerOpportunity[];
+      return [] as VolunteerOpportunityRow[];
     }
-    return filteredOpportunities.filter((opportunity) => opportunity.barangayId === barangayId);
-  }, [barangayId, filteredOpportunities]);
+    return localFilteredOpportunities.filter((opportunity) => opportunity.barangayId === barangayId);
+  }, [barangayId, localFilteredOpportunities]);
 
   const barangayConnectedFromCity = useMemo(() => {
     if (!barangayId) {
-      return [] as VolunteerOpportunity[];
+      return [] as VolunteerOpportunityRow[];
     }
 
-    return filteredOpportunities.filter((opportunity) => {
+    return localFilteredOpportunities.filter((opportunity) => {
       if (opportunity.barangayId === barangayId) {
         return false;
       }
       return getConnectedBarangayIds(opportunity).includes(barangayId);
     });
-  }, [barangayId, filteredOpportunities]);
+  }, [barangayId, localFilteredOpportunities]);
 
-  const isPending = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
+  const barangayGroupedOpportunityCount = useMemo(() => {
+    return barangayOpportunityGroups.reduce((sum, group) => sum + group.opportunities.length, 0);
+  }, [barangayOpportunityGroups]);
 
-  const renderOpportunityCard = (opportunity: VolunteerOpportunity, canManage: boolean) => {
+  const chapterScopedOpportunityCount = useMemo(() => {
+    return filteredOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length === 0).length;
+  }, [filteredOpportunities]);
+
+  const barangayScopedOpportunityCount = useMemo(() => {
+    return filteredOpportunities.filter((opportunity) => getConnectedBarangayIds(opportunity).length > 0).length;
+  }, [filteredOpportunities]);
+
+  const averageBarangaySharePercent = useMemo(() => {
+    if (filteredOpportunities.length === 0) {
+      return 0;
+    }
+
+    return Math.round((barangayScopedOpportunityCount / filteredOpportunities.length) * 100);
+  }, [barangayScopedOpportunityCount, filteredOpportunities.length]);
+
+  useEffect(() => {
+    console.log("[VolunteerDebug] panel list state", {
+      role,
+      chapterId,
+      barangayId,
+      scopeFilter,
+      statusFilter,
+      affiliationModerationFilter,
+      searchTerm,
+      opportunitiesCount: opportunities.length,
+      filteredCount: filteredOpportunities.length,
+      localFilteredCount: localFilteredOpportunities.length,
+      affiliatedFilteredCount: affiliatedFilteredOpportunities.length,
+      moderatedAffiliatedCount: moderatedAffiliatedOpportunities.length,
+      cityChapterCount: cityChapterOpportunities.length,
+      barangayGroupedCount: barangayGroupedOpportunityCount,
+      affiliatedCityCount: affiliatedCityChapterOpportunities.length,
+      affiliatedBarangayCount: affiliatedBarangayOpportunities.length,
+      barangayOwnedCount: barangayOwnedOpportunities.length,
+      barangayConnectedFromCityCount: barangayConnectedFromCity.length,
+    });
+
+    if (!lastCreatedOpportunityIdRef.current) {
+      return;
+    }
+
+    const createdId = lastCreatedOpportunityIdRef.current;
+    const existsInFetched = opportunities.some((item) => item.id === createdId);
+    const existsInFiltered = filteredOpportunities.some((item) => item.id === createdId);
+
+    if (!existsInFetched) {
+      console.error("[VolunteerDebug] created opportunity missing from fetched opportunities", {
+        createdId,
+        role,
+        chapterId,
+        barangayId,
+      });
+      return;
+    }
+
+    if (!existsInFiltered) {
+      console.error("[VolunteerDebug] created opportunity is fetched but hidden by filters", {
+        createdId,
+        scopeFilter,
+        statusFilter,
+        searchTerm,
+      });
+      return;
+    }
+
+    console.log("[VolunteerDebug] created opportunity is visible in current view", {
+      createdId,
+    });
+  }, [
+    affiliatedBarangayOpportunities.length,
+    affiliatedCityChapterOpportunities.length,
+    affiliatedFilteredOpportunities.length,
+    affiliationModerationFilter,
+    barangayConnectedFromCity.length,
+    barangayGroupedOpportunityCount,
+    barangayId,
+    barangayOwnedOpportunities.length,
+    chapterId,
+    cityChapterOpportunities.length,
+    filteredOpportunities,
+    localFilteredOpportunities.length,
+    opportunities,
+    moderatedAffiliatedOpportunities.length,
+    role,
+    scopeFilter,
+    searchTerm,
+    statusFilter,
+  ]);
+
+  const isPending =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    deleteMutation.isPending ||
+    reviewAffiliationMutation.isPending;
+
+  const handleAffiliationReview = (opportunity: VolunteerOpportunityRow, action: "approve" | "reject") => {
+    if (!opportunity.affiliationId) {
+      return;
+    }
+
+    reviewAffiliationMutation.mutate({
+      affiliationId: opportunity.affiliationId,
+      action,
+    });
+  };
+
+  const renderOpportunityCard = (
+    opportunity: VolunteerOpportunityRow,
+    options: { canManage: boolean; canReviewAffiliation?: boolean },
+  ) => {
+    const { canManage, canReviewAffiliation = false } = options;
     const displayPhotoUrl = opportunity.photoUrl ? getDisplayImageUrl(opportunity.photoUrl) : "";
     const linkedBarangayIds = getConnectedBarangayIds(opportunity);
     const linkedBarangayNames = linkedBarangayIds
@@ -569,20 +1029,25 @@ export default function VolunteerOpportunityPanel({
     const isDone = isPastDateTime(opportunity.deadlineAt || opportunity.date);
 
     return (
-      <div key={opportunity.id} className="rounded-lg border p-4">
-        <div className="flex items-start justify-between gap-3">
+      <div key={opportunity.id} className="rounded-xl border bg-card/40 p-3 sm:p-4">
+        <div className="space-y-3">
           <div className="flex items-start gap-3">
             {displayPhotoUrl && (
               <img
                 src={displayPhotoUrl}
                 alt={opportunity.eventName}
-                className="h-16 w-16 rounded-md object-cover"
+                className="h-14 w-14 flex-none rounded-md object-cover sm:h-16 sm:w-16"
                 loading="lazy"
                 decoding="async"
                 onLoad={(event) => {
                   resetImageFallback(event.currentTarget);
                 }}
                 onError={(event) => {
+                  console.error("[VolunteerDebug] card image failed to load", {
+                    opportunityId: opportunity.id,
+                    photoUrl: opportunity.photoUrl,
+                    attemptedSrc: displayPhotoUrl,
+                  });
                   if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
                     event.currentTarget.style.display = "none";
                   }
@@ -590,98 +1055,158 @@ export default function VolunteerOpportunityPanel({
               />
             )}
 
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <h4 className="font-semibold">{opportunity.eventName}</h4>
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <h4 className="text-sm font-semibold leading-tight break-words sm:text-base">{opportunity.eventName}</h4>
+                <Badge className="shrink-0">{opportunity.ageRequirement}</Badge>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
                 <Badge variant={isDone ? "secondary" : "default"}>{isDone ? "Done" : "Open"}</Badge>
                 {linkedBarangayIds.length > 0 ? (
                   <Badge variant="outline">Barangay Opportunity</Badge>
                 ) : (
                   <Badge variant="outline">City Chapter Opportunity</Badge>
                 )}
+                {opportunity.isAffiliatedOpportunity && <Badge variant="secondary">Affiliated</Badge>}
+                {opportunity.affiliationStatus && (
+                  <Badge variant="outline">
+                    Affiliation {opportunity.affiliationStatus === "approved" ? "Approved" : opportunity.affiliationStatus === "rejected" ? "Rejected" : "Pending"}
+                  </Badge>
+                )}
               </div>
-
-              <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-3.5 w-3.5" />
-                  {format(new Date(opportunity.date), "MMM d, yyyy")}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5" />
-                  {opportunity.time || "TBD"}
-                </span>
-                <span className="flex items-center gap-1">
-                  <MapPin className="h-3.5 w-3.5" />
-                  {opportunity.venue || "TBD"}
-                </span>
-                <span className="flex items-center gap-1">
-                  <User className="h-3.5 w-3.5" />
-                  {opportunity.contactName}
-                </span>
-              </div>
-
-              {opportunity.deadlineAt && (
-                <p className="text-xs text-muted-foreground">
-                  Deadline (Manila): {formatManilaDateTime12(opportunity.deadlineAt)}
-                </p>
-              )}
-
-              {linkedBarangayNames.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Connected barangays: {linkedBarangayNames.join(", ")}
-                </p>
-              )}
-
-              {opportunity.description && (
-                <p className="text-sm text-muted-foreground">{opportunity.description}</p>
-              )}
-
-              {(opportunity.learnMoreUrl || opportunity.applyUrl) && (
-                <div className="flex flex-wrap gap-2">
-                  {opportunity.learnMoreUrl && (
-                    <Button asChild size="sm" variant="outline">
-                      <a href={opportunity.learnMoreUrl} target="_blank" rel="noopener noreferrer">
-                        Learn More
-                        <ExternalLink className="ml-1 h-3.5 w-3.5" />
-                      </a>
-                    </Button>
-                  )}
-                  {opportunity.applyUrl && (
-                    <Button asChild size="sm">
-                      <a href={opportunity.applyUrl} target="_blank" rel="noopener noreferrer">
-                        Apply Here
-                        <ExternalLink className="ml-1 h-3.5 w-3.5" />
-                      </a>
-                    </Button>
-                  )}
-                </div>
-              )}
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-2">
-            <Badge>{opportunity.ageRequirement}</Badge>
-            {canManage && (
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => openEditDialog(opportunity)}
-                  data-testid={`button-edit-opportunity-${opportunity.id}`}
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDelete(opportunity)}
-                  data-testid={`button-delete-opportunity-${opportunity.id}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
+          <div className="grid gap-1.5 text-xs text-muted-foreground sm:text-sm">
+            <p className="flex items-center gap-2">
+              <Calendar className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{format(new Date(opportunity.date), "MMM d, yyyy")}</span>
+            </p>
+            <p className="flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{opportunity.time || "TBD"}</span>
+            </p>
+            <p className="flex items-center gap-2">
+              <MapPin className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{opportunity.venue || "TBD"}</span>
+            </p>
+            <p className="flex items-center gap-2">
+              <User className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 break-words">{opportunity.contactName}</span>
+            </p>
           </div>
+
+          {opportunity.deadlineAt && (
+            <p className="rounded-md bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+              Deadline (Manila): {formatManilaDateTime12(opportunity.deadlineAt)}
+            </p>
+          )}
+
+          {linkedBarangayNames.length > 0 && (
+            <p className="text-xs text-muted-foreground break-words">
+              Connected barangays: {linkedBarangayNames.join(", ")}
+            </p>
+          )}
+
+          {opportunity.isAffiliatedOpportunity && (
+            <p className="text-xs text-muted-foreground break-words">
+              Source chapter: {opportunity.affiliationSourceChapterName || opportunity.chapter || "Unknown chapter"}
+            </p>
+          )}
+
+          {opportunity.isAffiliatedOpportunity && opportunity.affiliationStatus && (
+            <p className="text-xs text-muted-foreground break-words">
+              Landing page visibility: {opportunity.affiliationStatus === "approved" && opportunity.affiliationShowName ? "Visible" : "Hidden"}
+            </p>
+          )}
+
+          {opportunity.description && (
+            <p className="text-sm leading-relaxed text-muted-foreground break-words">{opportunity.description}</p>
+          )}
+
+          {(opportunity.learnMoreUrl || opportunity.applyUrl) && (
+            <div className="grid gap-2 sm:flex sm:flex-wrap">
+              {opportunity.learnMoreUrl && (
+                <Button asChild size="sm" variant="outline" className="w-full sm:w-auto">
+                  <a href={opportunity.learnMoreUrl} target="_blank" rel="noopener noreferrer">
+                    Learn More
+                    <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              )}
+              {opportunity.applyUrl && (
+                <Button asChild size="sm" className="w-full sm:w-auto">
+                  <a href={opportunity.applyUrl} target="_blank" rel="noopener noreferrer">
+                    Apply Here
+                    <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              )}
+            </div>
+          )}
+
+          {canReviewAffiliation && opportunity.affiliationId && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button
+                variant="default"
+                size="sm"
+                className="h-9"
+                onClick={() => handleAffiliationReview(opportunity, "approve")}
+                disabled={reviewAffiliationMutation.isPending || opportunity.affiliationStatus === "approved"}
+                data-testid={`button-approve-affiliation-${opportunity.affiliationId}`}
+              >
+                <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                Approve (Show Name)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => handleAffiliationReview(opportunity, "reject")}
+                disabled={reviewAffiliationMutation.isPending || opportunity.affiliationStatus === "rejected"}
+                data-testid={`button-reject-affiliation-${opportunity.affiliationId}`}
+              >
+                <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                Reject (Hide Name)
+              </Button>
+            </div>
+          )}
+
+          {canManage && (
+            <div className="grid gap-2 pt-1 sm:grid-cols-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-9"
+                onClick={() => openPublicPreview(opportunity)}
+                data-testid={`button-public-preview-opportunity-${opportunity.id}`}
+              >
+                <Eye className="mr-1.5 h-3.5 w-3.5" />
+                Public Preview
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9"
+                onClick={() => openEditDialog(opportunity)}
+                data-testid={`button-edit-opportunity-${opportunity.id}`}
+              >
+                <Edit className="mr-1.5 h-3.5 w-3.5" />
+                Edit
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-9"
+                onClick={() => handleDelete(opportunity)}
+                data-testid={`button-delete-opportunity-${opportunity.id}`}
+              >
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -711,7 +1236,6 @@ export default function VolunteerOpportunityPanel({
             <Plus className="mr-2 h-4 w-4" />
             Create Volunteer Opportunity
           </Button>
-          <div className="text-xs text-muted-foreground">CRUD actions are available per role permissions.</div>
         </div>
 
         <div className="grid gap-2 md:grid-cols-3">
@@ -725,7 +1249,7 @@ export default function VolunteerOpportunityPanel({
               data-testid="input-volunteer-search"
             />
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-2">
+          <div className={role === "chapter" ? "grid gap-2 sm:grid-cols-3 md:grid-cols-3" : "grid gap-2 sm:grid-cols-2 md:grid-cols-2"}>
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
               <SelectTrigger data-testid="select-volunteer-status-filter">
                 <div className="flex items-center gap-2">
@@ -754,8 +1278,46 @@ export default function VolunteerOpportunityPanel({
             ) : (
               <div />
             )}
+
+            {role === "chapter" ? (
+              <Select
+                value={affiliationModerationFilter}
+                onValueChange={(value) => setAffiliationModerationFilter(value as AffiliationModerationFilter)}
+              >
+                <SelectTrigger data-testid="select-volunteer-affiliation-status-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Affiliations: All</SelectItem>
+                  <SelectItem value="pending">Affiliations: Pending</SelectItem>
+                  <SelectItem value="approved">Affiliations: Approved</SelectItem>
+                  <SelectItem value="rejected">Affiliations: Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
           </div>
         </div>
+
+        {!isLoading && !opportunitiesQueryFailed && (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">All Opportunities</p>
+              <p className="mt-1 text-2xl font-semibold">{filteredOpportunities.length}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Chapter</p>
+              <p className="mt-1 text-2xl font-semibold">{chapterScopedOpportunityCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Per Barangay</p>
+              <p className="mt-1 text-2xl font-semibold">{barangayScopedOpportunityCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">Average %</p>
+              <p className="mt-1 text-2xl font-semibold">{averageBarangaySharePercent}%</p>
+            </div>
+          </div>
+        )}
 
         <Dialog open={isDialogOpen} onOpenChange={(open) => (open ? setIsDialogOpen(true) : resetForm())}>
           <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
@@ -826,6 +1388,51 @@ export default function VolunteerOpportunityPanel({
                         </DropdownMenu>
                       </div>
                     )}
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Affiliated Chapters (optional)</Label>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between font-normal"
+                            disabled={availableAffiliatedChapters.length === 0}
+                            data-testid="dropdown-affiliated-chapters"
+                          >
+                            <span className="truncate text-left">{selectedAffiliatedChapterLabel}</span>
+                            <Badge variant="secondary">{selectedAffiliatedChapterIds.length}</Badge>
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] max-h-80 overflow-y-auto" align="start">
+                          <DropdownMenuLabel>Select chapters to request affiliation</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {availableAffiliatedChapters.length === 0 ? (
+                            <div className="px-2 py-1.5 text-xs text-muted-foreground">No other chapters available.</div>
+                          ) : (
+                            availableAffiliatedChapters.map((chapterOption) => {
+                              const checked = selectedAffiliatedChapterIds.includes(chapterOption.id);
+                              return (
+                                <DropdownMenuCheckboxItem
+                                  key={chapterOption.id}
+                                  checked={checked}
+                                  onCheckedChange={(nextChecked) =>
+                                    toggleAffiliatedChapterSelection(chapterOption.id, nextChecked === true)
+                                  }
+                                  onSelect={(event) => event.preventDefault()}
+                                  data-testid={`checkbox-affiliated-chapter-${chapterOption.id}`}
+                                >
+                                  {chapterOption.name}
+                                </DropdownMenuCheckboxItem>
+                              );
+                            })
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <p className="text-xs text-muted-foreground">
+                        Selected chapters can approve or reject whether their chapter name appears on the public volunteer page.
+                      </p>
+                    </div>
                   </>
                 )}
 
@@ -967,10 +1574,41 @@ export default function VolunteerOpportunityPanel({
                     data-testid="input-event-photo"
                   />
                   <p className="text-xs text-muted-foreground">JPG, PNG, or WebP only. Max 2MB.</p>
+                  {editingOpportunity && !selectedFile && existingPhotoPreviewUrl && (
+                    <p className="text-xs text-muted-foreground">No new file selected. Current image will be kept.</p>
+                  )}
                   {selectedFile && (
                     <div className="flex items-center gap-2 text-sm text-green-600">
                       <Image className="h-4 w-4" />
                       <span>Selected: {selectedFile.name}</span>
+                    </div>
+                  )}
+                  {activePhotoPreviewUrl && (
+                    <div className="space-y-2 rounded-md border p-2">
+                      <p className="text-xs text-muted-foreground">
+                        {selectedFile ? "Selected image preview" : "Current image preview"}
+                      </p>
+                      <img
+                        src={activePhotoPreviewUrl}
+                        alt={selectedFile ? "Selected volunteer image" : "Current volunteer image"}
+                        className="h-32 w-full rounded-md object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        onLoad={(event) => {
+                          resetImageFallback(event.currentTarget);
+                        }}
+                        onError={(event) => {
+                          console.error("[VolunteerDebug] dialog image preview failed", {
+                            editingId: editingOpportunity?.id,
+                            photoUrl: editingOpportunity?.photoUrl,
+                            selectedFileName: selectedFile?.name,
+                            attemptedSrc: activePhotoPreviewUrl,
+                          });
+                          if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                            event.currentTarget.style.display = "none";
+                          }
+                        }}
+                      />
                     </div>
                   )}
                 </div>
@@ -988,9 +1626,212 @@ export default function VolunteerOpportunityPanel({
           </DialogContent>
         </Dialog>
 
+        <Dialog
+          open={Boolean(publicPreviewOpportunity)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPublicPreviewOpportunity(null);
+              setPublicPreviewFullImageUrl(null);
+            }
+          }}
+        >
+          <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden p-0">
+            <DialogHeader className="sticky top-0 z-10 border-b bg-background px-6 py-4 pr-14">
+              <DialogTitle>{publicPreviewOpportunity?.eventName || "Public Preview"}</DialogTitle>
+              <DialogDescription>
+                Public preview mode: this mirrors how the opportunity appears on the public volunteer page.
+              </DialogDescription>
+            </DialogHeader>
+
+            {publicPreviewOpportunity && (
+              <div className="max-h-[calc(85vh-108px)] space-y-4 overflow-y-auto px-6 py-4">
+                {publicPreviewDisplayPhoto && (
+                  <div className="h-64 w-full overflow-hidden rounded-lg border">
+                    <img
+                      src={publicPreviewDisplayPhoto}
+                      alt={publicPreviewOpportunity.eventName}
+                      className="h-full w-full cursor-zoom-in object-cover"
+                      loading="lazy"
+                      decoding="async"
+                      onClick={() => setPublicPreviewFullImageUrl(publicPreviewDisplayPhoto)}
+                      onLoad={(event) => {
+                        resetImageFallback(event.currentTarget);
+                      }}
+                      onError={(event) => {
+                        if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                          event.currentTarget.style.display = "none";
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={publicPreviewIsDone ? "secondary" : "default"}>
+                    {publicPreviewIsDone ? "Done" : "Open"}
+                  </Badge>
+                  <Badge variant="outline">
+                    {publicPreviewConnectionType === "national"
+                      ? "National"
+                      : publicPreviewConnectionType === "city"
+                      ? "City Chapter"
+                      : "Barangay"}
+                  </Badge>
+                  <Badge variant="secondary">Public Preview Mode</Badge>
+                </div>
+
+                <div className="grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+                  <p className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    {format(new Date(publicPreviewOpportunity.date), "MMMM dd, yyyy")}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Clock className="h-4 w-4" />
+                    {publicPreviewOpportunity.time || "TBD"}
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4" />
+                    {publicPreviewOpportunity.venue || "TBD"}
+                  </p>
+                  <p>Age Requirement: {publicPreviewOpportunity.ageRequirement || "N/A"}</p>
+                  <p className="md:col-span-2">Connected To: {publicPreviewConnectionLabel}</p>
+                  {publicPreviewOpportunity.deadlineAt && (
+                    <p className="md:col-span-2">
+                      Deadline (Manila): {formatManilaDateTime12(publicPreviewOpportunity.deadlineAt)}
+                    </p>
+                  )}
+                </div>
+
+                {publicPreviewLinkedBarangayNames.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Connected barangays: {publicPreviewLinkedBarangayNames.join(", ")}
+                  </p>
+                )}
+
+                {publicPreviewSdgs.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium">SDGs Impacted</p>
+                    <div className="flex flex-wrap gap-2">
+                      {publicPreviewSdgs.map((sdg) => (
+                        <Badge key={`${publicPreviewOpportunity.id}-preview-sdg-${sdg}`} variant="secondary">
+                          SDG {sdg}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <p className="mb-2 text-sm font-medium">Description</p>
+                  <p className="whitespace-pre-wrap text-sm text-muted-foreground">
+                    {publicPreviewOpportunity.description || "No description provided."}
+                  </p>
+                </div>
+
+                <div className="border-t pt-2">
+                  <p className="mb-2 text-sm font-medium">Contact</p>
+                  <p className="text-sm text-muted-foreground">{publicPreviewOpportunity.contactName}</p>
+                  <div className="mt-2 flex flex-col gap-1 text-sm">
+                    <a
+                      href={`tel:${publicPreviewOpportunity.contactPhone}`}
+                      className="w-fit text-primary underline underline-offset-4"
+                    >
+                      Call: {publicPreviewOpportunity.contactPhone}
+                    </a>
+                    {publicPreviewOpportunity.contactEmail && (
+                      <a
+                        href={`mailto:${publicPreviewOpportunity.contactEmail}`}
+                        className="w-fit text-primary underline underline-offset-4"
+                      >
+                        Email: {publicPreviewOpportunity.contactEmail}
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {(publicPreviewOpportunity.learnMoreUrl || publicPreviewOpportunity.applyUrl) && (
+                  <div className="flex flex-wrap gap-2 border-t pt-2">
+                    {publicPreviewOpportunity.learnMoreUrl && (
+                      <Button asChild variant="outline">
+                        <a href={publicPreviewOpportunity.learnMoreUrl} target="_blank" rel="noopener noreferrer">
+                          Learn More
+                          <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                        </a>
+                      </Button>
+                    )}
+                    {publicPreviewOpportunity.applyUrl && (
+                      <Button asChild>
+                        <a href={publicPreviewOpportunity.applyUrl} target="_blank" rel="noopener noreferrer">
+                          Apply Here
+                          <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={Boolean(publicPreviewFullImageUrl)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPublicPreviewFullImageUrl(null);
+            }
+          }}
+        >
+          <DialogContent className="max-h-[95vh] max-w-6xl overflow-hidden p-2">
+            {publicPreviewFullImageUrl && (
+              <img
+                src={publicPreviewFullImageUrl}
+                alt={publicPreviewOpportunity?.eventName || "Volunteer full image preview"}
+                className="max-h-[90vh] w-full rounded-md object-contain"
+                loading="lazy"
+                decoding="async"
+                onLoad={(event) => {
+                  resetImageFallback(event.currentTarget);
+                }}
+                onError={(event) => {
+                  if (!applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                    event.currentTarget.style.display = "none";
+                  }
+                }}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+
         {isLoading && <LoadingState label="Loading volunteer opportunities..." rows={3} compact />}
 
-        {!isLoading && role === "chapter" && (
+        {!isLoading && role === "chapter" && !chapterId && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              Chapter scope is missing from your account session. Please log out, log in again, and refresh.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!isLoading && role === "barangay" && (!chapterId || !barangayId) && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              Barangay scope is missing from your account session. Please log out, log in again, and refresh.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!isLoading && opportunitiesQueryFailed && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {opportunitiesQueryError instanceof Error
+                ? opportunitiesQueryError.message
+                : "Failed to load volunteer opportunities."}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!isLoading && !opportunitiesQueryFailed && role === "chapter" && (
           <div className="space-y-6">
             <section className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1003,7 +1844,9 @@ export default function VolunteerOpportunityPanel({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {cityChapterOpportunities.map((opportunity) => renderOpportunityCard(opportunity, true))}
+                  {cityChapterOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: true }),
+                  )}
                 </div>
               )}
             </section>
@@ -1011,7 +1854,7 @@ export default function VolunteerOpportunityPanel({
             <section className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold">Barangay Opportunities</h3>
-                <Badge variant="outline">{barangayOpportunityGroups.reduce((sum, group) => sum + group.opportunities.length, 0)}</Badge>
+                <Badge variant="outline">{barangayGroupedOpportunityCount}</Badge>
               </div>
               {barangayOpportunityGroups.length === 0 ? (
                 <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
@@ -1026,17 +1869,55 @@ export default function VolunteerOpportunityPanel({
                         <Badge variant="secondary">{group.opportunities.length}</Badge>
                       </div>
                       <div className="space-y-3">
-                        {group.opportunities.map((opportunity) => renderOpportunityCard(opportunity, true))}
+                        {group.opportunities.map((opportunity) =>
+                          renderOpportunityCard(opportunity, { canManage: true }),
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               )}
             </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Affiliated Chapter Opportunities</h3>
+                <Badge variant="outline">{affiliatedCityChapterOpportunities.length}</Badge>
+              </div>
+              {affiliatedCityChapterOpportunities.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No affiliated city chapter opportunities match your filter.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {affiliatedCityChapterOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: false, canReviewAffiliation: true }),
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Affiliated Barangay Opportunities</h3>
+                <Badge variant="outline">{affiliatedBarangayOpportunities.length}</Badge>
+              </div>
+              {affiliatedBarangayOpportunities.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No affiliated barangay opportunities match your filter.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {affiliatedBarangayOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: false, canReviewAffiliation: true }),
+                  )}
+                </div>
+              )}
+            </section>
           </div>
         )}
 
-        {!isLoading && role === "barangay" && (
+        {!isLoading && !opportunitiesQueryFailed && role === "barangay" && (
           <div className="space-y-6">
             <section className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1049,7 +1930,9 @@ export default function VolunteerOpportunityPanel({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {barangayOwnedOpportunities.map((opportunity) => renderOpportunityCard(opportunity, true))}
+                  {barangayOwnedOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: true }),
+                  )}
                 </div>
               )}
             </section>
@@ -1065,14 +1948,52 @@ export default function VolunteerOpportunityPanel({
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {barangayConnectedFromCity.map((opportunity) => renderOpportunityCard(opportunity, false))}
+                  {barangayConnectedFromCity.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: false }),
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Affiliated Chapter Opportunities</h3>
+                <Badge variant="outline">{affiliatedCityChapterOpportunities.length}</Badge>
+              </div>
+              {affiliatedCityChapterOpportunities.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No affiliated city chapter opportunities found.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {affiliatedCityChapterOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: false }),
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Affiliated Barangay Opportunities</h3>
+                <Badge variant="outline">{affiliatedBarangayOpportunities.length}</Badge>
+              </div>
+              {affiliatedBarangayOpportunities.length === 0 ? (
+                <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                  No affiliated barangay opportunities found.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {affiliatedBarangayOpportunities.map((opportunity) =>
+                    renderOpportunityCard(opportunity, { canManage: false }),
+                  )}
                 </div>
               )}
             </section>
           </div>
         )}
 
-        {!isLoading && filteredOpportunities.length === 0 && (
+        {!isLoading && !opportunitiesQueryFailed && filteredOpportunities.length === 0 && (
           <p className="py-8 text-center text-muted-foreground">
             No volunteer opportunities found for your current filters.
           </p>

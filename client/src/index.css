@@ -430,6 +430,21 @@
   }
 }
 
+@keyframes auth-loader-background-breathe {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+    filter: saturate(0.97);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+    filter: saturate(1.08);
+  }
+}
+
 .auth-loading-screen {
   position: relative;
   isolation: isolate;
@@ -466,6 +481,8 @@
     radial-gradient(circle at 22% 18%, rgba(255, 153, 71, 0.18) 0%, rgba(255, 153, 71, 0) 46%),
     radial-gradient(circle at 78% 24%, rgba(255, 129, 39, 0.16) 0%, rgba(255, 129, 39, 0) 42%),
     radial-gradient(circle at 50% 82%, rgba(255, 172, 96, 0.14) 0%, rgba(255, 172, 96, 0) 48%);
+  transform-origin: center;
+  animation: auth-loader-background-breathe 8.8s ease-in-out infinite;
 }
 
 .auth-loading-screen__texture-layer {
@@ -580,6 +597,7 @@
 @media (prefers-reduced-motion: reduce) {
   .auth-loading-screen__logo,
   .auth-loading-screen__progress-bar,
+  .auth-loading-screen__gradient-layer,
   .auth-loading-screen__texture-layer,
   .auth-loading-screen__shadow {
     animation: none;

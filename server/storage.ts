@@ -1129,7 +1129,54 @@ export class DbStorage implements IStorage {
   }
 
   async getVolunteerOpportunitiesByChapter(chapterId: string): Promise<VolunteerOpportunity[]> {
-    return db.select().from(volunteerOpportunities).where(eq(volunteerOpportunities.chapterId, chapterId)).orderBy(volunteerOpportunities.date);
+    const chapter = await this.getChapter(chapterId);
+    const chapterName = chapter?.name?.trim().toLowerCase() || "";
+    const chapterBarangays = await this.getBarangayUsersByChapterId(chapterId);
+    const chapterBarangayIdSet = new Set(
+      chapterBarangays
+        .map((barangay) => barangay.id)
+        .filter((id): id is string => Boolean(id)),
+    );
+
+    const parseConnectedBarangayIds = (value: string | null | undefined): string[] => {
+      if (!value) {
+        return [];
+      }
+
+      const parts = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+
+      return Array.from(new Set(parts));
+    };
+
+    const opportunities: VolunteerOpportunity[] = await db
+      .select()
+      .from(volunteerOpportunities)
+      .orderBy(volunteerOpportunities.date);
+
+    return opportunities.filter((opportunity) => {
+      if (opportunity.chapterId === chapterId) {
+        return true;
+      }
+
+      const opportunityChapterLabel = (opportunity.chapter || "").trim().toLowerCase();
+      if (
+        !opportunity.chapterId &&
+        chapterName &&
+        (opportunityChapterLabel === chapterName || opportunityChapterLabel.startsWith(`${chapterName} - `))
+      ) {
+        return true;
+      }
+
+      if (opportunity.barangayId && chapterBarangayIdSet.has(opportunity.barangayId)) {
+        return true;
+      }
+
+      const connectedBarangayIds = parseConnectedBarangayIds(opportunity.barangayIds);
+      return connectedBarangayIds.some((linkedBarangayId) => chapterBarangayIdSet.has(linkedBarangayId));
+    });
   }
 
   async getVolunteerOpportunitiesByBarangay(barangayId: string): Promise<VolunteerOpportunity[]> {

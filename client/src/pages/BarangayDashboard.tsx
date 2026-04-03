@@ -12,18 +12,16 @@ import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
-import { 
+import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
+import {
   Eye,
   EyeOff,
-  LogOut,
   Users,
   UserCheck,
   HandHeart,
-  MapPin,
   Target,
   Trophy,
-  MessageSquare,
-  UserRound
+  MessageSquare
 } from "lucide-react";
 import type { Chapter } from "@shared/schema";
 
@@ -177,6 +175,9 @@ export default function BarangayDashboard() {
   }
 
   const parentChapter = chapters.find(c => c.id === authUser.chapterId);
+  const headerSubtitle = [authUser?.barangayName, parentChapter?.name || authUser?.chapterName]
+    .filter((value): value is string => Boolean(value))
+    .join(" - ");
 
   const dashboardTabs: AdaptiveDashboardTab[] = [
     { value: "members", label: "Members", icon: Users, group: "People", dataTestId: "tab-members", mobilePriority: true, desktopPriority: true },
@@ -262,56 +263,11 @@ export default function BarangayDashboard() {
         </DialogContent>
       </Dialog>
 
-      <header className="bg-background border-b sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3">
-            <img src="/images/ysp-logo.png" alt="YSP Logo" className="h-10 w-auto" />
-            <div>
-              <h1 className="font-semibold flex items-center gap-2">
-                <MapPin className="h-4 w-4" />
-                Barangay Dashboard
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                {authUser?.barangayName} - {parentChapter?.name || authUser?.chapterName}
-              </p>
-            </div>
-          </div>
-          <div className="hidden sm:flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setLocation("/my-profile")}
-              data-testid="button-my-profile"
-            >
-              <UserRound className="h-4 w-4 mr-2" />
-              My Profile
-            </Button>
-            <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-          <Button
-            variant="outline"
-            onClick={handleLogout}
-            data-testid="button-logout-mobile"
-            className="sm:hidden"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
-          </Button>
-        </div>
-        <div className="container mx-auto px-4 pb-4 sm:hidden">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => setLocation("/my-profile")}
-            data-testid="button-my-profile-mobile"
-          >
-            <UserRound className="h-4 w-4 mr-2" />
-            My Profile
-          </Button>
-        </div>
-      </header>
+      <UniversalDashboardHeader
+        title="Barangay Dashboard"
+        subtitle={headerSubtitle}
+        onLogout={handleLogout}
+      />
 
       <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>

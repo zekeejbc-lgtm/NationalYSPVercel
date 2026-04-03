@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,6 +91,7 @@ function formatTimeTo12Hour(value: string | null | undefined): string {
 }
 
 export default function Volunteer() {
+  const previewInitializedRef = useRef(false);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [connectionFilter, setConnectionFilter] = useState<OpportunityConnectionFilter>("all");
@@ -103,6 +104,26 @@ export default function Volunteer() {
   const { data: opportunities = [] } = useQuery<VolunteerOpportunity[]>({ 
     queryKey: ["/api/volunteer-opportunities"] 
   });
+
+  const previewOpportunityId = useMemo(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+    return new URLSearchParams(window.location.search).get("previewId")?.trim() || "";
+  }, []);
+
+  useEffect(() => {
+    if (previewInitializedRef.current || !previewOpportunityId || opportunities.length === 0) {
+      return;
+    }
+
+    const matched = opportunities.find((item) => item.id === previewOpportunityId);
+    if (matched) {
+      setSelectedOpportunity(matched);
+    }
+
+    previewInitializedRef.current = true;
+  }, [opportunities, previewOpportunityId]);
 
   const filteredOpportunities = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -264,6 +285,11 @@ export default function Volunteer() {
               Make a difference in your community. Browse upcoming volunteer activities 
               and connect with chapter coordinators to get involved.
             </p>
+            {previewOpportunityId && (
+              <div className="mt-4 flex justify-center">
+                <Badge variant="secondary">Public Preview Mode</Badge>
+              </div>
+            )}
           </div>
 
           <div className="mb-8 rounded-lg border bg-background p-4 md:p-5">

@@ -18,6 +18,7 @@ import { usePagination } from "@/hooks/use-pagination";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
+import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { 
   Eye,
@@ -27,7 +28,6 @@ import {
   Building2, 
   BarChart3, 
   Trophy,
-  LogOut,
   Search,
   Facebook,
   Phone,
@@ -47,7 +47,6 @@ import {
   MessageSquare,
   RotateCcw,
   ImageOff,
-  UserRound,
   X
 } from "lucide-react";
 import type { Chapter, ProjectReport, Publication } from "@shared/schema";
@@ -805,51 +804,11 @@ export default function ChapterDashboard() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <header className="bg-background border-b sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <img src="/images/ysp-logo.png" alt="YSP Logo" className="h-10 w-auto" />
-            <div>
-              <h1 className="font-semibold">Chapter Dashboard</h1>
-              <p className="text-sm text-muted-foreground">{authUser?.chapterName}</p>
-            </div>
-          </div>
-          <div className="hidden sm:flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setLocation("/my-profile")}
-              data-testid="button-my-profile"
-            >
-              <UserRound className="h-4 w-4 mr-2" />
-              My Profile
-            </Button>
-            <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-          </div>
-          <Button
-            variant="outline"
-            onClick={handleLogout}
-            data-testid="button-logout-mobile"
-            className="sm:hidden"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
-          </Button>
-        </div>
-        <div className="container mx-auto px-4 pb-4 sm:hidden">
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => setLocation("/my-profile")}
-            data-testid="button-my-profile-mobile"
-          >
-            <UserRound className="h-4 w-4 mr-2" />
-            My Profile
-          </Button>
-        </div>
-      </header>
+      <UniversalDashboardHeader
+        title="Chapter Dashboard"
+        subtitle={authUser?.chapterName || ""}
+        onLogout={handleLogout}
+      />
 
       <main className="container mx-auto px-4 py-6 pb-24 md:pb-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
