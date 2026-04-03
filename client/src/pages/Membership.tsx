@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import ChapterCard from "@/components/ChapterCard";
 import ChaptersMap from "@/components/ChaptersMap";
-import { ExternalLink, Map, CheckCircle2, Mail, MapPin, Phone, Search, User } from "lucide-react";
+import { ExternalLink, Map, CheckCircle2, Mail, MapPin, Phone, Search, User, X } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useToast } from "@/hooks/use-toast";
@@ -22,8 +24,10 @@ interface MembershipFormData {
   age: number;
   birthdate?: string;
   chapterId: string;
-  barangayId?: string;
+  barangayId: string;
   contactNumber: string;
+  email: string;
+  photoUrl?: string | null;
   facebookLink?: string;
   registeredVoter: boolean;
   householdSize: number;
@@ -60,6 +64,14 @@ interface PublicBarangayDirectoryEntry {
   presidentEmail: string | null;
 }
 
+interface ApplicationLookupResult {
+  referenceId: string;
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  chapterName: string | null;
+  chapterLocation: string | null;
+}
+
 const SECTOR_OPTIONS = [
   "Youth (30 years old and under)",
   "PWD",
@@ -85,6 +97,31 @@ Your data will not be sold or shared with unauthorized third parties and will be
 By proceeding, you affirm that the information provided is accurate and that you agree to this Privacy Advisory and Data Consent.`;
 
 const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+const MEMBER_PHOTO_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+async function loadImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return await new Promise((resolve, reject) => {
+    const previewUrl = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(previewUrl);
+      resolve({ width: image.width, height: image.height });
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(previewUrl);
+      reject(new Error("Unable to read the selected image."));
+    };
+
+    image.src = previewUrl;
+  });
+}
 
 function isUnsupportedPhotoUrl(photoUrl: string): boolean {
   const normalized = photoUrl.toLowerCase();
@@ -100,14 +137,63 @@ function getChapterLogoSrc(photo?: string | null): string {
   return getDisplayImageUrl(normalizedPhoto);
 }
 
+function normalizeApplicationReferenceInput(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function formatLookupSubmittedAt(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-PH", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(parsed);
+}
+
+function DirectoryLoadingSkeleton({
+  rows,
+  testId,
+  label,
+}: {
+  rows: number;
+  testId: string;
+  label: string;
+}) {
+  return (
+    <div className="space-y-3" data-testid={testId} role="status" aria-label={label}>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="rounded-lg border p-3 space-y-2">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-4 w-56" />
+          <Skeleton className="h-4 w-36" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Membership() {
   const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [submittedReferenceId, setSubmittedReferenceId] = useState<string | null>(null);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [selectedChapterId, setSelectedChapterId] = useState<string | undefined>(undefined);
   const [chapterSearchTerm, setChapterSearchTerm] = useState("");
   const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
   const [isChapterDetailsOpen, setIsChapterDetailsOpen] = useState(false);
+  const [lookupReferenceInput, setLookupReferenceInput] = useState("");
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupResult, setLookupResult] = useState<ApplicationLookupResult | null>(null);
+  const [memberPhotoFile, setMemberPhotoFile] = useState<File | null>(null);
+  const [memberPhotoPreviewUrl, setMemberPhotoPreviewUrl] = useState<string | null>(null);
 
   const { data: chapters = [] } = useQuery<Chapter[]>({ 
     queryKey: ["/api/chapters"] 
@@ -170,7 +256,7 @@ export default function Membership() {
     enabled: isChapterDetailsOpen && !!selectedChapter?.id,
   });
 
-  const { data: barangays = [] } = useQuery<BarangayOption[]>({
+  const { data: barangays = [], isLoading: isBarangaysLoading } = useQuery<BarangayOption[]>({
     queryKey: ["/api/chapters", selectedChapterId, "barangays"],
     queryFn: async () => {
       if (!selectedChapterId) return [];
@@ -187,8 +273,10 @@ export default function Membership() {
       age: 18,
       birthdate: "",
       chapterId: "",
-      barangayId: undefined,
+      barangayId: "",
       contactNumber: "",
+      email: "",
+      photoUrl: null,
       facebookLink: "",
       registeredVoter: false,
       householdSize: 1,
@@ -199,6 +287,14 @@ export default function Membership() {
       privacyConsent: false,
     }
   });
+
+  useEffect(() => {
+    return () => {
+      if (memberPhotoPreviewUrl) {
+        URL.revokeObjectURL(memberPhotoPreviewUrl);
+      }
+    };
+  }, [memberPhotoPreviewUrl]);
 
   const watchSector = form.watch("sector");
   const normalizedChapterSearchTerm = chapterSearchTerm.trim().toLowerCase();
@@ -223,22 +319,120 @@ export default function Membership() {
     return searchableValues.some((value) => value.toLowerCase().includes(normalizedChapterSearchTerm));
   });
 
+  const clearSelectedMemberPhoto = () => {
+    setMemberPhotoFile(null);
+    setMemberPhotoPreviewUrl((currentPreviewUrl) => {
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      return null;
+    });
+    form.setValue("photoUrl", null, { shouldDirty: true });
+  };
+
+  const handleMemberPhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      clearSelectedMemberPhoto();
+      return;
+    }
+
+    if (!MEMBER_PHOTO_ALLOWED_MIME_TYPES.has(file.type.toLowerCase())) {
+      toast({
+        title: "Invalid image type",
+        description: "Please upload a JPG, PNG, GIF, or WEBP image.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please upload an image smaller than 5MB.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      const { width, height } = await loadImageDimensions(file);
+      const aspectRatio = width / height;
+      if (Math.abs(aspectRatio - 1) > 0.02) {
+        throw new Error("Please upload a square 1:1 image.");
+      }
+
+      const nextPreviewUrl = URL.createObjectURL(file);
+      setMemberPhotoFile(file);
+      setMemberPhotoPreviewUrl((currentPreviewUrl) => {
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+        return nextPreviewUrl;
+      });
+      form.setValue("photoUrl", file.name, { shouldDirty: true });
+    } catch (error: any) {
+      toast({
+        title: "Invalid image",
+        description: error?.message || "Please upload a square 1:1 image.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      clearSelectedMemberPhoto();
+    }
+  };
+
   const submitMutation = useMutation({
     mutationFn: async (data: MembershipFormData) => {
       const { privacyConsent, ...memberData } = data;
+      let uploadedPhotoUrl: string | null = null;
+
+      if (memberPhotoFile) {
+        const uploadFormData = new FormData();
+        uploadFormData.append("image", memberPhotoFile);
+
+        const uploadResponse = await fetch("/api/upload/member-photo", {
+          method: "POST",
+          body: uploadFormData,
+        });
+
+        const uploadPayload = await uploadResponse.json().catch(() => null);
+        if (!uploadResponse.ok) {
+          const uploadError =
+            typeof uploadPayload?.error === "string"
+              ? uploadPayload.error
+              : "Failed to upload your 1x1 photo.";
+          throw new Error(uploadError);
+        }
+
+        if (typeof uploadPayload?.url !== "string" || !uploadPayload.url.trim()) {
+          throw new Error("Failed to upload your 1x1 photo.");
+        }
+
+        uploadedPhotoUrl = uploadPayload.url.trim();
+      }
+
       return await apiRequest("POST", "/api/members", {
         ...memberData,
         birthdate: memberData.birthdate || null,
-        barangayId: memberData.barangayId || null,
+        barangayId:
+          memberData.barangayId && memberData.barangayId !== "chapter-direct"
+            ? memberData.barangayId
+            : null,
         householdVoters: memberData.householdVoters || null,
         sectorOther: memberData.sector === "Others" ? memberData.sectorOther : null,
+        photoUrl: uploadedPhotoUrl,
         isActive: false,
       });
     },
-    onSuccess: () => {
+    onSuccess: (member: { applicationReferenceId?: string | null }) => {
       setShowSuccess(true);
+      setSubmittedReferenceId(member?.applicationReferenceId || null);
       form.reset();
       setSelectedChapterId(undefined);
+      clearSelectedMemberPhoto();
     },
     onError: (error: any) => {
       toast({ 
@@ -247,6 +441,29 @@ export default function Membership() {
         variant: "destructive" 
       });
     }
+  });
+
+  const lookupMutation = useMutation({
+    mutationFn: async (referenceInput: string): Promise<ApplicationLookupResult> => {
+      const normalizedReferenceId = normalizeApplicationReferenceInput(referenceInput);
+      return await apiRequest(
+        "GET",
+        `/api/members/application-status/${encodeURIComponent(normalizedReferenceId)}`,
+      );
+    },
+    onSuccess: (data) => {
+      setLookupError(null);
+      setLookupResult(data);
+    },
+    onError: (error: any) => {
+      const normalizedMessage =
+        typeof error?.message === "string"
+          ? error.message.replace(/^\d+:\s*/, "")
+          : "Unable to find that application reference ID.";
+
+      setLookupResult(null);
+      setLookupError(normalizedMessage || "Unable to find that application reference ID.");
+    },
   });
 
   const onSubmit = (data: MembershipFormData) => {
@@ -259,6 +476,20 @@ export default function Membership() {
       return;
     }
     submitMutation.mutate(data);
+  };
+
+  const handleLookupSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalizedReferenceId = normalizeApplicationReferenceInput(lookupReferenceInput);
+
+    if (!normalizedReferenceId) {
+      setLookupResult(null);
+      setLookupError("Please enter a reference ID first.");
+      return;
+    }
+
+    setLookupReferenceInput(normalizedReferenceId);
+    lookupMutation.mutate(normalizedReferenceId);
   };
 
   return (
@@ -292,9 +523,21 @@ export default function Membership() {
                       Thank you for joining Youth Service Philippines! Your membership application has been submitted.
                       Your chapter will contact you soon about upcoming activities.
                     </p>
+                    {submittedReferenceId && (
+                      <div className="rounded-lg border bg-muted/30 p-4 text-left" data-testid="card-membership-reference-id">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Application Reference ID</p>
+                        <p className="font-mono text-lg font-semibold">{submittedReferenceId}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Save this ID. You can use it below to check your application status.
+                        </p>
+                      </div>
+                    )}
                     <Button 
                       variant="outline" 
-                      onClick={() => setShowSuccess(false)}
+                      onClick={() => {
+                        setShowSuccess(false);
+                        setSubmittedReferenceId(null);
+                      }}
                       data-testid="button-register-another"
                     >
                       Register Another Member
@@ -371,7 +614,7 @@ export default function Membership() {
                               onValueChange={(value) => {
                                 field.onChange(value);
                                 setSelectedChapterId(value);
-                                form.setValue("barangayId", undefined);
+                                form.setValue("barangayId", "");
                               }} 
                               value={field.value}
                             >
@@ -393,24 +636,35 @@ export default function Membership() {
                         )}
                       />
 
-                      {barangays.length > 0 && (
+                      {selectedChapterId && (
                         <FormField
                           control={form.control}
                           name="barangayId"
+                          rules={{ required: "Please select Chapter Direct or a barangay" }}
                           render={({ field }) => (
                             <FormItem>
-                              <FormLabel>Barangay (optional)</FormLabel>
+                              <FormLabel>Barangay Assignment *</FormLabel>
                               <Select 
-                                onValueChange={(value) => field.onChange(value === "none" ? undefined : value)} 
-                                value={field.value || "none"}
+                                onValueChange={(value) => field.onChange(value)} 
+                                value={field.value || undefined}
                               >
                                 <FormControl>
                                   <SelectTrigger data-testid="select-public-barangay">
-                                    <SelectValue placeholder="Select your barangay (if applicable)" />
+                                    <SelectValue placeholder="Select Chapter Direct or barangay" />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  <SelectItem value="none">None / Not Applicable</SelectItem>
+                                  <SelectItem value="chapter-direct">Chapter Direct</SelectItem>
+                                  {isBarangaysLoading && (
+                                    <SelectItem value="loading" disabled>
+                                      Loading barangays...
+                                    </SelectItem>
+                                  )}
+                                  {!isBarangaysLoading && barangays.length === 0 && (
+                                    <SelectItem value="no-barangays" disabled>
+                                      No barangay chapters yet
+                                    </SelectItem>
+                                  )}
                                   {barangays.filter(barangay => barangay.id).map((barangay) => (
                                     <SelectItem key={barangay.id} value={barangay.id}>
                                       {barangay.barangayName}
@@ -418,6 +672,9 @@ export default function Membership() {
                                   ))}
                                 </SelectContent>
                               </Select>
+                              <p className="text-xs text-muted-foreground">
+                                Choose <span className="font-medium">Chapter Direct</span> if you are not applying under a barangay chapter.
+                              </p>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -434,6 +691,75 @@ export default function Membership() {
                             <FormControl>
                               <Input {...field} placeholder="Enter your phone number" data-testid="input-public-contact" />
                             </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="email"
+                        rules={{
+                          required: "Email is required",
+                          pattern: {
+                            value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                            message: "Please enter a valid email address",
+                          },
+                        }}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Email Address *</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="email"
+                                {...field}
+                                placeholder="name@example.com"
+                                data-testid="input-public-email"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="photoUrl"
+                        render={() => (
+                          <FormItem>
+                            <FormLabel>1x1 Photo Upload (Optional)</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                onChange={handleMemberPhotoChange}
+                                data-testid="input-public-photo-upload"
+                              />
+                            </FormControl>
+                            <p className="text-xs text-muted-foreground">
+                              Upload a square 1:1 image (JPG, PNG, GIF, or WEBP). Max size: 5MB.
+                            </p>
+                            {memberPhotoPreviewUrl && (
+                              <div className="flex items-center justify-between rounded-md border p-3">
+                                <div className="flex items-center gap-3">
+                                  <img
+                                    src={memberPhotoPreviewUrl}
+                                    alt="1x1 membership preview"
+                                    className="h-14 w-14 rounded-md border object-cover"
+                                  />
+                                  <p className="text-sm text-muted-foreground">Photo ready for upload</p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={clearSelectedMemberPhoto}
+                                  data-testid="button-clear-public-photo"
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -704,6 +1030,75 @@ export default function Membership() {
             </Card>
           </div>
 
+          <Card className="mb-16 hover-elevate transition-all" data-testid="card-application-lookup">
+            <CardHeader>
+              <CardTitle className="text-2xl">Membership Application Lookup</CardTitle>
+              <CardDescription>
+                Enter your reference ID to check the current status of your application.
+                Format: YSPAP-XXXX-YYYY
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={handleLookupSubmit} className="flex flex-col gap-3 sm:flex-row">
+                <Input
+                  value={lookupReferenceInput}
+                  onChange={(event) => setLookupReferenceInput(event.target.value.toUpperCase())}
+                  placeholder="YSPAP-XXXX-YYYY"
+                  className="font-mono"
+                  data-testid="input-application-lookup-reference"
+                />
+                <Button
+                  type="submit"
+                  disabled={lookupMutation.isPending}
+                  data-testid="button-application-lookup"
+                >
+                  {lookupMutation.isPending ? "Checking..." : "Check Status"}
+                </Button>
+              </form>
+
+              {lookupError && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" data-testid="text-application-lookup-error">
+                  {lookupError}
+                </div>
+              )}
+
+              {lookupResult && (
+                <div className="rounded-md border p-4 space-y-3" data-testid="card-application-lookup-result">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">Reference ID</span>
+                    <span className="font-mono text-sm">{lookupResult.referenceId}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">Status</span>
+                    <Badge
+                      variant={
+                        lookupResult.status === "approved"
+                          ? "default"
+                          : lookupResult.status === "rejected"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                    >
+                      {lookupResult.status === "approved"
+                        ? "Approved"
+                        : lookupResult.status === "rejected"
+                          ? "Rejected"
+                          : "Pending Review"}
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">Submitted</span>
+                    <span className="text-sm">{formatLookupSubmittedAt(lookupResult.submittedAt)}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">Chapter</span>
+                    <span className="text-sm">{lookupResult.chapterName || "Not assigned"}</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <div>
             <div className="text-center mb-8">
               <h2 className="text-3xl font-bold mb-4 flex items-center justify-center gap-3">
@@ -762,12 +1157,23 @@ export default function Membership() {
                 }
               }}
             >
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogContent hideClose className="max-w-2xl max-h-[90vh] overflow-hidden p-0 gap-0">
                 {selectedChapter && (
-                  <div className="space-y-6">
-                    <DialogHeader>
-                      <DialogTitle className="text-2xl">{selectedChapter.name}</DialogTitle>
-                    </DialogHeader>
+                  <>
+                    <div className="z-20 flex items-start justify-between gap-4 border-b bg-background px-6 py-4">
+                      <DialogTitle className="text-2xl leading-tight">{selectedChapter.name}</DialogTitle>
+                      <DialogClose asChild>
+                        <button
+                          type="button"
+                          className="rounded-full border border-primary/40 p-1.5 text-primary transition-colors hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                          aria-label="Close chapter details"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      </DialogClose>
+                    </div>
+
+                    <div className="max-h-[calc(90vh-5rem)] overflow-y-auto px-6 py-5 space-y-6">
 
                     <div className="flex items-start gap-4">
                       <img
@@ -814,9 +1220,11 @@ export default function Membership() {
                       </p>
 
                       {isDirectoryLoading ? (
-                        <p className="text-sm text-muted-foreground" data-testid="text-loading-chapter-directory">
-                          Loading chapter directory...
-                        </p>
+                        <DirectoryLoadingSkeleton
+                          rows={2}
+                          testId="text-loading-chapter-directory"
+                          label="Loading chapter directory"
+                        />
                       ) : chapterOnlyDirectoryEntries.length === 0 ? (
                         <p className="text-sm text-muted-foreground" data-testid="text-empty-chapter-directory">
                           No directory entries available yet. Use the chapter contact details above.
@@ -850,9 +1258,11 @@ export default function Membership() {
                       </p>
 
                       {isBarangayDirectoryLoading ? (
-                        <p className="text-sm text-muted-foreground" data-testid="text-loading-barangay-directory">
-                          Loading barangay chapters...
-                        </p>
+                        <DirectoryLoadingSkeleton
+                          rows={3}
+                          testId="text-loading-barangay-directory"
+                          label="Loading barangay chapters"
+                        />
                       ) : selectedChapterBarangays.length === 0 ? (
                         <p className="text-sm text-muted-foreground" data-testid="text-empty-barangay-directory">
                           No barangay chapters available for this city chapter yet.
@@ -889,6 +1299,7 @@ export default function Membership() {
                       )}
                     </div>
                   </div>
+                  </>
                 )}
               </DialogContent>
             </Dialog>

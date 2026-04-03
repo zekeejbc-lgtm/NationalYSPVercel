@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Calendar, Facebook, ExternalLink, Image, ImageOff } from "lucide-react";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Calendar, Facebook, ExternalLink, Image, ImageOff, X } from "lucide-react";
 import { format } from "date-fns";
 import type { Publication } from "@shared/schema";
 import {
@@ -164,7 +164,7 @@ export default function Publications() {
                       {publication.title}
                     </h2>
                     
-                    <p className="text-muted-foreground leading-relaxed mb-6 break-words">
+                    <p className="text-muted-foreground leading-relaxed mb-6 break-words text-justify">
                       {truncateText(publication.content, 260)}
                     </p>
                     
@@ -219,14 +219,23 @@ export default function Publications() {
           }
         }}
       >
-        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-3xl max-h-[90vh] overflow-hidden rounded-2xl border p-0 gap-0 flex flex-col sm:w-full">
-          <DialogHeader className="flex-none z-10 border-b bg-background/95 px-4 py-3 pr-14 backdrop-blur-sm md:px-6">
-            <DialogTitle className="text-left text-lg leading-tight md:text-2xl">
-              {selectedPublication?.title}
-            </DialogTitle>
-            <DialogDescription className="flex items-center gap-3 text-sm text-muted-foreground">
-              {selectedPublication ? format(new Date(selectedPublication.publishedAt), "MMMM d, yyyy 'at' h:mm a") : ""}
-            </DialogDescription>
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-3xl max-h-[90vh] overflow-hidden rounded-2xl border p-0 gap-0 flex flex-col sm:w-full" hideClose>
+          <DialogHeader className="sticky top-0 flex-none z-10 border-b bg-background/95 px-4 py-3 md:px-6">
+            <div className="flex items-start justify-between gap-3 pr-2">
+              <div className="min-w-0">
+                <DialogTitle className="text-left text-lg leading-tight break-words md:text-2xl">
+                  {selectedPublication?.title}
+                </DialogTitle>
+                <DialogDescription className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
+                  {selectedPublication ? format(new Date(selectedPublication.publishedAt), "MMMM d, yyyy 'at' h:mm a") : ""}
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Close dialog">
+                  <X className="h-4 w-4" />
+                </Button>
+              </DialogClose>
+            </div>
           </DialogHeader>
 
           {selectedPublication && (
@@ -276,7 +285,7 @@ export default function Publications() {
 
               <div className="space-y-3">
                 {selectedPublication.content.split("\n").filter(Boolean).map((paragraph, i) => (
-                  <p key={i} className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+                  <p key={i} className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words text-justify">
                     {paragraph}
                   </p>
                 ))}

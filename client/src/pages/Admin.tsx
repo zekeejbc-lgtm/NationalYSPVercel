@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound } from "lucide-react";
+import { LogOut, Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, UserRound, ShieldCheck } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
@@ -132,7 +132,7 @@ export default function Admin() {
         description: "You have been logged out successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
-      setLocation("/login");
+      setLocation("/");
     } catch (error) {
       console.log("[Admin] Logout error:", error);
       toast({
@@ -198,6 +198,14 @@ export default function Admin() {
             <div className="hidden sm:flex items-center gap-2">
               <Button
                 variant="outline"
+                onClick={() => setLocation("/admin/accounts")}
+                data-testid="button-admin-accounts"
+              >
+                <ShieldCheck className="h-4 w-4 mr-2" />
+                Admin Accounts
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => setLocation("/my-profile")}
                 data-testid="button-my-profile"
               >
@@ -223,7 +231,16 @@ export default function Admin() {
               Logout
             </Button>
           </div>
-          <div className="sm:hidden mt-3">
+          <div className="sm:hidden mt-3 grid gap-2">
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setLocation("/admin/accounts")}
+              data-testid="button-admin-accounts-mobile"
+            >
+              <ShieldCheck className="h-4 w-4 mr-2" />
+              Admin Accounts
+            </Button>
             <Button
               variant="outline"
               className="w-full"

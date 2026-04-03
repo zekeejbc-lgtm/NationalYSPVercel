@@ -27,9 +27,9 @@ export default function EnhancedLeaderboard({ currentChapterId }: EnhancedLeader
   const [viewTab, setViewTab] = useState("yearly");
 
   const { data: yearlyLeaderboard = [] } = useQuery<LeaderboardEntry[]>({
-    queryKey: ["/api/leaderboard", { timeframe: "yearly", year: selectedYear }],
+    queryKey: ["/api/leaderboard", { timeframe: "all", year: selectedYear }],
     queryFn: async () => {
-      const res = await fetch(`/api/leaderboard?timeframe=yearly&year=${selectedYear}`, { credentials: "include" });
+      const res = await fetch(`/api/leaderboard?timeframe=all&year=${selectedYear}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch leaderboard");
       return res.json();
     },

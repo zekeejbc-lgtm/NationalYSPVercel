@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Edit, Plus, Calendar, Facebook, Image } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Trash2, Edit, Plus, Calendar, Facebook, Image, CheckCircle2, X } from "lucide-react";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import type { Publication } from "@shared/schema";
 import { format } from "date-fns";
 import {
@@ -20,16 +21,12 @@ import {
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 
 export default function PublicationsManager() {
-  const INITIAL_VISIBLE_PUBLICATIONS = 6;
-  const CARD_ANIMATION_MS = 220;
+  const ADMIN_PUBLICATIONS_QUERY_KEY = "/api/publications?includeAll=true";
 
   const { toast } = useToast();
   const confirmDelete = useDeleteConfirmation();
   const [editingPublication, setEditingPublication] = useState<Publication | null>(null);
   const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
-  const [visiblePublicationsCount, setVisiblePublicationsCount] = useState(INITIAL_VISIBLE_PUBLICATIONS);
-  const [animatedFromIndex, setAnimatedFromIndex] = useState<number | null>(null);
-  const [isCollapsingPublications, setIsCollapsingPublications] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
@@ -49,28 +46,16 @@ export default function PublicationsManager() {
   const previewUrl = getDisplayImageUrl(formData.photoUrl.trim());
 
   const { data: publications = [], isLoading } = useQuery<Publication[]>({
-    queryKey: ["/api/publications"]
+    queryKey: [ADMIN_PUBLICATIONS_QUERY_KEY]
   });
 
-  const visiblePublications = publications.slice(0, visiblePublicationsCount);
-  const hasMorePublications = visiblePublicationsCount < publications.length;
-  const canCollapsePublications = publications.length > INITIAL_VISIBLE_PUBLICATIONS;
-  const isPublicationsExpanded = visiblePublicationsCount > INITIAL_VISIBLE_PUBLICATIONS;
-  const remainingPublications = Math.max(publications.length - visiblePublicationsCount, 0);
+  const pendingPublications = publications.filter((publication) => !publication.isApproved);
+  const approvedPublications = publications.filter((publication) => publication.isApproved);
 
-  useEffect(() => {
-    if (animatedFromIndex === null) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setAnimatedFromIndex(null);
-    }, CARD_ANIMATION_MS);
-
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [animatedFromIndex]);
+  const invalidatePublicationQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+    queryClient.invalidateQueries({ queryKey: [ADMIN_PUBLICATIONS_QUERY_KEY] });
+  };
 
   const handleAdd = () => {
     setEditingPublication(null);
@@ -151,7 +136,7 @@ export default function PublicationsManager() {
   const createMutation = useMutation({
     mutationFn: (data: typeof formData) => apiRequest("POST", "/api/publications", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      invalidatePublicationQueries();
       toast({
         title: "Success",
         description: "Publication created successfully",
@@ -171,7 +156,7 @@ export default function PublicationsManager() {
     mutationFn: ({ id, data }: { id: string; data: typeof formData }) => 
       apiRequest("PUT", `/api/publications/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      invalidatePublicationQueries();
       toast({
         title: "Success",
         description: "Publication updated successfully",
@@ -190,7 +175,7 @@ export default function PublicationsManager() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/publications/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
+      invalidatePublicationQueries();
       toast({
         title: "Success",
         description: "Publication deleted successfully",
@@ -200,6 +185,27 @@ export default function PublicationsManager() {
       toast({
         title: "Error",
         description: "Failed to delete publication",
+        variant: "destructive",
+      });
+    }
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("PATCH", `/api/publications/${id}/approve`, {}),
+    onSuccess: (updatedPublication: Publication) => {
+      invalidatePublicationQueries();
+      setSelectedPublication((current) =>
+        current && current.id === updatedPublication.id ? updatedPublication : current,
+      );
+      toast({
+        title: "Success",
+        description: "Publication approved successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to approve publication",
         variant: "destructive",
       });
     }
@@ -219,29 +225,12 @@ export default function PublicationsManager() {
     deleteMutation.mutate(id);
   };
 
+  const handleApprove = (id: string) => {
+    approveMutation.mutate(id);
+  };
+
   const handleOpenDetails = (publication: Publication) => {
     setSelectedPublication(publication);
-  };
-
-  const handleShowMorePublications = () => {
-    if (isCollapsingPublications || !hasMorePublications) {
-      return;
-    }
-
-    setAnimatedFromIndex(visiblePublicationsCount);
-    setVisiblePublicationsCount((prev) => Math.min(prev + INITIAL_VISIBLE_PUBLICATIONS, publications.length));
-  };
-
-  const handleHidePublications = () => {
-    if (!isPublicationsExpanded || isCollapsingPublications) {
-      return;
-    }
-
-    setIsCollapsingPublications(true);
-    window.setTimeout(() => {
-      setVisiblePublicationsCount(INITIAL_VISIBLE_PUBLICATIONS);
-      setIsCollapsingPublications(false);
-    }, CARD_ANIMATION_MS);
   };
 
   if (isLoading) {
@@ -261,7 +250,7 @@ export default function PublicationsManager() {
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <CardTitle>Programs Publication</CardTitle>
-              <CardDescription>Manage blog posts and publications</CardDescription>
+              <CardDescription>Manage blog posts, pending publications, and approvals</CardDescription>
             </div>
             <Button onClick={handleAdd} data-testid="button-add-publication">
               <Plus className="h-4 w-4 mr-2" />
@@ -273,9 +262,139 @@ export default function PublicationsManager() {
           {publications.length === 0 ? (
             <p className="text-muted-foreground">No publications yet. Add your first publication!</p>
           ) : (
-            <>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {visiblePublications.map((publication, index) => {
+            <div className="space-y-8">
+              <section className="space-y-3" data-testid="section-publications-pending">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-lg font-semibold">Pending Review</h3>
+                  <Badge variant="secondary">{pendingPublications.length}</Badge>
+                </div>
+
+                {pendingPublications.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No publications pending approval.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {pendingPublications.map((publication) => {
+                    const publicationPhotoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
+                    const usesFallbackImage = Boolean(fallbackImages[publication.id]);
+                    const hasImageError = Boolean(failedImages[publication.id]);
+                    const cardImageSrc = hasImageError
+                      ? ""
+                      : usesFallbackImage
+                        ? DEFAULT_IMAGE_FALLBACK_SRC
+                        : publicationPhotoUrl;
+
+                    return (
+                    <Card
+                      key={publication.id}
+                      className="hover-elevate transition-all cursor-pointer h-[20rem] overflow-hidden"
+                      onClick={() => handleOpenDetails(publication)}
+                      data-testid={`card-publication-admin-${publication.id}`}
+                    >
+                      <CardContent className="p-4 h-full flex flex-col gap-3">
+                        <div className="h-32 rounded-md overflow-hidden bg-muted flex-shrink-0 flex items-center justify-center">
+                          {cardImageSrc ? (
+                            <img
+                              src={cardImageSrc}
+                              alt={publication.title}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
+                              onLoad={(event) => {
+                                resetImageFallback(event.currentTarget);
+                              }}
+                              onError={(event) => {
+                                if (!usesFallbackImage && applyImageFallback(event.currentTarget, DEFAULT_IMAGE_FALLBACK_SRC)) {
+                                  setFallbackImages((prev) => ({ ...prev, [publication.id]: true }));
+                                  return;
+                                }
+
+                                setFailedImages((prev) => ({ ...prev, [publication.id]: true }));
+                              }}
+                            />
+                          ) : (
+                            <div className="w-full h-full bg-muted rounded-md flex items-center justify-center">
+                              <Image className="h-8 w-8 text-muted-foreground" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
+                          <h3 className="font-semibold text-base leading-tight break-words line-clamp-2">{publication.title}</h3>
+                          <div className="mt-2">
+                            <Badge variant="secondary">Pending Approval</Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap break-words line-clamp-3">
+                            {publication.content}
+                          </p>
+                          <div className="flex items-center gap-3 mt-2 overflow-hidden">
+                            <span className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+                              <Calendar className="h-3 w-3" />
+                              {format(new Date(publication.publishedAt), "MMM d, yyyy 'at' h:mm a")}
+                            </span>
+                            {publication.facebookLink && (
+                              <a
+                                href={publication.facebookLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-primary hover:underline flex items-center gap-1 truncate"
+                              >
+                                <Facebook className="h-3 w-3" />
+                                View on Facebook
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div
+                          className="mt-auto pt-2 border-t flex items-center justify-between gap-2 flex-shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-xs text-primary">View details</span>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="default"
+                              size="icon"
+                              onClick={() => handleApprove(publication.id)}
+                              disabled={approveMutation.isPending}
+                              data-testid={`button-approve-publication-${publication.id}`}
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleEdit(publication)}
+                              data-testid={`button-edit-publication-${publication.id}`}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => handleDelete(publication.id)}
+                              data-testid={`button-delete-publication-${publication.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    );
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="space-y-3" data-testid="section-publications-approved">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-lg font-semibold">Approved Publications</h3>
+                  <Badge variant="default">{approvedPublications.length}</Badge>
+                </div>
+
+                {approvedPublications.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No approved publications yet.</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {approvedPublications.map((publication) => {
                 const publicationPhotoUrl = getPublicationPhotoUrl(publication as Publication & { imageUrl?: string | null });
                 const usesFallbackImage = Boolean(fallbackImages[publication.id]);
                 const hasImageError = Boolean(failedImages[publication.id]);
@@ -288,9 +407,7 @@ export default function PublicationsManager() {
                 return (
                 <Card
                   key={publication.id}
-                  className={`hover-elevate transition-all cursor-pointer h-[20rem] overflow-hidden ${
-                    animatedFromIndex !== null && index >= animatedFromIndex ? "admin-card-enter" : ""
-                  } ${isCollapsingPublications && index >= INITIAL_VISIBLE_PUBLICATIONS ? "admin-card-exit" : ""}`}
+                  className="hover-elevate transition-all cursor-pointer h-[20rem] overflow-hidden"
                   onClick={() => handleOpenDetails(publication)}
                   data-testid={`card-publication-admin-${publication.id}`}
                 >
@@ -323,7 +440,12 @@ export default function PublicationsManager() {
                     </div>
                     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
                         <h3 className="font-semibold text-base leading-tight break-words line-clamp-2">{publication.title}</h3>
-                        <p className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap break-words line-clamp-3">
+                        <div className="mt-2">
+                          <Badge variant={publication.isApproved ? "default" : "secondary"}>
+                            {publication.isApproved ? "Approved" : "Pending Approval"}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-2 whitespace-pre-wrap break-words line-clamp-3 text-justify">
                           {publication.content}
                         </p>
                         <div className="flex items-center gap-3 mt-2 overflow-hidden">
@@ -371,36 +493,11 @@ export default function PublicationsManager() {
                   </CardContent>
                 </Card>
                 );
-                })}
-              </div>
-
-              {canCollapsePublications && (
-                <div className="mt-4 flex justify-center">
-                  <div className="flex items-center gap-2">
-                    {hasMorePublications && (
-                      <Button
-                        variant="outline"
-                        onClick={handleShowMorePublications}
-                        disabled={isCollapsingPublications}
-                        data-testid="button-show-more-publications"
-                      >
-                        {`Show More (${Math.min(INITIAL_VISIBLE_PUBLICATIONS, remainingPublications)} next)`}
-                      </Button>
-                    )}
-                    {isPublicationsExpanded && (
-                      <Button
-                        variant="ghost"
-                        onClick={handleHidePublications}
-                        disabled={isCollapsingPublications}
-                        data-testid="button-hide-publications"
-                      >
-                        {isCollapsingPublications ? "Hiding..." : "Hide"}
-                      </Button>
-                    )}
+                    })}
                   </div>
-                </div>
-              )}
-            </>
+                )}
+              </section>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -514,12 +611,21 @@ export default function PublicationsManager() {
       </Dialog>
 
       <Dialog open={!!selectedPublication} onOpenChange={(open) => !open && setSelectedPublication(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{selectedPublication?.title}</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden p-0 gap-0" hideClose>
           {selectedPublication && (
-            <div className="space-y-4">
+            <div className="flex max-h-[85vh] flex-col">
+              <DialogHeader className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3 pr-2">
+                  <DialogTitle className="text-left break-words">{selectedPublication.title}</DialogTitle>
+                  <DialogClose asChild>
+                    <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Close dialog">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </DialogClose>
+                </div>
+              </DialogHeader>
+
+              <div className="min-h-0 flex-1 overflow-y-auto space-y-4 px-4 py-4 md:px-6 md:py-5">
               <div className="rounded-md overflow-hidden border bg-muted">
                 {(() => {
                   const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
@@ -563,10 +669,24 @@ export default function PublicationsManager() {
               </div>
 
               <div className="flex items-center gap-4 flex-wrap">
+                <Badge variant={selectedPublication.isApproved ? "default" : "secondary"}>
+                  {selectedPublication.isApproved ? "Approved" : "Pending Approval"}
+                </Badge>
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Calendar className="h-3 w-3" />
                   {format(new Date(selectedPublication.publishedAt), "MMM d, yyyy 'at' h:mm a")}
                 </span>
+                {!selectedPublication.isApproved && (
+                  <Button
+                    size="sm"
+                    onClick={() => handleApprove(selectedPublication.id)}
+                    disabled={approveMutation.isPending}
+                    data-testid={`button-approve-publication-detail-${selectedPublication.id}`}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Approve
+                  </Button>
+                )}
                 {selectedPublication.facebookLink && (
                   <a
                     href={selectedPublication.facebookLink}
@@ -582,9 +702,10 @@ export default function PublicationsManager() {
 
               <div className="space-y-2">
                 <h4 className="font-semibold">Full Details</h4>
-                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words text-justify">
                   {selectedPublication.content}
                 </p>
+              </div>
               </div>
             </div>
           )}

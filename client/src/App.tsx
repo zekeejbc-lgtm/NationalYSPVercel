@@ -13,6 +13,7 @@ import Membership from "@/pages/Membership";
 import Volunteer from "@/pages/Volunteer";
 import Contact from "@/pages/Contact";
 import Admin from "@/pages/Admin";
+import AdminAccounts from "@/pages/AdminAccounts";
 import AdminLogin from "@/pages/AdminLogin";
 import Login from "@/pages/Login";
 import ChapterDashboard from "@/pages/ChapterDashboard";
@@ -143,6 +144,13 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
     path: "/admin",
     indexable: false,
     keywords: ["youth service philippines admin dashboard"],
+  },
+  "/admin/accounts": {
+    title: "Admin Accounts | Youth Service Philippines National",
+    description: "Manage administrator accounts and permissions for Youth Service Philippines.",
+    path: "/admin/accounts",
+    indexable: false,
+    keywords: ["youth service philippines admin accounts"],
   },
   "/chapter-dashboard": {
     title: "Chapter Dashboard | Youth Service Philippines National",
@@ -275,6 +283,7 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin" component={Admin} />
+      <Route path="/admin/accounts" component={AdminAccounts} />
       <Route path="/chapter-dashboard" component={ChapterDashboard} />
       <Route path="/barangay-dashboard" component={BarangayDashboard} />
       <Route path="/my-profile" component={MyProfile} />

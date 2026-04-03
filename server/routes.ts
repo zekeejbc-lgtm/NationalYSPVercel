@@ -29,6 +29,7 @@ import {
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { createClient } from "@supabase/supabase-js";
+import { z } from "zod";
 
 const REQUIRED_PUBLIC_TABLES = ["programs", "chapters", "stats"];
 
@@ -498,6 +499,256 @@ function isUsernameTakenByDifferentUser(
   }
 
   return false;
+}
+
+const ADMIN_RELATIONSHIP_TABLE = "admin_user_relationships";
+let adminRelationshipTableEnsured = false;
+
+const adminAccountCreateSchema = z.object({
+  username: z.string().trim().min(3, "Username must be at least 3 characters"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+const adminAccountUpdateSchema = z
+  .object({
+    username: z.string().trim().min(3, "Username must be at least 3 characters").optional(),
+    password: z.string().min(8, "Password must be at least 8 characters").optional(),
+  })
+  .refine((value) => value.username !== undefined || value.password !== undefined, {
+    message: "At least one field is required",
+  });
+
+async function ensureAdminRelationshipTable() {
+  if (adminRelationshipTableEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${ADMIN_RELATIONSHIP_TABLE} (
+      admin_user_id varchar PRIMARY KEY,
+      created_by_admin_id varchar NULL,
+      created_at timestamp without time zone DEFAULT now() NOT NULL
+    )
+  `);
+
+  adminRelationshipTableEnsured = true;
+}
+
+async function getAdminCreatorId(adminUserId: string): Promise<string | null> {
+  if (!pool) {
+    return null;
+  }
+
+  await ensureAdminRelationshipTable();
+  const result = await pool.query<{ created_by_admin_id: string | null }>(
+    `
+      SELECT created_by_admin_id
+      FROM ${ADMIN_RELATIONSHIP_TABLE}
+      WHERE admin_user_id = $1
+      LIMIT 1
+    `,
+    [adminUserId],
+  );
+
+  return result.rows[0]?.created_by_admin_id ?? null;
+}
+
+async function getAdminCreatorMap(adminUserIds: string[]): Promise<Map<string, string | null>> {
+  const creatorMap = new Map<string, string | null>();
+  if (!pool || adminUserIds.length === 0) {
+    return creatorMap;
+  }
+
+  await ensureAdminRelationshipTable();
+  const result = await pool.query<{ admin_user_id: string; created_by_admin_id: string | null }>(
+    `
+      SELECT admin_user_id, created_by_admin_id
+      FROM ${ADMIN_RELATIONSHIP_TABLE}
+      WHERE admin_user_id = ANY($1::text[])
+    `,
+    [adminUserIds],
+  );
+
+  for (const row of result.rows) {
+    creatorMap.set(row.admin_user_id, row.created_by_admin_id);
+  }
+
+  return creatorMap;
+}
+
+async function setAdminCreator(adminUserId: string, createdByAdminId: string | null) {
+  if (!pool) {
+    return;
+  }
+
+  await ensureAdminRelationshipTable();
+  await pool.query(
+    `
+      INSERT INTO ${ADMIN_RELATIONSHIP_TABLE} (admin_user_id, created_by_admin_id)
+      VALUES ($1, $2)
+      ON CONFLICT (admin_user_id)
+      DO UPDATE SET created_by_admin_id = EXCLUDED.created_by_admin_id
+    `,
+    [adminUserId, createdByAdminId],
+  );
+}
+
+async function cleanupDeletedAdminCreatorLinks(adminUserId: string) {
+  if (!pool) {
+    return;
+  }
+
+  await ensureAdminRelationshipTable();
+  await pool.query(`DELETE FROM ${ADMIN_RELATIONSHIP_TABLE} WHERE admin_user_id = $1`, [adminUserId]);
+  await pool.query(
+    `UPDATE ${ADMIN_RELATIONSHIP_TABLE} SET created_by_admin_id = NULL WHERE created_by_admin_id = $1`,
+    [adminUserId],
+  );
+}
+
+const APPLICATION_REFERENCE_REGEX = /^YSPAP-[A-Z0-9]{4}-\d{4}$/;
+const MEMBER_APPLICATION_STATUSES = ["pending", "approved", "rejected"] as const;
+const BASIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+let memberApplicationReferenceInfraEnsured = false;
+let memberApplicationReferenceBackfillCompleted = false;
+let memberApplicationReferenceBackfillPromise: Promise<void> | null = null;
+
+function normalizeApplicationReferenceId(value: string) {
+  return value.trim().toUpperCase();
+}
+
+function buildApplicationReferenceId(year: number) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let index = 0; index < 4; index += 1) {
+    const randomIndex = Math.floor(Math.random() * alphabet.length);
+    code += alphabet[randomIndex];
+  }
+
+  return `YSPAP-${code}-${year}`;
+}
+
+async function ensureMembersApplicationReferenceInfra() {
+  if (memberApplicationReferenceInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS application_reference_id text`);
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS application_status text`);
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS email text`);
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS photo_url text`);
+  await pool.query(`
+    UPDATE members
+    SET application_status = CASE
+      WHEN is_active THEN 'approved'
+      ELSE 'pending'
+    END
+    WHERE application_status IS NULL
+      OR application_status NOT IN ('pending', 'approved', 'rejected')
+  `);
+  await pool.query(`ALTER TABLE members ALTER COLUMN application_status SET DEFAULT 'pending'`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS members_application_reference_id_unique
+    ON members (application_reference_id)
+    WHERE application_reference_id IS NOT NULL
+  `);
+
+  memberApplicationReferenceInfraEnsured = true;
+}
+
+async function ensureBackfilledMemberApplicationReferenceIds() {
+  if (!pool || memberApplicationReferenceBackfillCompleted) {
+    return;
+  }
+
+  if (memberApplicationReferenceBackfillPromise) {
+    await memberApplicationReferenceBackfillPromise;
+    return;
+  }
+
+  memberApplicationReferenceBackfillPromise = (async () => {
+    await ensureMembersApplicationReferenceInfra();
+
+    const existingReferencesResult = await pool.query<{ application_reference_id: string }>(
+      `
+      SELECT application_reference_id
+      FROM members
+      WHERE application_reference_id IS NOT NULL
+        AND TRIM(application_reference_id) <> ''
+      `,
+    );
+
+    const usedReferences = new Set(
+      existingReferencesResult.rows.map((row) => normalizeApplicationReferenceId(row.application_reference_id)),
+    );
+
+    const membersMissingReferenceResult = await pool.query<{ id: string; created_at: Date | string | null }>(
+      `
+      SELECT id, created_at
+      FROM members
+      WHERE application_reference_id IS NULL
+         OR TRIM(application_reference_id) = ''
+      ORDER BY created_at ASC NULLS LAST, id ASC
+      `,
+    );
+
+    for (const row of membersMissingReferenceResult.rows) {
+      const parsedCreatedAt = row.created_at ? new Date(row.created_at) : null;
+      const fallbackYear = new Date().getFullYear();
+      const referenceYear =
+        parsedCreatedAt && !Number.isNaN(parsedCreatedAt.getTime())
+          ? parsedCreatedAt.getFullYear()
+          : fallbackYear;
+
+      let referenceId = "";
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        const candidate = buildApplicationReferenceId(referenceYear);
+        if (!usedReferences.has(candidate)) {
+          referenceId = candidate;
+          break;
+        }
+      }
+
+      if (!referenceId) {
+        throw new Error(`Failed to backfill application reference ID for member ${row.id}`);
+      }
+
+      await pool.query(
+        `
+        UPDATE members
+        SET application_reference_id = $1
+        WHERE id = $2
+          AND (application_reference_id IS NULL OR TRIM(application_reference_id) = '')
+        `,
+        [referenceId, row.id],
+      );
+
+      usedReferences.add(referenceId);
+    }
+
+    memberApplicationReferenceBackfillCompleted = true;
+  })();
+
+  try {
+    await memberApplicationReferenceBackfillPromise;
+  } finally {
+    memberApplicationReferenceBackfillPromise = null;
+  }
+}
+
+async function generateUniqueMemberApplicationReferenceId() {
+  await ensureMembersApplicationReferenceInfra();
+
+  const year = new Date().getFullYear();
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const candidate = buildApplicationReferenceId(year);
+    const existing = await storage.getMemberByApplicationReferenceId(candidate);
+    if (!existing) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Failed to generate a unique application reference ID");
 }
 
 const PUBLIC_SITE_PATHS = [
@@ -1594,6 +1845,176 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(accounts);
   });
 
+  app.get("/api/admin-users", requireAdminAuth, async (req, res) => {
+    await ensureAdminRelationshipTable();
+
+    const currentAdminId = req.session.userId!;
+    const [admins, currentAdminCreatorId] = await Promise.all([
+      storage.getAdminUsers(),
+      getAdminCreatorId(currentAdminId),
+    ]);
+
+    const creatorMap = await getAdminCreatorMap(admins.map((admin) => admin.id));
+    const usernameMap = new Map(admins.map((admin) => [admin.id, admin.username]));
+
+    res.json(
+      admins.map((admin) => {
+        const createdByAdminId = creatorMap.get(admin.id) ?? null;
+        const isMotherAccount = Boolean(currentAdminCreatorId && currentAdminCreatorId === admin.id);
+        return {
+          id: admin.id,
+          username: admin.username,
+          createdAt: admin.createdAt,
+          createdByAdminId,
+          createdByUsername: createdByAdminId ? usernameMap.get(createdByAdminId) || null : null,
+          isCurrent: admin.id === currentAdminId,
+          isMotherAccount,
+          canEdit: !isMotherAccount,
+          canDelete: admin.id !== currentAdminId && !isMotherAccount,
+        };
+      }),
+    );
+  });
+
+  app.post("/api/admin-users", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = adminAccountCreateSchema.parse(req.body);
+      const currentAdminId = req.session.userId!;
+
+      const [existingAdmin, existingChapter, existingBarangay] = await Promise.all([
+        storage.getAdminUserByUsername(validated.username),
+        storage.getChapterUserByUsername(validated.username),
+        storage.getBarangayUserByUsername(validated.username),
+      ]);
+
+      const usernameTaken = isUsernameTakenByDifferentUser(
+        validated.username,
+        "admin",
+        "",
+        {
+          admin: existingAdmin,
+          chapter: existingChapter,
+          barangay: existingBarangay,
+        },
+      );
+
+      if (usernameTaken) {
+        return res.status(409).json({ error: "Username already exists" });
+      }
+
+      const hashedPassword = await bcrypt.hash(validated.password, 10);
+      const createdAdmin = await storage.createAdminUser({
+        username: validated.username,
+        password: hashedPassword,
+      });
+
+      await setAdminCreator(createdAdmin.id, currentAdminId);
+
+      res.status(201).json({
+        id: createdAdmin.id,
+        username: createdAdmin.username,
+        createdAt: createdAdmin.createdAt,
+        createdByAdminId: currentAdminId,
+      });
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.put("/api/admin-users/:id", requireAdminAuth, async (req, res) => {
+    try {
+      const targetAdminId = req.params.id;
+      const currentAdminId = req.session.userId!;
+
+      const currentAdminCreatorId = await getAdminCreatorId(currentAdminId);
+      if (currentAdminCreatorId && currentAdminCreatorId === targetAdminId) {
+        return res.status(403).json({
+          error: "You cannot modify the account that created your admin account.",
+        });
+      }
+
+      const validated = adminAccountUpdateSchema.parse(req.body);
+
+      if (validated.username) {
+        const [existingAdmin, existingChapter, existingBarangay] = await Promise.all([
+          storage.getAdminUserByUsername(validated.username),
+          storage.getChapterUserByUsername(validated.username),
+          storage.getBarangayUserByUsername(validated.username),
+        ]);
+
+        const usernameTaken = isUsernameTakenByDifferentUser(
+          validated.username,
+          "admin",
+          targetAdminId,
+          {
+            admin: existingAdmin,
+            chapter: existingChapter,
+            barangay: existingBarangay,
+          },
+        );
+
+        if (usernameTaken) {
+          return res.status(409).json({ error: "Username already exists" });
+        }
+      }
+
+      const updateData: { username?: string; password?: string } = {};
+      if (validated.username) {
+        updateData.username = validated.username;
+      }
+      if (validated.password) {
+        updateData.password = await bcrypt.hash(validated.password, 10);
+      }
+
+      const updated = await storage.updateAdminUser(targetAdminId, updateData);
+      if (!updated) {
+        return res.status(404).json({ error: "Admin account not found" });
+      }
+
+      const createdByAdminId = await getAdminCreatorId(updated.id);
+
+      res.json({
+        id: updated.id,
+        username: updated.username,
+        createdAt: updated.createdAt,
+        createdByAdminId,
+      });
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/admin-users/:id", requireAdminAuth, async (req, res) => {
+    const targetAdminId = req.params.id;
+    const currentAdminId = req.session.userId!;
+
+    if (targetAdminId === currentAdminId) {
+      return res.status(400).json({ error: "You cannot delete your own admin account." });
+    }
+
+    const currentAdminCreatorId = await getAdminCreatorId(currentAdminId);
+    if (currentAdminCreatorId && currentAdminCreatorId === targetAdminId) {
+      return res.status(403).json({
+        error: "You cannot delete the account that created your admin account.",
+      });
+    }
+
+    const admins = await storage.getAdminUsers();
+    if (admins.length <= 1) {
+      return res.status(400).json({ error: "Cannot delete the last admin account." });
+    }
+
+    const deleted = await storage.deleteAdminUser(targetAdminId);
+    if (!deleted) {
+      return res.status(404).json({ error: "Admin account not found" });
+    }
+
+    await cleanupDeletedAdminCreatorLinks(targetAdminId);
+    res.json({ success: true });
+  });
+
   app.post("/api/reset-password/:accountType/:id", requireAdminAuth, async (req, res) => {
     const { accountType, id } = req.params;
     const tempPassword = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 4).toUpperCase();
@@ -1859,6 +2280,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/upload/member-photo", upload.single("image"), (req, res) => {
+    if (!req.file) {
+      console.error("[member-photo-upload] no file received", { route: req.originalUrl });
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const imageUrl = `/uploads/${req.file.filename}`;
+    console.log("[member-photo-upload] upload success", {
+      route: req.originalUrl,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      imageUrl,
+    });
+
+    res.json({ url: imageUrl });
+  });
+
   app.post("/api/upload", requireAuth, upload.single("image"), (req, res) => {
     if (!req.file) {
       console.error("[image-upload] no file received", { route: req.originalUrl });
@@ -1878,9 +2317,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/publications", async (req, res) => {
     const chapterId = req.query.chapterId as string | undefined;
-    const publications = chapterId 
-      ? await storage.getPublicationsByChapter(chapterId)
-      : await storage.getPublications();
+    const includeAll = (req.query.includeAll as string | undefined) === "true";
+    const isAdmin = req.session?.role === "admin" && Boolean(req.session?.userId);
+    const isChapterOwnScope =
+      req.session?.role === "chapter" &&
+      Boolean(req.session?.userId) &&
+      Boolean(chapterId) &&
+      req.session?.chapterId === chapterId;
+    const shouldIncludeAll = includeAll && (isAdmin || isChapterOwnScope);
+
+    const publications = chapterId
+      ? shouldIncludeAll
+        ? await storage.getPublicationsByChapter(chapterId)
+        : await storage.getApprovedPublicationsByChapter(chapterId)
+      : shouldIncludeAll
+        ? await storage.getPublications()
+        : await storage.getApprovedPublications();
     res.json(publications);
   });
 
@@ -1889,6 +2341,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!publication) {
       return res.status(404).json({ error: "Publication not found" });
     }
+
+    const isAdmin = req.session?.role === "admin" && Boolean(req.session?.userId);
+    if (!publication.isApproved && !isAdmin) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
     res.json(publication);
   });
 
@@ -1910,7 +2368,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       delete payload.imageUrl;
 
       const validated = insertPublicationSchema.parse(payload);
-      const publication = await storage.createPublication(validated);
+      const publication = await storage.createPublication({
+        ...validated,
+        isApproved: true,
+        approvedAt: new Date(),
+        approvedByAdminId: req.session.userId!,
+      });
       res.json(publication);
     } catch (error: any) {
       const validationError = fromError(error);
@@ -1934,6 +2397,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       delete payload.imageUrl;
+      delete payload.isApproved;
+      delete payload.approvedAt;
+      delete payload.approvedByAdminId;
 
       const validated = insertPublicationSchema.partial().parse(payload);
       const publication = await storage.updatePublication(req.params.id, validated);
@@ -1945,6 +2411,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
     }
+  });
+
+  app.patch("/api/publications/:id/approve", requireAdminAuth, async (req, res) => {
+    const existing = await storage.getPublication(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    if (existing.isApproved) {
+      return res.json(existing);
+    }
+
+    const publication = await storage.updatePublication(req.params.id, {
+      isApproved: true,
+      approvedAt: new Date(),
+      approvedByAdminId: req.session.userId!,
+    });
+
+    if (!publication) {
+      return res.status(404).json({ error: "Publication not found" });
+    }
+
+    res.json(publication);
   });
 
   app.delete("/api/publications/:id", requireAdminAuth, async (req, res) => {
@@ -1980,15 +2469,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const report = await storage.createProjectReport(validated);
-      
-      const chapter = await storage.getChapter(chapterId);
+
       await storage.createPublication({
         chapterId,
         sourceProjectReportId: report.id,
         title: report.projectName,
         content: report.projectWriteup,
         photoUrl: report.photoUrl,
-        facebookLink: report.facebookPostLink
+        facebookLink: report.facebookPostLink,
+        isApproved: false,
+        approvedAt: null,
+        approvedByAdminId: null,
       });
       
       res.json(report);
@@ -2031,6 +2522,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         content: report.projectWriteup,
         photoUrl: report.photoUrl,
         facebookLink: report.facebookPostLink,
+        isApproved: false,
+        approvedAt: null,
+        approvedByAdminId: null,
       });
 
       res.json(report);
@@ -2136,7 +2630,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(leaderboard);
   });
 
+  type ResolvedMemberApplicationStatus = "approved" | "pending" | "rejected";
+  type MemberLifecycleState = "member" | "applying" | "rejected";
+
+  const getResolvedMemberApplicationStatus = (member: {
+    applicationStatus?: string | null;
+    isActive?: boolean | null;
+  }): ResolvedMemberApplicationStatus => {
+    const normalizedStatus = (member.applicationStatus || "").toLowerCase();
+    if (normalizedStatus === "approved" || normalizedStatus === "pending" || normalizedStatus === "rejected") {
+      return normalizedStatus;
+    }
+
+    return member.isActive ? "approved" : "pending";
+  };
+
+  const getMemberLifecycleState = (member: {
+    applicationStatus?: string | null;
+    isActive?: boolean | null;
+  }): MemberLifecycleState => {
+    const resolvedStatus = getResolvedMemberApplicationStatus(member);
+    if (resolvedStatus === "approved") {
+      return "member";
+    }
+
+    if (resolvedStatus === "pending") {
+      return "applying";
+    }
+
+    return "rejected";
+  };
+
+  const enrichMemberLifecycle = <T extends { applicationStatus?: string | null; isActive?: boolean | null }>(member: T) => {
+    const resolvedApplicationStatus = getResolvedMemberApplicationStatus(member);
+    const memberLifecycleState = getMemberLifecycleState(member);
+
+    return {
+      ...member,
+      resolvedApplicationStatus,
+      memberLifecycleState,
+      isCurrentMember: memberLifecycleState === "member",
+      isApplying: memberLifecycleState === "applying",
+    };
+  };
+
+  const canSessionManageMember = (
+    req: Request,
+    member: { chapterId: string | null; barangayId: string | null },
+  ) => {
+    if (req.session.role === "admin") {
+      return true;
+    }
+
+    if (req.session.role === "chapter") {
+      return Boolean(req.session.chapterId && member.chapterId === req.session.chapterId);
+    }
+
+    if (req.session.role === "barangay") {
+      return Boolean(req.session.barangayId && member.barangayId === req.session.barangayId);
+    }
+
+    return false;
+  };
+
   app.get("/api/members", requireAuth, async (req, res) => {
+    await ensureBackfilledMemberApplicationReferenceIds();
+
     const chapterId = req.query.chapterId as string | undefined;
     const barangayId = req.query.barangayId as string | undefined;
     
@@ -2144,13 +2703,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const members = chapterId && chapterId !== "all"
         ? await storage.getMembersByChapter(chapterId)
         : await storage.getMembers();
-      res.json(members);
+      res.json(members.map(enrichMemberLifecycle));
     } else if (req.session.role === "chapter") {
       const members = await storage.getMembersByChapter(req.session.chapterId!);
-      res.json(members);
+      res.json(members.map(enrichMemberLifecycle));
     } else if (req.session.role === "barangay") {
       const members = await storage.getMembersByBarangay(req.session.barangayId!);
-      res.json(members);
+      res.json(members.map(enrichMemberLifecycle));
     } else {
       res.status(403).json({ error: "Access denied" });
     }
@@ -2161,11 +2720,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(summary);
   });
 
+  app.get("/api/members/application-status/:referenceId", async (req, res) => {
+    try {
+      await ensureBackfilledMemberApplicationReferenceIds();
+
+      const normalizedReferenceId = normalizeApplicationReferenceId(req.params.referenceId || "");
+      if (!APPLICATION_REFERENCE_REGEX.test(normalizedReferenceId)) {
+        return res.status(400).json({ error: "Invalid reference format. Use YSPAP-XXXX-YYYY." });
+      }
+
+      const member = await storage.getMemberByApplicationReferenceId(normalizedReferenceId);
+      if (!member) {
+        return res.status(404).json({ error: "Application not found" });
+      }
+
+      const chapter = member.chapterId ? await storage.getChapter(member.chapterId) : undefined;
+      const lookupStatus = getResolvedMemberApplicationStatus(member);
+      const memberLifecycleState = getMemberLifecycleState(member);
+
+      res.json({
+        referenceId: normalizedReferenceId,
+        status: lookupStatus,
+        resolvedApplicationStatus: lookupStatus,
+        memberLifecycleState,
+        isCurrentMember: memberLifecycleState === "member",
+        isApplying: memberLifecycleState === "applying",
+        submittedAt: member.createdAt,
+        chapterName: chapter?.name || null,
+        chapterLocation: chapter?.location || null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to lookup application" });
+    }
+  });
+
   app.post("/api/members", async (req, res) => {
     try {
+      await ensureBackfilledMemberApplicationReferenceIds();
+
+      const requestedChapterId =
+        typeof req.body.chapterId === "string" ? req.body.chapterId.trim() : "";
+      if (!requestedChapterId) {
+        return res.status(400).json({ error: "Chapter is required" });
+      }
+
+      const rawBarangaySelection =
+        typeof req.body.barangayId === "string" ? req.body.barangayId.trim() : "";
+      const normalizedBarangaySelection = rawBarangaySelection.toLowerCase() === "chapter-direct"
+        ? ""
+        : rawBarangaySelection;
+      const resolvedBarangayId = normalizedBarangaySelection || null;
+
+      if (resolvedBarangayId) {
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(requestedChapterId);
+        const isValidBarangay = chapterBarangays.some(
+          (barangay) => barangay.id === resolvedBarangayId && barangay.isActive,
+        );
+        if (!isValidBarangay) {
+          return res.status(400).json({ error: "Invalid barangay for the selected chapter" });
+        }
+      }
+
+      const rawEmail = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      if (!rawEmail || !BASIC_EMAIL_REGEX.test(rawEmail)) {
+        return res.status(400).json({ error: "A valid email address is required" });
+      }
+
+      const rawPhotoUrl = typeof req.body.photoUrl === "string" ? req.body.photoUrl.trim() : "";
+      const resolvedPhotoUrl = rawPhotoUrl || null;
+
+      const requestedReferenceId =
+        typeof req.body.applicationReferenceId === "string"
+          ? normalizeApplicationReferenceId(req.body.applicationReferenceId)
+          : "";
+
+      const applicationReferenceId = APPLICATION_REFERENCE_REGEX.test(requestedReferenceId)
+        ? requestedReferenceId
+        : await generateUniqueMemberApplicationReferenceId();
+
+      const rawRequestedStatus =
+        typeof req.body.applicationStatus === "string" ? req.body.applicationStatus.trim().toLowerCase() : "";
+      const requestedIsActive = Boolean(req.body.isActive ?? false);
+      const normalizedApplicationStatus = MEMBER_APPLICATION_STATUSES.includes(
+        rawRequestedStatus as typeof MEMBER_APPLICATION_STATUSES[number],
+      )
+        ? rawRequestedStatus
+        : requestedIsActive
+          ? "approved"
+          : "pending";
+      const resolvedIsActive = normalizedApplicationStatus === "approved";
+
       const memberData = {
         ...req.body,
-        isActive: req.body.isActive ?? false
+        chapterId: requestedChapterId,
+        barangayId: resolvedBarangayId,
+        email: rawEmail,
+        photoUrl: resolvedPhotoUrl,
+        applicationReferenceId,
+        applicationStatus: normalizedApplicationStatus,
+        isActive: resolvedIsActive,
       };
       const validated = insertMemberSchema.parse(memberData);
       const member = await storage.createMember(validated);
@@ -2196,9 +2849,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const allowedFieldsByRole: Record<string, string[]> = {
-        admin: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "chapterId", "barangayId"],
-        chapter: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink", "barangayId"],
-        barangay: ["isActive", "registeredVoter", "fullName", "age", "contactNumber", "facebookLink"],
+        admin: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink", "photoUrl", "chapterId", "barangayId"],
+        chapter: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink", "photoUrl", "barangayId", "householdSize"],
+        barangay: ["isActive", "applicationStatus", "registeredVoter", "fullName", "age", "contactNumber", "email", "facebookLink"],
       };
 
       const allowedFields = allowedFieldsByRole[req.session.role || ""] || [];
@@ -2214,9 +2867,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No valid fields provided for update" });
       }
 
-      if (req.session.role === "chapter" && updateData.barangayId) {
-        const chapterBarangays = await storage.getBarangayUsersByChapterId(req.session.chapterId!);
-        const isValidBarangay = chapterBarangays.some((barangay) => barangay.id === updateData.barangayId);
+      if (updateData.householdSize !== undefined) {
+        const parsedHouseholdSize = Number(updateData.householdSize);
+        if (!Number.isInteger(parsedHouseholdSize) || parsedHouseholdSize < 1) {
+          return res.status(400).json({ error: "Household size must be a whole number of at least 1" });
+        }
+        updateData.householdSize = parsedHouseholdSize;
+      }
+
+      if (updateData.email !== undefined) {
+        if (typeof updateData.email !== "string") {
+          return res.status(400).json({ error: "Invalid email address" });
+        }
+
+        const normalizedEmail = updateData.email.trim().toLowerCase();
+        if (!normalizedEmail || !BASIC_EMAIL_REGEX.test(normalizedEmail)) {
+          return res.status(400).json({ error: "Invalid email address" });
+        }
+
+        updateData.email = normalizedEmail;
+      }
+
+      if (updateData.photoUrl !== undefined) {
+        if (updateData.photoUrl === null) {
+          updateData.photoUrl = null;
+        } else if (typeof updateData.photoUrl === "string") {
+          updateData.photoUrl = updateData.photoUrl.trim() || null;
+        } else {
+          return res.status(400).json({ error: "Invalid photo URL" });
+        }
+      }
+
+      if (updateData.chapterId !== undefined) {
+        if (typeof updateData.chapterId !== "string" || !updateData.chapterId.trim()) {
+          return res.status(400).json({ error: "Invalid chapter" });
+        }
+
+        updateData.chapterId = updateData.chapterId.trim();
+      }
+
+      if (updateData.barangayId !== undefined) {
+        if (updateData.barangayId === null) {
+          updateData.barangayId = null;
+        } else if (typeof updateData.barangayId === "string") {
+          const normalizedBarangayId = updateData.barangayId.trim();
+          updateData.barangayId =
+            !normalizedBarangayId || normalizedBarangayId.toLowerCase() === "chapter-direct"
+              ? null
+              : normalizedBarangayId;
+        } else {
+          return res.status(400).json({ error: "Invalid barangay" });
+        }
+      }
+
+      if (updateData.applicationStatus !== undefined) {
+        if (typeof updateData.applicationStatus !== "string") {
+          return res.status(400).json({ error: "Invalid application status" });
+        }
+
+        const normalizedApplicationStatus = updateData.applicationStatus.trim().toLowerCase();
+        if (!MEMBER_APPLICATION_STATUSES.includes(normalizedApplicationStatus as typeof MEMBER_APPLICATION_STATUSES[number])) {
+          return res.status(400).json({ error: "Invalid application status" });
+        }
+
+        updateData.applicationStatus = normalizedApplicationStatus;
+        updateData.isActive = normalizedApplicationStatus === "approved";
+      } else if (updateData.isActive !== undefined) {
+        updateData.applicationStatus = updateData.isActive ? "approved" : "pending";
+      }
+
+      if (updateData.barangayId) {
+        const chapterIdForBarangayValidation = req.session.role === "chapter"
+          ? req.session.chapterId
+          : updateData.chapterId || member.chapterId;
+
+        if (!chapterIdForBarangayValidation) {
+          return res.status(400).json({ error: "Cannot assign barangay without a chapter" });
+        }
+
+        const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterIdForBarangayValidation);
+        const isValidBarangay = chapterBarangays.some(
+          (barangay) => barangay.id === updateData.barangayId && barangay.isActive,
+        );
         if (!isValidBarangay) {
           return res.status(400).json({ error: "Invalid barangay for this chapter" });
         }
@@ -2227,6 +2959,123 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.delete("/api/members/:id/duplicate", requireAuth, async (req, res) => {
+    try {
+      const member = await storage.getMember(req.params.id);
+      if (!member) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+
+      if (!canSessionManageMember(req, member)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (getResolvedMemberApplicationStatus(member) !== "pending") {
+        return res.status(400).json({ error: "Only pending applications can be deleted from duplicate review" });
+      }
+
+      const deleted = await storage.deleteMember(member.id);
+      if (!deleted) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+
+      res.json({ success: true, deletedMemberId: member.id });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Failed to delete duplicate application" });
+    }
+  });
+
+  app.post("/api/members/:id/merge", requireAuth, async (req, res) => {
+    try {
+      const primaryMemberId = req.params.id;
+      const duplicateMemberId =
+        typeof req.body.duplicateMemberId === "string" ? req.body.duplicateMemberId.trim() : "";
+
+      if (!duplicateMemberId) {
+        return res.status(400).json({ error: "duplicateMemberId is required" });
+      }
+
+      if (primaryMemberId === duplicateMemberId) {
+        return res.status(400).json({ error: "Cannot merge a member with itself" });
+      }
+
+      const [primaryMember, duplicateMember] = await Promise.all([
+        storage.getMember(primaryMemberId),
+        storage.getMember(duplicateMemberId),
+      ]);
+
+      if (!primaryMember || !duplicateMember) {
+        return res.status(404).json({ error: "Member not found" });
+      }
+
+      if (!canSessionManageMember(req, primaryMember) || !canSessionManageMember(req, duplicateMember)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (getResolvedMemberApplicationStatus(duplicateMember) !== "pending") {
+        return res.status(400).json({ error: "Only pending duplicate applications can be merged" });
+      }
+
+      const statusRank: Record<string, number> = {
+        rejected: 0,
+        pending: 1,
+        approved: 2,
+      };
+
+      const primaryStatus = getResolvedMemberApplicationStatus(primaryMember);
+      const duplicateStatus = getResolvedMemberApplicationStatus(duplicateMember);
+      const mergedStatus =
+        (statusRank[primaryStatus] || 0) >= (statusRank[duplicateStatus] || 0)
+          ? primaryStatus
+          : duplicateStatus;
+
+      const primaryHouseholdVoters = typeof primaryMember.householdVoters === "number" ? primaryMember.householdVoters : null;
+      const duplicateHouseholdVoters = typeof duplicateMember.householdVoters === "number" ? duplicateMember.householdVoters : null;
+      const mergedHouseholdVoters =
+        primaryHouseholdVoters !== null || duplicateHouseholdVoters !== null
+          ? Math.max(primaryHouseholdVoters || 0, duplicateHouseholdVoters || 0)
+          : null;
+
+      const mergedUpdateData: Record<string, any> = {
+        fullName: primaryMember.fullName || duplicateMember.fullName,
+        age: primaryMember.age || duplicateMember.age,
+        birthdate: primaryMember.birthdate || duplicateMember.birthdate,
+        chapterId: primaryMember.chapterId || duplicateMember.chapterId,
+        barangayId: primaryMember.barangayId || duplicateMember.barangayId,
+        contactNumber: primaryMember.contactNumber || duplicateMember.contactNumber,
+        email: primaryMember.email || duplicateMember.email,
+        facebookLink: primaryMember.facebookLink || duplicateMember.facebookLink,
+        photoUrl: primaryMember.photoUrl || duplicateMember.photoUrl,
+        registeredVoter: Boolean(primaryMember.registeredVoter || duplicateMember.registeredVoter),
+        householdSize: Math.max(primaryMember.householdSize || 1, duplicateMember.householdSize || 1),
+        householdVoters: mergedHouseholdVoters,
+        newsletterOptIn: Boolean(primaryMember.newsletterOptIn || duplicateMember.newsletterOptIn),
+        sector: primaryMember.sector || duplicateMember.sector,
+        sectorOther: primaryMember.sectorOther || duplicateMember.sectorOther,
+        applicationStatus: mergedStatus,
+        isActive: mergedStatus === "approved",
+      };
+
+      const mergedMember = await storage.updateMember(primaryMember.id, mergedUpdateData);
+      if (!mergedMember) {
+        return res.status(500).json({ error: "Failed to update primary application during merge" });
+      }
+
+      const deletedDuplicate = await storage.deleteMember(duplicateMember.id);
+      if (!deletedDuplicate) {
+        return res.status(500).json({ error: "Merged primary application but failed to delete duplicate" });
+      }
+
+      res.json({
+        success: true,
+        mergedPrimaryMemberId: mergedMember.id,
+        deletedDuplicateMemberId: duplicateMember.id,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Failed to merge duplicate applications" });
     }
   });
 
@@ -2930,6 +3779,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   if (process.env.DATABASE_URL) {
+    void ensureAdminRelationshipTable().catch((error: any) => {
+      console.error("[startup] Failed to ensure admin relationship table", {
+        message: error?.message,
+      });
+    });
+    void ensureMembersApplicationReferenceInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure members application reference infra", {
+        message: error?.message,
+      });
+    });
+    void ensureBackfilledMemberApplicationReferenceIds().catch((error: any) => {
+      console.error("[startup] Failed to backfill member application reference IDs", {
+        message: error?.message,
+      });
+    });
     void initializeDefaultsWithoutBlockingStartup();
   } else if (process.env.NODE_ENV === "development") {
     console.warn(

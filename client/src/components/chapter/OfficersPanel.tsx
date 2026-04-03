@@ -256,11 +256,6 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     return labelA.localeCompare(labelB);
   });
 
-  const chapterOfficersPagination = usePagination(chapterOfficers, {
-    pageSize: 5,
-    resetKey: chapterOfficers.length,
-  });
-
   const barangaySectionsPagination = usePagination(barangaySections, {
     pageSize: 4,
     resetKey: barangaySections.length,
@@ -391,19 +386,7 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
                 <p className="text-sm text-muted-foreground">No chapter-level officers yet.</p>
               ) : (
                 <div className="space-y-3">
-                  {chapterOfficersPagination.paginatedItems.map((officer) => renderOfficerRow(officer))}
-
-                  <PaginationControls
-                    currentPage={chapterOfficersPagination.currentPage}
-                    totalPages={chapterOfficersPagination.totalPages}
-                    itemsPerPage={chapterOfficersPagination.itemsPerPage}
-                    totalItems={chapterOfficersPagination.totalItems}
-                    startItem={chapterOfficersPagination.startItem}
-                    endItem={chapterOfficersPagination.endItem}
-                    onPageChange={chapterOfficersPagination.setCurrentPage}
-                    onItemsPerPageChange={chapterOfficersPagination.setItemsPerPage}
-                    itemLabel="chapter officers"
-                  />
+                  {chapterOfficers.map((officer) => renderOfficerRow(officer))}
                 </div>
               )}
 

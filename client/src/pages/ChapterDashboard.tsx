@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
@@ -19,6 +19,8 @@ import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { 
+  Eye,
+  EyeOff,
   FileText, 
   Newspaper, 
   Building2, 
@@ -43,7 +45,8 @@ import {
   Send,
   MessageSquare,
   ImageOff,
-  UserRound
+  UserRound,
+  X
 } from "lucide-react";
 import type { Chapter, ProjectReport, Publication } from "@shared/schema";
 
@@ -123,6 +126,8 @@ export default function ChapterDashboard() {
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -155,10 +160,18 @@ export default function ChapterDashboard() {
   const chapterReportsUrl = authUser?.chapterId
     ? `/api/project-reports?chapterId=${encodeURIComponent(authUser.chapterId)}`
     : "/api/project-reports?chapterId=";
+  const chapterPublicationStatusUrl = authUser?.chapterId
+    ? `/api/publications?chapterId=${encodeURIComponent(authUser.chapterId)}&includeAll=true`
+    : "/api/publications?chapterId=&includeAll=true";
 
   const { data: publications = [] } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
     enabled: authenticated,
+  });
+
+  const { data: chapterPublicationsWithStatus = [] } = useQuery<Publication[]>({
+    queryKey: [chapterPublicationStatusUrl],
+    enabled: authenticated && !!authUser?.chapterId && authUser?.role === "chapter",
   });
 
   const {
@@ -176,10 +189,56 @@ export default function ChapterDashboard() {
   });
 
   const { data: selectedChapterDirectory = [], isLoading: selectedChapterDirectoryLoading } = useQuery<PublicChapterDirectoryEntry[]>({
-    queryKey: ["/api/chapters", selectedDirectoryChapterId, "directory"],
+    queryKey: ["/api/chapters", selectedDirectoryChapterId, "directory", authUser?.chapterId || ""],
     queryFn: async () => {
       if (!selectedDirectoryChapterId) {
         return [];
+      }
+
+      const mapDirectoryEntries = (entries: any[]): PublicChapterDirectoryEntry[] => {
+        return entries.map((entry) => ({
+          id: String(entry?.id || ""),
+          chapterId: String(entry?.chapterId || selectedDirectoryChapterId),
+          position: String(entry?.position || ""),
+          fullName: String(entry?.fullName || ""),
+          contactNumber: String(entry?.contactNumber || ""),
+          chapterEmail: String(entry?.chapterEmail || ""),
+        }));
+      };
+
+      const filterCityLevelEntries = (entries: any[]): any[] => {
+        return entries.filter((entry) => {
+          const level = String(entry?.level || "chapter").toLowerCase();
+          const hasBarangayId = Boolean(entry?.barangayId);
+          return !(level === "barangay" || hasBarangayId);
+        });
+      };
+
+      // For the logged-in chapter's own record, use the authenticated officers route
+      // and fall back to the larger city-level result if one source is stale.
+      if (authUser?.chapterId && selectedDirectoryChapterId === authUser.chapterId) {
+        const [officersResponse, publicResponse] = await Promise.all([
+          fetch(`/api/chapter-officers?chapterId=${encodeURIComponent(selectedDirectoryChapterId)}`, {
+            credentials: "include",
+          }),
+          fetch(`/api/chapters/${selectedDirectoryChapterId}/directory`, { credentials: "include" }),
+        ]);
+
+        const cityOfficersFromAuth = officersResponse.ok
+          ? filterCityLevelEntries(await officersResponse.json())
+          : [];
+
+        const cityOfficersFromPublic = publicResponse.ok
+          ? filterCityLevelEntries(await publicResponse.json())
+          : [];
+
+        const bestSource = cityOfficersFromAuth.length >= cityOfficersFromPublic.length
+          ? cityOfficersFromAuth
+          : cityOfficersFromPublic;
+
+        if (bestSource.length > 0) {
+          return mapDirectoryEntries(bestSource);
+        }
       }
 
       const response = await fetch(`/api/chapters/${selectedDirectoryChapterId}/directory`, { credentials: "include" });
@@ -187,7 +246,8 @@ export default function ChapterDashboard() {
         return [];
       }
 
-      return response.json();
+      const data = await response.json();
+      return Array.isArray(data) ? mapDirectoryEntries(data) : [];
     },
     enabled: authenticated && !!selectedDirectoryChapterId,
   });
@@ -314,7 +374,7 @@ export default function ChapterDashboard() {
       return await apiRequest("POST", "/api/project-reports", data);
     },
     onSuccess: () => {
-      toast({ title: "Success", description: "Project report submitted successfully" });
+      toast({ title: "Success", description: "Project report submitted and sent for admin approval" });
       setProjectName("");
       setProjectWriteup("");
       setPhotoUrl("");
@@ -322,6 +382,7 @@ export default function ChapterDashboard() {
       setCollaborationType("NONE");
       setCollaboratingChapterId(null);
       queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: [chapterPublicationStatusUrl] });
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
     },
@@ -338,6 +399,7 @@ export default function ChapterDashboard() {
       toast({ title: "Success", description: "Report updated successfully" });
       resetEditReportForm();
       queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: [chapterPublicationStatusUrl] });
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
     },
@@ -353,6 +415,7 @@ export default function ChapterDashboard() {
     onSuccess: () => {
       toast({ title: "Success", description: "Report deleted successfully" });
       queryClient.invalidateQueries({ queryKey: [chapterReportsUrl] });
+      queryClient.invalidateQueries({ queryKey: [chapterPublicationStatusUrl] });
       queryClient.invalidateQueries({ queryKey: ["/api/publications"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboard"] });
     },
@@ -379,7 +442,7 @@ export default function ChapterDashboard() {
     await apiRequest("POST", "/api/auth/logout", {});
     console.log("[Chapter] Logged out successfully");
     queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
-    setLocation("/login");
+    setLocation("/");
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -515,6 +578,16 @@ export default function ChapterDashboard() {
   const chapterNameById = useMemo(() => {
     return new Map(chapters.map((chapter) => [chapter.id, chapter.name]));
   }, [chapters]);
+
+  const publicationBySourceReportId = useMemo(() => {
+    const publicationMap = new Map<string, Publication>();
+    for (const publication of chapterPublicationsWithStatus) {
+      if (publication.sourceProjectReportId) {
+        publicationMap.set(publication.sourceProjectReportId, publication);
+      }
+    }
+    return publicationMap;
+  }, [chapterPublicationsWithStatus]);
 
   const filteredPublications = useMemo(() => {
     const normalizedQuery = publicationSearch.trim().toLowerCase();
@@ -739,7 +812,7 @@ export default function ChapterDashboard() {
                 <CardHeader>
                   <CardTitle>Submit Project Report</CardTitle>
                   <CardDescription>
-                    Share your chapter's project activities. Reports are automatically published.
+                    Share your chapter's project activities. Reports are published after admin approval.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -886,6 +959,9 @@ export default function ChapterDashboard() {
                       <div className="space-y-3">
                         {reportsPagination.paginatedItems.map((report) => {
                           const reportPhotoUrl = getDisplayImageUrl((report.photoUrl || "").trim());
+                          const linkedPublication = publicationBySourceReportId.get(report.id);
+                          const isPublished = Boolean(linkedPublication?.isApproved);
+                          const isAwaitingAdminReview = !isPublished;
 
                           return (
                             <Card
@@ -896,9 +972,28 @@ export default function ChapterDashboard() {
                               <CardHeader className="pb-2">
                                 <div className="flex items-start justify-between gap-2">
                                   <CardTitle className="text-base leading-tight">{report.projectName}</CardTitle>
-                                  <Badge variant="outline" className="shrink-0">
-                                    {getCollaborationLabel(report)}
-                                  </Badge>
+                                  <div className="flex items-center gap-2">
+                                    {isAwaitingAdminReview ? (
+                                      <Badge
+                                        variant="secondary"
+                                        className="shrink-0"
+                                        data-testid={`badge-report-awaiting-approval-${report.id}`}
+                                      >
+                                        Awaiting Admin Review
+                                      </Badge>
+                                    ) : (
+                                      <Badge
+                                        variant="outline"
+                                        className="shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        data-testid={`badge-report-published-${report.id}`}
+                                      >
+                                        Published
+                                      </Badge>
+                                    )}
+                                    <Badge variant="outline" className="shrink-0">
+                                      {getCollaborationLabel(report)}
+                                    </Badge>
+                                  </div>
                                 </div>
                                 <CardDescription>
                                   Submitted {formatDateTime(report.createdAt)}
@@ -922,7 +1017,7 @@ export default function ChapterDashboard() {
                                     />
                                   </a>
                                 )}
-                                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                                <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words text-justify">
                                   {report.projectWriteup}
                                 </p>
                                 {report.collaborationType === "ANOTHER_CHAPTER" && report.collaboratingChapterId && (
@@ -1288,7 +1383,7 @@ export default function ChapterDashboard() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="flex h-full flex-col">
-                      <p className="text-sm text-muted-foreground break-words mb-3 min-h-[4.5rem]">
+                      <p className="text-sm text-muted-foreground break-words mb-3 min-h-[4.5rem] text-justify">
                         {truncateText(pub.content, 190)}
                       </p>
                       {pub.facebookLink && (
@@ -1336,16 +1431,27 @@ export default function ChapterDashboard() {
               }
             }}
           >
-            <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+            <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden p-0 gap-0" hideClose>
               {selectedPublication && (
-                <div className="space-y-4">
-                  <DialogHeader>
-                    <DialogTitle>{selectedPublication.title}</DialogTitle>
-                    <DialogDescription className="flex items-center gap-2 flex-wrap">
-                      <Badge variant="secondary">{getChapterName(selectedPublication.chapterId)}</Badge>
-                      <span>{new Date(selectedPublication.publishedAt).toLocaleString()}</span>
-                    </DialogDescription>
+                <div className="flex max-h-[85vh] flex-col">
+                  <DialogHeader className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 md:px-6">
+                    <div className="flex items-start justify-between gap-3 pr-2">
+                      <div className="min-w-0 space-y-1">
+                        <DialogTitle className="break-words text-left">{selectedPublication.title}</DialogTitle>
+                        <DialogDescription className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="secondary">{getChapterName(selectedPublication.chapterId)}</Badge>
+                          <span>{new Date(selectedPublication.publishedAt).toLocaleString()}</span>
+                        </DialogDescription>
+                      </div>
+                      <DialogClose asChild>
+                        <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Close dialog">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </DialogClose>
+                    </div>
                   </DialogHeader>
+
+                  <div className="min-h-0 flex-1 overflow-y-auto space-y-4 px-4 py-4 md:px-6 md:py-5">
 
                   {(() => {
                     const selectedPhotoUrl = getPublicationPhotoUrl(selectedPublication as Publication & { imageUrl?: string | null });
@@ -1376,7 +1482,7 @@ export default function ChapterDashboard() {
                     );
                   })()}
 
-                  <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap break-words text-justify">
                     {selectedPublication.content}
                   </p>
 
@@ -1391,6 +1497,7 @@ export default function ChapterDashboard() {
                       View on Facebook
                     </a>
                   )}
+                  </div>
                 </div>
               )}
             </DialogContent>
@@ -1489,20 +1596,33 @@ export default function ChapterDashboard() {
                   }
                 }}
               >
-                <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle>
-                      {selectedDirectoryChapter
-                        ? `${selectedDirectoryChapter.name} Directory`
-                        : "Chapter Directory"}
-                    </DialogTitle>
-                    <DialogDescription>
-                      Read-only details for chapter profile, officers, barangay officers, and map location.
-                    </DialogDescription>
+                <DialogContent hideClose className="max-w-5xl max-h-[85vh] overflow-y-auto p-0 gap-0">
+                  <DialogHeader className="sticky top-0 z-20 border-b bg-background/95 px-6 py-4 backdrop-blur">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1 pr-2">
+                        <DialogTitle>
+                          {selectedDirectoryChapter
+                            ? `${selectedDirectoryChapter.name} Directory`
+                            : "Chapter Directory"}
+                        </DialogTitle>
+                        <DialogDescription>
+                          Read-only details for chapter profile, officers, barangay officers, and map location.
+                        </DialogDescription>
+                      </div>
+                      <DialogClose asChild>
+                        <button
+                          type="button"
+                          aria-label="Close directory"
+                          className="rounded-full border border-primary/40 p-1.5 text-primary transition-colors hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      </DialogClose>
+                    </div>
                   </DialogHeader>
 
                   {selectedDirectoryChapter && (
-                    <div className="space-y-6">
+                    <div className="space-y-6 px-6 py-6">
                       <section className="space-y-3">
                         <h4 className="text-sm font-semibold">Chapter Info</h4>
                         <div className="rounded-lg border p-4">
@@ -1562,6 +1682,7 @@ export default function ChapterDashboard() {
                             {selectedChapterDirectory.map((entry) => (
                               <div key={entry.id} className="rounded-lg border p-3 space-y-2" data-testid={`chapter-directory-entry-${entry.id}`}>
                                 <p className="font-medium break-words">{entry.fullName}</p>
+                                <p className="text-xs text-muted-foreground">{entry.position || "Officer"}</p>
                                 <p className="flex items-center gap-2 text-sm text-muted-foreground">
                                   <Phone className="h-4 w-4" />
                                   <a href={`tel:${entry.contactNumber}`} className="text-primary hover:underline break-all">
@@ -1697,27 +1818,51 @@ export default function ChapterDashboard() {
           <form onSubmit={handleChangePassword} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="newPassword">New Password</Label>
-              <Input
-                id="newPassword"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={8}
-                placeholder="Minimum 8 characters"
-                data-testid="input-new-password"
-              />
+              <div className="relative">
+                <Input
+                  id="newPassword"
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  placeholder="Minimum 8 characters"
+                  className="pr-12"
+                  data-testid="input-new-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword((prev) => !prev)}
+                  aria-label={showNewPassword ? "Hide new password" : "Show new password"}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-new-password"
+                >
+                  {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                data-testid="input-confirm-password"
-              />
+              <div className="relative">
+                <Input
+                  id="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  className="pr-12"
+                  data-testid="input-confirm-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  data-testid="button-toggle-confirm-password"
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <Button 
               type="submit" 

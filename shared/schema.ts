@@ -29,14 +29,18 @@ export const chapters = pgTable("chapters", {
 
 export const members = pgTable("members", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  applicationReferenceId: text("application_reference_id").unique(),
+  applicationStatus: text("application_status").default("pending").notNull(),
   fullName: text("full_name").notNull(),
   age: integer("age").notNull(),
   birthdate: timestamp("birthdate"),
   chapterId: varchar("chapter_id").references(() => chapters.id),
   barangayId: varchar("barangay_id"),
   contactNumber: text("contact_number").notNull(),
+  email: text("email"),
   registeredVoter: boolean("registered_voter").default(false).notNull(),
   facebookLink: text("facebook_link"),
+  photoUrl: text("photo_url"),
   isActive: boolean("is_active").default(false).notNull(),
   householdSize: integer("household_size").default(1).notNull(),
   householdVoters: integer("household_voters"),
@@ -158,6 +162,9 @@ export const publications = pgTable("publications", {
   content: text("content").notNull(),
   photoUrl: text("photo_url"),
   facebookLink: text("facebook_link"),
+  isApproved: boolean("is_approved").default(true).notNull(),
+  approvedAt: timestamp("approved_at"),
+  approvedByAdminId: varchar("approved_by_admin_id").references(() => adminUsers.id),
   publishedAt: timestamp("published_at").defaultNow().notNull(),
 });
 
@@ -326,6 +333,15 @@ export const insertMemberSchema = createInsertSchema(members).omit({
   birthdate: z.preprocess(
     (val) => (typeof val === "string" && val ? new Date(val) : val),
     z.date().nullable().optional()
+  ),
+  email: z
+    .string()
+    .trim()
+    .min(1, "Email is required")
+    .email("Please enter a valid email address"),
+  photoUrl: z.preprocess(
+    (val) => (typeof val === "string" ? val.trim() || null : val),
+    z.string().max(2048).nullable().optional()
   ),
 });
 

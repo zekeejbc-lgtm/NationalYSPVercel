@@ -64,7 +64,7 @@ import {
   nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, asc, isNull } from "drizzle-orm";
+import { eq, desc, and, sql, asc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 export type ImportantDocumentAcknowledgement = {
@@ -97,8 +97,10 @@ export type PublicBarangayDirectoryEntry = {
 export interface IStorage {
   getAdminUser(id: string): Promise<AdminUser | undefined>;
   getAdminUserByUsername(username: string): Promise<AdminUser | undefined>;
+  getAdminUsers(): Promise<AdminUser[]>;
   createAdminUser(user: InsertAdminUser): Promise<AdminUser>;
   updateAdminUser(id: string, user: Partial<InsertAdminUser>): Promise<AdminUser | undefined>;
+  deleteAdminUser(id: string): Promise<boolean>;
 
   getChapterUser(id: string): Promise<ChapterUser | undefined>;
   getChapterUserByUsername(username: string): Promise<ChapterUser | undefined>;
@@ -146,7 +148,9 @@ export interface IStorage {
   updateContactInfo(info: InsertContactInfo): Promise<ContactInfo>;
 
   getPublications(): Promise<Publication[]>;
+  getApprovedPublications(): Promise<Publication[]>;
   getPublicationsByChapter(chapterId: string): Promise<Publication[]>;
+  getApprovedPublicationsByChapter(chapterId: string): Promise<Publication[]>;
   getPublication(id: string): Promise<Publication | undefined>;
   createPublication(publication: InsertPublication): Promise<Publication>;
   updatePublication(id: string, publication: Partial<InsertPublication>): Promise<Publication | undefined>;
@@ -172,6 +176,7 @@ export interface IStorage {
   getMembers(): Promise<Member[]>;
   getMembersByChapter(chapterId: string): Promise<Member[]>;
   getMember(id: string): Promise<Member | undefined>;
+  getMemberByApplicationReferenceId(referenceId: string): Promise<Member | undefined>;
   createMember(member: InsertMember): Promise<Member>;
   updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined>;
   deleteMember(id: string): Promise<boolean>;
@@ -255,6 +260,10 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getAdminUsers(): Promise<AdminUser[]> {
+    return db.select().from(adminUsers).orderBy(desc(adminUsers.createdAt));
+  }
+
   async createAdminUser(insertUser: InsertAdminUser): Promise<AdminUser> {
     const result = await db.insert(adminUsers).values(insertUser).returning();
     return result[0];
@@ -263,6 +272,11 @@ export class DbStorage implements IStorage {
   async updateAdminUser(id: string, user: Partial<InsertAdminUser>): Promise<AdminUser | undefined> {
     const result = await db.update(adminUsers).set(user).where(eq(adminUsers.id, id)).returning();
     return result[0];
+  }
+
+  async deleteAdminUser(id: string): Promise<boolean> {
+    const result = await db.delete(adminUsers).where(eq(adminUsers.id, id)).returning();
+    return result.length > 0;
   }
 
   async getChapterUser(id: string): Promise<ChapterUser | undefined> {
@@ -507,8 +521,24 @@ export class DbStorage implements IStorage {
     return db.select().from(publications).orderBy(desc(publications.publishedAt));
   }
 
+  async getApprovedPublications(): Promise<Publication[]> {
+    return db
+      .select()
+      .from(publications)
+      .where(eq(publications.isApproved, true))
+      .orderBy(desc(publications.publishedAt));
+  }
+
   async getPublicationsByChapter(chapterId: string): Promise<Publication[]> {
     return db.select().from(publications).where(eq(publications.chapterId, chapterId)).orderBy(desc(publications.publishedAt));
+  }
+
+  async getApprovedPublicationsByChapter(chapterId: string): Promise<Publication[]> {
+    return db
+      .select()
+      .from(publications)
+      .where(and(eq(publications.chapterId, chapterId), eq(publications.isApproved, true)))
+      .orderBy(desc(publications.publishedAt));
   }
 
   async getPublication(id: string): Promise<Publication | undefined> {
@@ -676,6 +706,12 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getMemberByApplicationReferenceId(referenceId: string): Promise<Member | undefined> {
+    const normalizedReferenceId = referenceId.trim().toUpperCase();
+    const result = await db.select().from(members).where(eq(members.applicationReferenceId, normalizedReferenceId));
+    return result[0];
+  }
+
   async createMember(member: InsertMember): Promise<Member> {
     const result = await db.insert(members).values(member).returning();
     return result[0];
@@ -718,10 +754,7 @@ export class DbStorage implements IStorage {
       chapterEmail: chapterOfficers.chapterEmail,
     }).from(chapterOfficers).where(and(
       eq(chapterOfficers.chapterId, chapterId),
-      isNull(chapterOfficers.barangayId),
       sql`COALESCE(LOWER(${chapterOfficers.level}), 'chapter') <> 'barangay'`,
-      sql`LOWER(${chapterOfficers.position}) LIKE '%president%'`,
-      sql`LOWER(${chapterOfficers.position}) NOT LIKE '%barangay%'`,
     )).orderBy(chapterOfficers.position);
   }
 
