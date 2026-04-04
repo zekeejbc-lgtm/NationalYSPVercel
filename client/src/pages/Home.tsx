@@ -358,18 +358,14 @@ export default function Home() {
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {chapterShowcase.map((chapter) => (
-                  <div key={chapter.id} className="space-y-2">
-                    <p className="text-xs font-medium text-primary" data-testid={`text-home-chapter-rank-${chapter.id}`}>
-                      Rank #{chapter.rank}: {chapter.metrics.completedKpis} KPIs, {chapter.metrics.activeMembersCount} members, {chapter.metrics.submissionCount} submissions
-                    </p>
-                    <ChapterCard
-                      {...chapter}
-                      onSelect={() => {
-                        setSelectedChapter(chapter);
-                        setIsChapterDetailsOpen(true);
-                      }}
-                    />
-                  </div>
+                  <ChapterCard
+                    key={chapter.id}
+                    {...chapter}
+                    onSelect={() => {
+                      setSelectedChapter(chapter);
+                      setIsChapterDetailsOpen(true);
+                    }}
+                  />
                 ))}
               </div>
 
@@ -434,10 +430,6 @@ export default function Home() {
                     </div>
 
                     <div className="max-h-[calc(90vh-5rem)] overflow-y-auto px-6 py-5 space-y-6">
-                      <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary" data-testid={`text-home-showcase-metrics-${selectedChapter.id}`}>
-                        Rank #{selectedChapter.rank} | KPI completions: {selectedChapter.metrics.completedKpis} | Active members: {selectedChapter.metrics.activeMembersCount} | Publications: {selectedChapter.metrics.publicationsCount} | Reports: {selectedChapter.metrics.projectReportsCount}
-                      </div>
-
                       <div className="flex items-start gap-4">
                         <img
                           src={getChapterLogoSrc(selectedChapter.photo)}
