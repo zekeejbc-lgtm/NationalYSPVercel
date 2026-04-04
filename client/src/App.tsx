@@ -23,6 +23,7 @@ import NotFound from "@/pages/not-found";
 import { IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import { ConfirmDialogProvider } from "@/hooks/use-confirm-dialog";
 import { ThemeProvider } from "@/hooks/use-theme";
+import AppErrorBoundary from "@/components/ui/app-error-boundary";
 
 type RouteSeo = {
   title: string;
@@ -483,7 +484,9 @@ function AppContent() {
     <div className="flex flex-col min-h-screen">
       {!hideNavFooter && <Navigation />}
       <main className="flex-1">
-        <Router />
+        <AppErrorBoundary>
+          <Router />
+        </AppErrorBoundary>
       </main>
       {!hideNavFooter && <Footer />}
     </div>

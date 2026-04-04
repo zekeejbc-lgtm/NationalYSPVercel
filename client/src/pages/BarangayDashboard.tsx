@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
+import SessionRecoveryPanel from "@/components/ui/session-recovery-panel";
 import { useToast } from "@/hooks/use-toast";
+import { checkAuthSession } from "@/lib/authSession";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
@@ -64,6 +66,7 @@ export default function BarangayDashboard() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
   const {
@@ -78,49 +81,78 @@ export default function BarangayDashboard() {
   useEffect(() => {
     const checkAuth = async () => {
       console.log("[Barangay] DASHBOARD_MOUNTED, checking auth...");
+      setLoading(true);
+      setAuthError(null);
+
       try {
-        const response = await fetch("/api/auth/check", { credentials: "include" });
-        const data = await response.json();
-        console.log("[Barangay] Auth check result:", { authenticated: data.authenticated, role: data.user?.role });
-        
-        if (!data.authenticated) {
+        const authResult = await checkAuthSession();
+
+        if (authResult.status === "error") {
+          setAuthenticated(false);
+          setAuthUser(null);
+          setAuthError(authResult.message);
+          return;
+        }
+
+        if (authResult.status === "unauthenticated") {
           console.log("[Barangay] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
+          setAuthenticated(false);
+          setAuthUser(null);
           setLocation("/login");
           return;
         }
+
+        console.log("[Barangay] Auth check result:", {
+          authenticated: true,
+          role: authResult.user.role,
+        });
         
-        if (data.user?.role === "admin") {
+        if (authResult.user.role === "admin") {
           console.log("[Barangay] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
 
-        if (data.user?.role === "chapter") {
+        if (authResult.user.role === "chapter") {
           console.log("[Barangay] User is chapter, redirecting to /chapter-dashboard");
           setLocation("/chapter-dashboard");
           return;
         }
         
-        if (data.user?.role !== "barangay") {
-          console.log("[Barangay] Unknown role:", data.user?.role, "redirecting to /login");
+        if (authResult.user.role !== "barangay") {
+          console.log("[Barangay] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
+          setAuthenticated(false);
+          setAuthUser(null);
           setLocation("/login");
           return;
         }
         
-        console.log("[Barangay] AUTH_STATE: authenticated=true, role=BARANGAY, barangayName:", data.user?.barangayName);
+        console.log("[Barangay] AUTH_STATE: authenticated=true, role=BARANGAY, barangayName:", authResult.user.barangayName);
+        const barangayUser: AuthUser = {
+          id: authResult.user.id,
+          username: authResult.user.username,
+          role: "barangay",
+          chapterId: authResult.user.chapterId,
+          chapterName: authResult.user.chapterName,
+          barangayId: authResult.user.barangayId,
+          barangayName: authResult.user.barangayName,
+          mustChangePassword: authResult.user.mustChangePassword,
+        };
         setAuthenticated(true);
-        setAuthUser(data.user);
+        setAuthUser(barangayUser);
         
-        if (data.user?.mustChangePassword) {
+        if (barangayUser.mustChangePassword) {
           setShowPasswordDialog(true);
         }
       } catch (error) {
         console.log("[Barangay] Auth check error:", error);
-        setLocation("/login");
+        setAuthenticated(false);
+        setAuthUser(null);
+        setAuthError("Unable to verify your session right now. Please retry.");
       } finally {
         setLoading(false);
       }
@@ -181,8 +213,20 @@ export default function BarangayDashboard() {
     return <AuthLoadingScreen label="Preparing barangay dashboard..." />;
   }
 
+  if (authError && !authenticated) {
+    return (
+      <SessionRecoveryPanel
+        message={authError}
+        onRetry={() => {
+          window.location.reload();
+        }}
+        onGoToLogin={() => setLocation("/login")}
+      />
+    );
+  }
+
   if (!authenticated || !authUser) {
-    return null;
+    return <AuthLoadingScreen label="Redirecting to sign in..." />;
   }
 
   const parentChapter = chapters.find(c => c.id === authUser.chapterId);

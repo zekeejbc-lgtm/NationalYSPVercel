@@ -4,13 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
+import { checkAuthSession } from "@/lib/authSession";
 import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, ShieldCheck } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import DashboardTabSkeleton from "@/components/dashboard/DashboardTabSkeleton";
 import PublicationsManagerSkeleton from "@/components/admin/PublicationsManagerSkeleton";
+import SessionRecoveryPanel from "@/components/ui/session-recovery-panel";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
 const ChaptersManager = lazy(() => import("@/components/admin/ChaptersManager"));
@@ -69,6 +71,7 @@ export default function Admin() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(readInitialAdminTab);
 
   const {
@@ -106,30 +109,53 @@ export default function Admin() {
 
   const checkAuth = async () => {
     console.log("[Admin] DASHBOARD_MOUNTED, checking auth...");
+    setLoading(true);
+    setAuthError(null);
+
     try {
-      const response = await fetch("/api/auth/check", { credentials: "include" });
-      const data = await response.json();
-      console.log("[Admin] Auth check result:", { authenticated: data.authenticated, role: data.user?.role });
-      
-      if (data.authenticated && data.user?.role === "admin") {
+      const authResult = await checkAuthSession();
+
+      if (authResult.status === "error") {
+        setAuthenticated(false);
+        setAuthError(authResult.message);
+        return;
+      }
+
+      if (authResult.status === "unauthenticated") {
+        queryClient.clear();
+        clearSessionQueryPersistence();
+        setAuthenticated(false);
+        setLocation("/login");
+        return;
+      }
+
+      console.log("[Admin] Auth check result:", {
+        authenticated: true,
+        role: authResult.user.role,
+      });
+
+      if (authResult.user.role === "admin") {
         console.log("[Admin] AUTH_STATE: authenticated=true, role=ADMIN");
         setAuthenticated(true);
-      } else if (data.authenticated && data.user?.role === "chapter") {
+      } else if (authResult.user.role === "chapter") {
         console.log("[Admin] User is chapter, redirecting to /chapter-dashboard");
         setLocation("/chapter-dashboard");
         return;
-      } else if (data.authenticated && !data.user?.role) {
-        console.log("[Admin] Authenticated but no role, redirecting to /login");
-        setLocation("/login");
+      } else if (authResult.user.role === "barangay") {
+        console.log("[Admin] User is barangay, redirecting to /barangay-dashboard");
+        setLocation("/barangay-dashboard");
         return;
       } else {
-        console.log("[Admin] Not authenticated, redirecting to /login");
+        queryClient.clear();
+        clearSessionQueryPersistence();
+        setAuthenticated(false);
         setLocation("/login");
         return;
       }
     } catch (error) {
       console.log("[Admin] Auth check error:", error);
-      setLocation("/login");
+      setAuthenticated(false);
+      setAuthError("Unable to verify your session right now. Please retry.");
       return;
     } finally {
       setLoading(false);
@@ -156,12 +182,26 @@ export default function Admin() {
     }
   };
 
-  if (loading) {
+  const isDashboardBootstrapLoading = loading || (authenticated && (isBirthdaysPending || isHouseholdSummaryPending));
+
+  if (isDashboardBootstrapLoading) {
     return <AuthLoadingScreen label="Preparing admin dashboard..." />;
   }
 
+  if (authError && !authenticated) {
+    return (
+      <SessionRecoveryPanel
+        message={authError}
+        onRetry={() => {
+          void checkAuth();
+        }}
+        onGoToLogin={() => setLocation("/login")}
+      />
+    );
+  }
+
   if (!authenticated) {
-    return null;
+    return <AuthLoadingScreen label="Redirecting to sign in..." />;
   }
 
   const dashboardTabs: AdaptiveDashboardTab[] = [

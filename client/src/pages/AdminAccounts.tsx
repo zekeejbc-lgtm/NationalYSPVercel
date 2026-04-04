@@ -9,9 +9,11 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
+import SessionRecoveryPanel from "@/components/ui/session-recovery-panel";
 import { useToast } from "@/hooks/use-toast";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { checkAuthSession } from "@/lib/authSession";
+import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Edit, LogOut, Plus, ShieldAlert, Trash2, UserRound } from "lucide-react";
 
 type AdminAccount = {
@@ -43,6 +45,7 @@ export default function AdminAccounts() {
 
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -56,28 +59,49 @@ export default function AdminAccounts() {
   }, []);
 
   const checkAuth = async () => {
-    try {
-      const response = await fetch("/api/auth/check", { credentials: "include" });
-      const data = await response.json();
+    setLoading(true);
+    setAuthError(null);
 
-      if (data.authenticated && data.user?.role === "admin") {
+    try {
+      const authResult = await checkAuthSession();
+
+      if (authResult.status === "error") {
+        setAuthenticated(false);
+        setAuthError(authResult.message);
+        return;
+      }
+
+      if (authResult.status === "unauthenticated") {
+        queryClient.clear();
+        clearSessionQueryPersistence();
+        setAuthenticated(false);
+        setLocation("/login");
+        return;
+      }
+
+      if (authResult.user.role === "admin") {
         setAuthenticated(true);
         return;
       }
 
-      if (data.authenticated && data.user?.role === "chapter") {
+      if (authResult.user.role === "chapter") {
         setLocation("/chapter-dashboard");
         return;
       }
 
-      if (data.authenticated && data.user?.role === "barangay") {
+      if (authResult.user.role === "barangay") {
         setLocation("/barangay-dashboard");
         return;
       }
 
+      queryClient.clear();
+      clearSessionQueryPersistence();
+      setAuthenticated(false);
       setLocation("/login");
-    } catch {
-      setLocation("/login");
+    } catch (error) {
+      console.error("[AdminAccounts] Auth check error:", error);
+      setAuthenticated(false);
+      setAuthError("Unable to verify your session right now. Please retry.");
     } finally {
       setLoading(false);
     }
@@ -86,6 +110,7 @@ export default function AdminAccounts() {
   const {
     data: adminAccounts = [],
     isLoading: accountsLoading,
+    isFetched: accountsFetched,
     isError: accountsError,
     error: accountsErrorDetails,
   } = useQuery<AdminAccount[]>({
@@ -211,12 +236,26 @@ export default function AdminAccounts() {
     setEditForm({ username: admin.username, password: "" });
   };
 
-  if (loading) {
+  const isPageBootstrapLoading = loading || (authenticated && !accountsFetched && accountsLoading);
+
+  if (isPageBootstrapLoading) {
     return <AuthLoadingScreen label="Loading admin accounts..." />;
   }
 
+  if (authError && !authenticated) {
+    return (
+      <SessionRecoveryPanel
+        message={authError}
+        onRetry={() => {
+          void checkAuth();
+        }}
+        onGoToLogin={() => setLocation("/login")}
+      />
+    );
+  }
+
   if (!authenticated) {
-    return null;
+    return <AuthLoadingScreen label="Redirecting to sign in..." />;
   }
 
   return (

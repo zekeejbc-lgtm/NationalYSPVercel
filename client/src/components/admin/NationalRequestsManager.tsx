@@ -145,16 +145,6 @@ export default function NationalRequestsManager() {
     });
   };
 
-  if (isDashboardDataLoading) {
-    return (
-      <Card>
-        <CardContent className="p-6">
-          <LoadingState label="Loading requests..." rows={2} compact />
-        </CardContent>
-      </Card>
-    );
-  }
-
   const todayStart = useMemo(() => {
     const value = new Date();
     value.setHours(0, 0, 0, 0);
@@ -290,6 +280,16 @@ export default function NationalRequestsManager() {
       : Math.round((completedWithReplyCount / completedRequests.length) * 100);
   const chapterRequestCount = requests.filter((request) => request.senderType === "chapter").length;
   const barangayRequestCount = requests.filter((request) => request.senderType === "barangay").length;
+
+  if (isDashboardDataLoading) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <LoadingState label="Loading requests..." rows={2} compact />
+        </CardContent>
+      </Card>
+    );
+  }
 
   const renderRequestCard = (request: NationalRequest, isArchive = false) => (
     <Card

@@ -11,9 +11,11 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
+import SessionRecoveryPanel from "@/components/ui/session-recovery-panel";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/use-pagination";
+import { checkAuthSession } from "@/lib/authSession";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
@@ -131,6 +133,7 @@ export default function ChapterDashboard() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   
   const [projectName, setProjectName] = useState("");
@@ -168,7 +171,11 @@ export default function ChapterDashboard() {
   const chapterPublicationStatusQueryEnabled = authenticated && !!authUser?.chapterId && authUser?.role === "chapter";
   const submittedReportsQueryEnabled = authenticated && !!authUser?.chapterId;
 
-  const { data: publications = [] } = useQuery<Publication[]>({
+  const {
+    data: publications = [],
+    isLoading: publicationsLoading,
+    isFetched: publicationsFetched,
+  } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
     enabled: authenticated,
   });
@@ -201,7 +208,11 @@ export default function ChapterDashboard() {
         (chapterPublicationStatusLoading || !chapterPublicationStatusFetched))
     );
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
     enabled: authenticated,
   });
@@ -338,43 +349,73 @@ export default function ChapterDashboard() {
   useEffect(() => {
     const checkAuth = async () => {
       console.log("[Chapter] DASHBOARD_MOUNTED, checking auth...");
+      setLoading(true);
+      setAuthError(null);
+
       try {
-        const response = await fetch("/api/auth/check", { credentials: "include" });
-        const data = await response.json();
-        console.log("[Chapter] Auth check result:", { authenticated: data.authenticated, role: data.user?.role });
-        
-        if (!data.authenticated) {
+        const authResult = await checkAuthSession();
+
+        if (authResult.status === "error") {
+          setAuthenticated(false);
+          setAuthUser(null);
+          setAuthError(authResult.message);
+          return;
+        }
+
+        if (authResult.status === "unauthenticated") {
           console.log("[Chapter] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
+          setAuthenticated(false);
+          setAuthUser(null);
           setLocation("/login");
           return;
         }
-        
-        if (data.user?.role === "admin") {
+
+        console.log("[Chapter] Auth check result:", {
+          authenticated: true,
+          role: authResult.user.role,
+        });
+
+        if (authResult.user.role === "admin") {
           console.log("[Chapter] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
-        
-        if (data.user?.role !== "chapter") {
-          console.log("[Chapter] Unknown role:", data.user?.role, "redirecting to /login");
+
+        if (authResult.user.role !== "chapter") {
+          console.log("[Chapter] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
+          setAuthenticated(false);
+          setAuthUser(null);
           setLocation("/login");
           return;
         }
-        
-        console.log("[Chapter] AUTH_STATE: authenticated=true, role=CHAPTER, chapterName:", data.user?.chapterName);
+
+        console.log(
+          "[Chapter] AUTH_STATE: authenticated=true, role=CHAPTER, chapterName:",
+          authResult.user.chapterName,
+        );
+        const chapterUser: AuthUser = {
+          id: authResult.user.id,
+          username: authResult.user.username,
+          role: "chapter",
+          chapterId: authResult.user.chapterId,
+          chapterName: authResult.user.chapterName,
+          mustChangePassword: authResult.user.mustChangePassword,
+        };
         setAuthenticated(true);
-        setAuthUser(data.user);
+        setAuthUser(chapterUser);
         
-        if (data.user?.mustChangePassword) {
+        if (chapterUser.mustChangePassword) {
           setShowPasswordDialog(true);
         }
       } catch (error) {
         console.log("[Chapter] Auth check error:", error);
-        setLocation("/login");
+        setAuthenticated(false);
+        setAuthUser(null);
+        setAuthError("Unable to verify your session right now. Please retry.");
       } finally {
         setLoading(false);
       }
@@ -811,8 +852,35 @@ export default function ChapterDashboard() {
     { value: "national", label: "Message National", icon: MessageSquare, group: "Communication & Growth", dataTestId: "tab-national", desktopPriority: true },
   ];
 
-  if (loading) {
+  const isDashboardBootstrapLoading =
+    loading ||
+    (authenticated &&
+      (
+        publicationsLoading ||
+        !publicationsFetched ||
+        chaptersLoading ||
+        !chaptersFetched ||
+        isSubmittedReportsDataLoading
+      ));
+
+  if (isDashboardBootstrapLoading) {
     return <AuthLoadingScreen label="Preparing chapter dashboard..." />;
+  }
+
+  if (authError && !authenticated) {
+    return (
+      <SessionRecoveryPanel
+        message={authError}
+        onRetry={() => {
+          window.location.reload();
+        }}
+        onGoToLogin={() => setLocation("/login")}
+      />
+    );
+  }
+
+  if (!authenticated || !authUser) {
+    return <AuthLoadingScreen label="Redirecting to sign in..." />;
   }
 
   return (
