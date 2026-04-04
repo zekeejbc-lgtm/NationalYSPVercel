@@ -587,6 +587,90 @@ function requireChapterOrBarangayAuth(req: Request, res: Response, next: Functio
   next();
 }
 
+let sessionStoreInfraEnsured = false;
+let sessionStoreInfraEnsurePromise: Promise<void> | null = null;
+
+function isSafeSqlIdentifier(value: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+}
+
+function quoteSqlIdentifier(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+async function ensureSessionStoreInfrastructure() {
+  if (sessionStoreInfraEnsured || !pool) {
+    return;
+  }
+
+  if (!sessionStoreInfraEnsurePromise) {
+    sessionStoreInfraEnsurePromise = (async () => {
+      const configuredTableName = (process.env.SESSION_TABLE_NAME || "session").trim() || "session";
+      const tableName = isSafeSqlIdentifier(configuredTableName) ? configuredTableName : "session";
+
+      if (tableName !== configuredTableName) {
+        console.error("[session] invalid SESSION_TABLE_NAME; falling back to 'session'", {
+          configuredTableName,
+        });
+      }
+
+      const quotedTableName = quoteSqlIdentifier(tableName);
+      const quotedExpireIdx = quoteSqlIdentifier(`${tableName}_expire_idx`);
+      const quotedSidIdx = quoteSqlIdentifier(`${tableName}_sid_idx`);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${quotedTableName} (
+          sid varchar NOT NULL,
+          sess json NOT NULL,
+          expire timestamp(6) NOT NULL
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS ${quotedExpireIdx} ON ${quotedTableName} (expire)`);
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${quotedSidIdx} ON ${quotedTableName} (sid)`);
+
+      sessionStoreInfraEnsured = true;
+    })().catch((error) => {
+      sessionStoreInfraEnsurePromise = null;
+      throw error;
+    });
+  }
+
+  await sessionStoreInfraEnsurePromise;
+}
+
+async function saveSessionWithRecovery(req: Request, res: Response, onSuccess: () => void) {
+  const saveSession = () =>
+    new Promise<Error | null>((resolve) => {
+      req.session.save((err) => resolve(err || null));
+    });
+
+  const initialError = await saveSession();
+  if (!initialError) {
+    onSuccess();
+    return;
+  }
+
+  console.error("[Auth] Session save error:", initialError);
+
+  if (pool) {
+    try {
+      await ensureSessionStoreInfrastructure();
+      const retryError = await saveSession();
+      if (!retryError) {
+        console.error("[Auth] Session save recovered after session store bootstrap");
+        onSuccess();
+        return;
+      }
+
+      console.error("[Auth] Session save retry failed:", retryError);
+    } catch (storeError) {
+      console.error("[Auth] Session store recovery failed:", storeError);
+    }
+  }
+
+  res.status(500).json({ error: "Failed to save session" });
+}
+
 async function getChapterBarangayIdSet(chapterId: string): Promise<Set<string>> {
   const chapterBarangays = await storage.getBarangayUsersByChapterId(chapterId);
   return new Set(chapterBarangays.map((barangay) => barangay.id));
@@ -2261,12 +2345,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     req.session.userId = user.id;
     req.session.role = "admin";
-    
-    req.session.save((err) => {
-      if (err) {
-        console.error("[Auth] Session save error:", err);
-        return res.status(500).json({ error: "Failed to save session" });
-      }
+
+    await saveSessionWithRecovery(req, res, () => {
       res.json({ success: true, user: { id: user.id, username: user.username, role: "admin" } });
     });
   });
@@ -2290,11 +2370,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         req.session.barangayId = undefined;
         req.session.barangayName = undefined;
 
-        return req.session.save((err) => {
-          if (err) {
-            console.error("[Auth] Session save error:", err);
-            return res.status(500).json({ error: "Failed to save session" });
-          }
+        return saveSessionWithRecovery(req, res, () => {
           res.json({ success: true, user: { id: admin.id, username: admin.username, role: "admin" } });
         });
       }
@@ -2332,11 +2408,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.session.barangayId = undefined;
       req.session.barangayName = undefined;
 
-      return req.session.save((err) => {
-        if (err) {
-          console.error("[Auth] Session save error:", err);
-          return res.status(500).json({ error: "Failed to save session" });
-        }
+      return saveSessionWithRecovery(req, res, () => {
         res.json({
           success: true,
           user: {
@@ -2383,11 +2455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.session.barangayId = barangayUser.id;
       req.session.barangayName = barangayUser.barangayName;
 
-      return req.session.save((err) => {
-        if (err) {
-          console.error("[Auth] Session save error:", err);
-          return res.status(500).json({ error: "Failed to save session" });
-        }
+      return saveSessionWithRecovery(req, res, () => {
         res.json({
           success: true,
           user: {
@@ -2448,12 +2516,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     req.session.userId = user.id;
     req.session.role = "chapter";
     req.session.chapterId = user.chapterId;
-    
-    req.session.save((err) => {
-      if (err) {
-        console.error("[Auth] Session save error:", err);
-        return res.status(500).json({ error: "Failed to save session" });
-      }
+
+    await saveSessionWithRecovery(req, res, () => {
       res.json({ 
         success: true, 
         user: { 
@@ -2512,12 +2576,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     req.session.chapterId = user.chapterId;
     req.session.barangayId = user.id;
     req.session.barangayName = user.barangayName;
-    
-    req.session.save((err) => {
-      if (err) {
-        console.error("[Auth] Session save error:", err);
-        return res.status(500).json({ error: "Failed to save session" });
-      }
+
+    await saveSessionWithRecovery(req, res, () => {
       res.json({ 
         success: true, 
         user: { 
