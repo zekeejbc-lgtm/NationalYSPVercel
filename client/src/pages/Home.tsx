@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import HeroSection from "@/components/HeroSection";
 import StatsSection from "@/components/StatsSection";
 import ProgramCard from "@/components/ProgramCard";
@@ -8,16 +8,65 @@ import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Program, Chapter, Stats } from "@shared/schema";
 import { Link } from "wouter";
+import { createClient } from "@/lib/client";
+import { queryClient } from "@/lib/queryClient";
 
 export default function Home() {
   const [selectedProgram, setSelectedProgram] = useState<Program | null>(null);
+  const [usePollingFallback, setUsePollingFallback] = useState(true);
+
+  useEffect(() => {
+    let isUnmounted = false;
+
+    const invalidateHomeQueries = () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/chapters"] });
+    };
+
+    try {
+      const supabase = createClient();
+
+      const channel = supabase
+        .channel(`home-hybrid-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "stats" }, invalidateHomeQueries)
+        .on("postgres_changes", { event: "*", schema: "public", table: "programs" }, invalidateHomeQueries)
+        .on("postgres_changes", { event: "*", schema: "public", table: "chapters" }, invalidateHomeQueries)
+        .subscribe((status) => {
+          if (isUnmounted) {
+            return;
+          }
+
+          if (status === "SUBSCRIBED") {
+            setUsePollingFallback(false);
+            return;
+          }
+
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            setUsePollingFallback(true);
+          }
+        });
+
+      return () => {
+        isUnmounted = true;
+        void supabase.removeChannel(channel);
+      };
+    } catch {
+      setUsePollingFallback(true);
+      return () => {
+        isUnmounted = true;
+      };
+    }
+  }, []);
 
   const {
     data: stats,
     isLoading: statsLoading,
     isFetched: statsFetched,
   } = useQuery<Stats>({
-    queryKey: ["/api/stats"] 
+    queryKey: ["/api/stats"],
+    refetchInterval: usePollingFallback ? 15000 : false,
+    refetchIntervalInBackground: usePollingFallback,
   });
 
   const {
@@ -25,7 +74,9 @@ export default function Home() {
     isLoading: programsLoading,
     isFetched: programsFetched,
   } = useQuery<Program[]>({
-    queryKey: ["/api/programs"] 
+    queryKey: ["/api/programs"],
+    refetchInterval: usePollingFallback ? 15000 : false,
+    refetchIntervalInBackground: usePollingFallback,
   });
 
   const {
@@ -33,7 +84,9 @@ export default function Home() {
     isLoading: chaptersLoading,
     isFetched: chaptersFetched,
   } = useQuery<Chapter[]>({
-    queryKey: ["/api/chapters"] 
+    queryKey: ["/api/chapters"],
+    refetchInterval: usePollingFallback ? 15000 : false,
+    refetchIntervalInBackground: usePollingFallback,
   });
 
   const isHomeDataLoading =
