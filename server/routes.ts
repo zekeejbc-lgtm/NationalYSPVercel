@@ -26,6 +26,7 @@ import {
   insertMouSubmissionSchema,
   insertChapterRequestSchema,
   insertNationalRequestSchema,
+  type InsertChapterRequest,
   type Publication,
   type VolunteerOpportunity,
 } from "@shared/schema";
@@ -934,6 +935,19 @@ function isUsernameTakenByDifferentUser(
 
 const ADMIN_RELATIONSHIP_TABLE = "admin_user_relationships";
 let adminRelationshipTableEnsured = false;
+const KPI_TEMPLATE_ORIGIN_TABLE = "kpi_template_origins";
+let kpiTemplateOriginInfraEnsured = false;
+let kpiTemplateOriginBackfillCompleted = false;
+let kpiTemplateOriginBackfillPromise: Promise<void> | null = null;
+
+type KpiTemplateOriginRole = "admin" | "chapter";
+
+type KpiTemplateOriginRecord = {
+  kpiTemplateId: string;
+  creatorRole: KpiTemplateOriginRole;
+  creatorUserId: string | null;
+  creatorChapterId: string | null;
+};
 
 const adminAccountCreateSchema = z.object({
   username: z.string().trim().min(3, "Username must be at least 3 characters"),
@@ -1037,6 +1051,233 @@ async function cleanupDeletedAdminCreatorLinks(adminUserId: string) {
   );
 }
 
+async function ensureKpiTemplateOriginInfra() {
+  if (kpiTemplateOriginInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${KPI_TEMPLATE_ORIGIN_TABLE} (
+      kpi_template_id varchar PRIMARY KEY REFERENCES kpi_templates(id) ON DELETE CASCADE,
+      creator_role text NOT NULL CHECK (creator_role IN ('admin', 'chapter')),
+      creator_user_id varchar NULL,
+      creator_chapter_id varchar NULL REFERENCES chapters(id) ON DELETE SET NULL,
+      created_at timestamp without time zone DEFAULT now() NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kpi_template_origins_creator_role_idx
+    ON ${KPI_TEMPLATE_ORIGIN_TABLE} (creator_role)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS kpi_template_origins_creator_chapter_idx
+    ON ${KPI_TEMPLATE_ORIGIN_TABLE} (creator_chapter_id)
+  `);
+
+  kpiTemplateOriginInfraEnsured = true;
+}
+
+async function setKpiTemplateOrigin(origin: KpiTemplateOriginRecord) {
+  if (!pool) {
+    return;
+  }
+
+  await ensureKpiTemplateOriginInfra();
+  await pool.query(
+    `
+      INSERT INTO ${KPI_TEMPLATE_ORIGIN_TABLE} (
+        kpi_template_id,
+        creator_role,
+        creator_user_id,
+        creator_chapter_id
+      )
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (kpi_template_id)
+      DO UPDATE SET
+        creator_role = EXCLUDED.creator_role,
+        creator_user_id = EXCLUDED.creator_user_id,
+        creator_chapter_id = EXCLUDED.creator_chapter_id
+    `,
+    [origin.kpiTemplateId, origin.creatorRole, origin.creatorUserId, origin.creatorChapterId],
+  );
+}
+
+async function ensureKpiTemplateOriginBackfill() {
+  if (!pool || kpiTemplateOriginBackfillCompleted) {
+    return;
+  }
+
+  if (kpiTemplateOriginBackfillPromise) {
+    await kpiTemplateOriginBackfillPromise;
+    return;
+  }
+
+  kpiTemplateOriginBackfillPromise = (async () => {
+    await ensureKpiTemplateOriginInfra();
+
+    const missingOriginTemplates = await pool.query<{ id: string; scope: string }>(`
+      SELECT kt.id, kt.scope
+      FROM kpi_templates kt
+      LEFT JOIN ${KPI_TEMPLATE_ORIGIN_TABLE} kto ON kto.kpi_template_id = kt.id
+      WHERE kto.kpi_template_id IS NULL
+    `);
+
+    for (const template of missingOriginTemplates.rows) {
+      let creatorRole: KpiTemplateOriginRole = "admin";
+      let creatorChapterId: string | null = null;
+
+      if (template.scope === "selected_barangays") {
+        const chapterRows = await pool.query<{ chapter_id: string }>(
+          `
+            SELECT DISTINCT bu.chapter_id
+            FROM kpi_scopes ks
+            INNER JOIN barangay_users bu ON bu.id = ks.entity_id
+            WHERE ks.kpi_template_id = $1
+              AND ks.entity_type = 'barangay'
+          `,
+          [template.id],
+        );
+
+        const uniqueChapterIds = Array.from(
+          new Set(
+            chapterRows.rows
+              .map((row) => row.chapter_id)
+              .filter((chapterId): chapterId is string => Boolean(chapterId)),
+          ),
+        );
+
+        if (uniqueChapterIds.length === 1) {
+          creatorRole = "chapter";
+          creatorChapterId = uniqueChapterIds[0];
+        }
+      }
+
+      await setKpiTemplateOrigin({
+        kpiTemplateId: template.id,
+        creatorRole,
+        creatorUserId: null,
+        creatorChapterId,
+      });
+    }
+
+    kpiTemplateOriginBackfillCompleted = true;
+  })();
+
+  try {
+    await kpiTemplateOriginBackfillPromise;
+  } finally {
+    kpiTemplateOriginBackfillPromise = null;
+  }
+}
+
+async function getKpiTemplateOrigin(templateId: string): Promise<KpiTemplateOriginRecord | null> {
+  if (!pool) {
+    return null;
+  }
+
+  await ensureKpiTemplateOriginBackfill();
+
+  const result = await pool.query<{
+    kpi_template_id: string;
+    creator_role: KpiTemplateOriginRole;
+    creator_user_id: string | null;
+    creator_chapter_id: string | null;
+  }>(
+    `
+      SELECT kpi_template_id, creator_role, creator_user_id, creator_chapter_id
+      FROM ${KPI_TEMPLATE_ORIGIN_TABLE}
+      WHERE kpi_template_id = $1
+      LIMIT 1
+    `,
+    [templateId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    kpiTemplateId: row.kpi_template_id,
+    creatorRole: row.creator_role,
+    creatorUserId: row.creator_user_id,
+    creatorChapterId: row.creator_chapter_id,
+  };
+}
+
+async function getKpiTemplateOriginMap(templateIds: string[]): Promise<Map<string, KpiTemplateOriginRecord>> {
+  const originMap = new Map<string, KpiTemplateOriginRecord>();
+  if (!pool || templateIds.length === 0) {
+    return originMap;
+  }
+
+  await ensureKpiTemplateOriginBackfill();
+  const result = await pool.query<{
+    kpi_template_id: string;
+    creator_role: KpiTemplateOriginRole;
+    creator_user_id: string | null;
+    creator_chapter_id: string | null;
+  }>(
+    `
+      SELECT kpi_template_id, creator_role, creator_user_id, creator_chapter_id
+      FROM ${KPI_TEMPLATE_ORIGIN_TABLE}
+      WHERE kpi_template_id = ANY($1::text[])
+    `,
+    [templateIds],
+  );
+
+  for (const row of result.rows) {
+    originMap.set(row.kpi_template_id, {
+      kpiTemplateId: row.kpi_template_id,
+      creatorRole: row.creator_role,
+      creatorUserId: row.creator_user_id,
+      creatorChapterId: row.creator_chapter_id,
+    });
+  }
+
+  return originMap;
+}
+
+async function appendKpiTemplateOriginMetadata<T extends { id: string }>(templates: T[]) {
+  if (templates.length === 0) {
+    return templates;
+  }
+
+  const originMap = await getKpiTemplateOriginMap(templates.map((template) => template.id));
+  const creatorChapterIds = Array.from(
+    new Set(
+      Array.from(originMap.values())
+        .map((origin) => origin.creatorChapterId)
+        .filter((chapterId): chapterId is string => Boolean(chapterId)),
+    ),
+  );
+
+  const chapterNameById = new Map<string, string>();
+  if (creatorChapterIds.length > 0) {
+    const allChapters = await storage.getChapters();
+    for (const chapter of allChapters) {
+      if (creatorChapterIds.includes(chapter.id)) {
+        chapterNameById.set(chapter.id, chapter.name);
+      }
+    }
+  }
+
+  return templates.map((template) => {
+    const origin = originMap.get(template.id);
+    const creatorRole = origin?.creatorRole ?? "admin";
+    const creatorChapterId = origin?.creatorChapterId ?? null;
+
+    return {
+      ...template,
+      createdByRole: creatorRole,
+      createdByChapterId: creatorChapterId,
+      createdByChapterName: creatorChapterId ? chapterNameById.get(creatorChapterId) ?? null : null,
+    };
+  });
+}
+
 const APPLICATION_REFERENCE_REGEX = /^YSPAP-[A-Z0-9]{4}-\d{4}$/;
 const MEMBER_APPLICATION_STATUSES = ["pending", "approved", "rejected"] as const;
 const BASIC_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1046,8 +1287,145 @@ let memberApplicationReferenceBackfillPromise: Promise<void> | null = null;
 let kpiCompletionBarangayInfraEnsured = false;
 let volunteerOpportunityInfraEnsured = false;
 let volunteerOpportunityAffiliationInfraEnsured = false;
+let chapterRequestInfraEnsured = false;
 let publicationsModerationInfraEnsured = false;
 let publicationShowcaseInfraEnsured = false;
+const CHAPTER_REQUEST_STATUSES = ["new", "in_review", "approved", "rejected"] as const;
+
+const chapterRequestAdminUpdateSchema = z
+  .object({
+    status: z.enum(CHAPTER_REQUEST_STATUSES),
+    adminReply: z
+      .preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().max(4000).optional().nullable()),
+    approvedAmount: z.preprocess((value) => {
+      if (value === null || value === undefined || value === "") {
+        return null;
+      }
+      if (typeof value === "number") {
+        return Number.isFinite(value) ? Math.round(value) : value;
+      }
+      if (typeof value === "string") {
+        const parsed = Number.parseFloat(value);
+        return Number.isFinite(parsed) ? Math.round(parsed) : value;
+      }
+      return value;
+    }, z.number().int().positive().optional().nullable()),
+    rejectionReason: z.preprocess(
+      (value) => (typeof value === "string" ? value.trim() : value),
+      z.string().max(4000).optional().nullable(),
+    ),
+  })
+  .superRefine((value, ctx) => {
+    if (value.status === "approved") {
+      if (!value.adminReply || value.adminReply.trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["adminReply"],
+          message: "Admin reply is required when approving a request",
+        });
+      }
+      if (value.approvedAmount === null || value.approvedAmount === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["approvedAmount"],
+          message: "Approved amount is required when approving a request",
+        });
+      }
+    }
+
+    if (value.status === "rejected" && (!value.rejectionReason || value.rejectionReason.trim().length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rejectionReason"],
+        message: "Rejection reason is required when rejecting a request",
+      });
+    }
+  });
+
+const chapterRequestChapterEditSchema = z.object({
+  proposedActivityName: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(1, "Activity name is required").max(255),
+  ),
+  requestedAmount: z.preprocess((value) => {
+    if (value === null || value === undefined || value === "") {
+      return value;
+    }
+
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? Math.round(value) : value;
+    }
+
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? Math.round(parsed) : value;
+    }
+
+    return value;
+  }, z.number().int().positive("Requested amount must be greater than 0")),
+  date: z.preprocess((value) => {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+    if (value instanceof Date) {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsedDate = new Date(value);
+      return Number.isNaN(parsedDate.getTime()) ? value : parsedDate;
+    }
+    return value;
+  }, z.date().nullable().optional()),
+  time: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().max(120).optional().nullable(),
+  ),
+  rationale: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(1, "Rationale is required").max(4000),
+  ),
+  howNationalCanHelp: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(1, "This field is required").max(4000),
+  ),
+  details: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().max(8000).optional().nullable(),
+  ),
+});
+
+function normalizeOptionalText(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function parsePositiveAmount(value: unknown) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    return Math.round(value);
+  }
+
+  if (typeof value === "string") {
+    const sanitized = value.replace(/[^\d.-]/g, "").trim();
+    if (!sanitized) {
+      return null;
+    }
+
+    const parsed = Number.parseFloat(sanitized);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null;
+    }
+
+    return Math.round(parsed);
+  }
+
+  return null;
+}
 
 function normalizeApplicationReferenceId(value: string) {
   return value.trim().toUpperCase();
@@ -1201,6 +1579,67 @@ async function ensureVolunteerOpportunityAffiliationInfra() {
   `);
 
   volunteerOpportunityAffiliationInfraEnsured = true;
+}
+
+async function ensureChapterRequestInfra() {
+  if (chapterRequestInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS requested_amount integer`);
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS approved_amount integer`);
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS admin_reply text`);
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS rejection_reason text`);
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS approved_at timestamp`);
+  await pool.query(`ALTER TABLE chapter_requests ADD COLUMN IF NOT EXISTS rejected_at timestamp`);
+  await pool.query(`
+    UPDATE chapter_requests
+    SET status = 'new'
+    WHERE status IS NULL
+      OR TRIM(status) = ''
+      OR status NOT IN ('new', 'in_review', 'approved', 'rejected')
+  `);
+  await pool.query(`
+    UPDATE chapter_requests
+    SET approved_at = created_at
+    WHERE status = 'approved'
+      AND approved_at IS NULL
+  `);
+  await pool.query(`
+    UPDATE chapter_requests
+    SET rejected_at = created_at
+    WHERE status = 'rejected'
+      AND rejected_at IS NULL
+  `);
+  await pool.query(`
+    UPDATE chapter_requests
+    SET requested_amount = approved_amount
+    WHERE requested_amount IS NULL
+      AND approved_amount IS NOT NULL
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chapter_requests_funding_requested_amount_check'
+      ) THEN
+        ALTER TABLE chapter_requests
+        ADD CONSTRAINT chapter_requests_funding_requested_amount_check
+        CHECK (type <> 'funding_request' OR requested_amount IS NOT NULL)
+        NOT VALID;
+      END IF;
+    END
+    $$
+  `);
+  await pool.query(`ALTER TABLE chapter_requests ALTER COLUMN status SET DEFAULT 'new'`);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS chapter_requests_status_created_at_idx
+    ON chapter_requests (status, created_at DESC)
+  `);
+
+  chapterRequestInfraEnsured = true;
 }
 
 async function ensurePublicationsModerationInfra() {
@@ -1471,6 +1910,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await ensureKpiCompletionBarangayInfra();
       await ensureVolunteerOpportunityInfra();
       await ensureVolunteerOpportunityAffiliationInfra();
+      await ensureChapterRequestInfra();
       await ensurePublicationsModerationInfra();
     } catch (error: any) {
       console.error("[startup] Failed to ensure startup schema infra", {
@@ -5694,13 +6134,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     if (barangayScope && requestedBarangayId) {
       const templates = await storage.getKpiTemplatesForBarangay(year, requestedBarangayId, requestedChapterId, quarter);
-      res.json(templates);
+      const withOrigin = await appendKpiTemplateOriginMetadata(templates);
+      return res.json(withOrigin);
     } else if (chapterScope && requestedChapterId) {
       const templates = await storage.getKpiTemplatesForChapter(year, requestedChapterId, quarter);
-      res.json(templates);
+      const withOrigin = await appendKpiTemplateOriginMetadata(templates);
+      return res.json(withOrigin);
     } else {
       const templates = await storage.getKpiTemplates(year, quarter);
-      res.json(templates);
+      const withOrigin = await appendKpiTemplateOriginMetadata(templates);
+      return res.json(withOrigin);
     }
   });
 
@@ -5891,6 +6334,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         await storage.createKpiScopes(scopes);
       }
+
+      await setKpiTemplateOrigin({
+        kpiTemplateId: template.id,
+        creatorRole: req.session.role === "chapter" ? "chapter" : "admin",
+        creatorUserId: req.session.userId || null,
+        creatorChapterId: req.session.role === "chapter" ? req.session.chapterId || null : null,
+      });
       
       res.json(template);
     } catch (error: any) {
@@ -5953,6 +6403,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Access denied" });
       }
 
+      const templateOrigin = await getKpiTemplateOrigin(req.params.id);
+      if (templateOrigin?.creatorRole === "chapter") {
+        return res.status(403).json({
+          error: "National admins cannot edit KPI templates created by chapters.",
+        });
+      }
+
       const template = await storage.updateKpiTemplate(req.params.id, validated);
       if (!template) {
         return res.status(404).json({ error: "KPI template not found" });
@@ -6001,6 +6458,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     if (req.session.role !== "admin") {
       return res.status(403).json({ error: "Access denied" });
+    }
+
+    const templateOrigin = await getKpiTemplateOrigin(req.params.id);
+    if (templateOrigin?.creatorRole === "chapter") {
+      return res.status(403).json({
+        error: "National admins cannot delete KPI templates created by chapters.",
+      });
     }
 
     const deleted = await storage.deleteKpiTemplate(req.params.id);
@@ -6974,11 +7438,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/chapter-requests", requireAdminAuth, async (req, res) => {
+    await ensureChapterRequestInfra();
     const requests = await storage.getChapterRequests();
     res.json(requests);
   });
 
   app.get("/api/chapter-requests/my-requests", requireChapterAuth, async (req, res) => {
+    await ensureChapterRequestInfra();
     const chapterId = req.session.chapterId!;
     const requests = await storage.getChapterRequestsByChapter(chapterId);
     res.json(requests);
@@ -6986,13 +7452,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/chapter-requests", requireChapterAuth, async (req, res) => {
     try {
+      await ensureChapterRequestInfra();
       const chapterId = req.session.chapterId!;
+      const normalizedRequestedAmount = parsePositiveAmount(
+        req.body?.requestedAmount ?? req.body?.requested_amount,
+      );
       const validated = insertChapterRequestSchema.parse({
         ...req.body,
         chapterId,
+        requestedAmount: normalizedRequestedAmount ?? req.body?.requestedAmount,
         status: "new"
       });
-      const request = await storage.createChapterRequest(validated);
+
+      const requestedAmountToSave =
+        normalizedRequestedAmount ?? parsePositiveAmount(validated.requestedAmount);
+
+      if (validated.type === "funding_request" && !requestedAmountToSave) {
+        return res.status(400).json({ error: "Requested amount is required for funding requests" });
+      }
+
+      const request = await storage.createChapterRequest({
+        ...validated,
+        requestedAmount: requestedAmountToSave,
+        status: "new",
+        approvedAmount: null,
+        adminReply: null,
+        rejectionReason: null,
+        approvedAt: null,
+        rejectedAt: null,
+      });
       res.json(request);
     } catch (error: any) {
       const validationError = fromError(error);
@@ -7002,13 +7490,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/chapter-requests/:id", requireAdminAuth, async (req, res) => {
     try {
-      const request = await storage.updateChapterRequest(req.params.id, req.body);
+      await ensureChapterRequestInfra();
+      const existingRequest = await storage.getChapterRequest(req.params.id);
+      if (!existingRequest) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      const validated = chapterRequestAdminUpdateSchema.parse(req.body);
+      const updatePayload: Partial<InsertChapterRequest> = {
+        status: validated.status,
+      };
+
+      if (validated.status === "approved") {
+        updatePayload.adminReply = normalizeOptionalText(validated.adminReply);
+        updatePayload.approvedAmount = validated.approvedAmount ?? null;
+        updatePayload.rejectionReason = null;
+        updatePayload.approvedAt = new Date();
+        updatePayload.rejectedAt = null;
+      } else if (validated.status === "rejected") {
+        updatePayload.rejectionReason = normalizeOptionalText(validated.rejectionReason);
+        updatePayload.adminReply = null;
+        updatePayload.approvedAmount = null;
+        updatePayload.approvedAt = null;
+        updatePayload.rejectedAt = new Date();
+      } else {
+        updatePayload.adminReply = null;
+        updatePayload.approvedAmount = null;
+        updatePayload.rejectionReason = null;
+        updatePayload.approvedAt = null;
+        updatePayload.rejectedAt = null;
+      }
+
+      const request = await storage.updateChapterRequest(req.params.id, updatePayload);
       if (!request) {
         return res.status(404).json({ error: "Request not found" });
       }
       res.json(request);
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.patch("/api/chapter-requests/:id/my-request", requireChapterAuth, async (req, res) => {
+    try {
+      await ensureChapterRequestInfra();
+      const chapterId = req.session.chapterId!;
+      const existingRequest = await storage.getChapterRequest(req.params.id);
+      if (!existingRequest) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      if (existingRequest.chapterId !== chapterId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (existingRequest.status !== "new") {
+        return res.status(400).json({ error: "Only requested funding entries can be edited" });
+      }
+
+      const normalizedRequestedAmount = parsePositiveAmount(
+        req.body?.requestedAmount ?? req.body?.requested_amount,
+      );
+      if (!normalizedRequestedAmount) {
+        return res.status(400).json({ error: "Requested amount must be greater than 0" });
+      }
+
+      const validated = chapterRequestChapterEditSchema.parse({
+        ...req.body,
+        requestedAmount: normalizedRequestedAmount,
+      });
+      const updatePayload: Partial<InsertChapterRequest> = {
+        proposedActivityName: validated.proposedActivityName,
+        requestedAmount: normalizedRequestedAmount,
+        date: validated.date ?? undefined,
+        time: normalizeOptionalText(validated.time),
+        rationale: validated.rationale,
+        howNationalCanHelp: validated.howNationalCanHelp,
+        details: normalizeOptionalText(validated.details),
+      };
+
+      const request = await storage.updateChapterRequest(req.params.id, updatePayload);
+      if (!request) {
+        return res.status(404).json({ error: "Request not found" });
+      }
+
+      res.json(request);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
     }
   });
 
@@ -7020,6 +7590,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     if (req.session.role === "chapter" && existingRequest.chapterId !== req.session.chapterId) {
       return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (req.session.role === "chapter" && existingRequest.status !== "new") {
+      return res.status(400).json({ error: "Only requested funding entries can be deleted" });
     }
 
     if (req.session.role !== "admin" && req.session.role !== "chapter") {
@@ -7156,6 +7730,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void ensureVolunteerOpportunityAffiliationInfra().catch((error: any) => {
       console.error("[startup] Failed to ensure volunteer opportunity affiliation infra", {
+        message: error?.message,
+      });
+    });
+    void ensureChapterRequestInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure chapter request infra", {
         message: error?.message,
       });
     });

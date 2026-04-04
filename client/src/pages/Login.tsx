@@ -253,7 +253,7 @@ export default function Login() {
   const DebugBanner = () => {
     if (!showDebug || !debugInfo) return null;
     return (
-      <div className="fixed top-0 right-0 bg-yellow-100 text-yellow-800 text-xs p-2 rounded-bl z-50 font-mono">
+      <div className="fixed top-0 right-0 z-50 rounded-bl bg-yellow-100 p-2 font-mono text-xs text-yellow-800 dark:bg-yellow-900/80 dark:text-yellow-200">
         <div>hasSession: {String(debugInfo.hasSession)}</div>
         <div>role: {debugInfo.role}</div>
         <div>path: {debugInfo.path}</div>

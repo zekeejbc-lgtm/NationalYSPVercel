@@ -221,7 +221,7 @@ export default function AdminAccounts() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <div className="border-b bg-background">
+      <div className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -315,7 +315,7 @@ export default function AdminAccounts() {
                         <span className="font-medium break-all">{admin.username}</span>
                         {admin.isCurrent && <Badge variant="secondary">Current Account</Badge>}
                         {admin.isMotherAccount && (
-                          <Badge variant="outline" className="border-amber-500 text-amber-700">
+                          <Badge variant="outline" className="border-amber-500 text-amber-700 dark:border-amber-700 dark:text-amber-300">
                             Mother Account
                           </Badge>
                         )}
@@ -331,7 +331,7 @@ export default function AdminAccounts() {
                       </div>
 
                       {admin.isMotherAccount && (
-                        <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2">
+                        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
                           <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
                           <span>This account created yours. You cannot edit or delete it.</span>
                         </div>

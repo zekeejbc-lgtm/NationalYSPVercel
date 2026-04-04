@@ -26,7 +26,7 @@ export default function UniversalDashboardHeader({ title, subtitle, onLogout }: 
 
   return (
     <>
-      <div className="border-b bg-background">
+      <div className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">

@@ -1051,7 +1051,7 @@ export default function ChapterDashboard() {
                                     ) : (
                                       <Badge
                                         variant="outline"
-                                        className="shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        className="shrink-0 border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300"
                                         data-testid={`badge-report-published-${report.id}`}
                                       >
                                         Published

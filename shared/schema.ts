@@ -270,6 +270,12 @@ export const chapterRequests = pgTable("chapter_requests", {
   rationale: text("rationale"),
   howNationalCanHelp: text("how_national_can_help"),
   details: text("details"),
+  requestedAmount: integer("requested_amount"),
+  approvedAmount: integer("approved_amount"),
+  adminReply: text("admin_reply"),
+  rejectionReason: text("rejection_reason"),
+  approvedAt: timestamp("approved_at"),
+  rejectedAt: timestamp("rejected_at"),
   status: text("status").notNull().default("new"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -416,8 +422,65 @@ export const insertChapterRequestSchema = createInsertSchema(chapterRequests).om
   createdAt: true,
 }).extend({
   date: z.preprocess(
-    (val) => (typeof val === "string" ? new Date(val) : val),
+    (val) => {
+      if (val === null || val === undefined || val === "") {
+        return undefined;
+      }
+      return typeof val === "string" ? new Date(val) : val;
+    },
     z.date().optional()
+  ),
+  requestedAmount: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === "") {
+        return null;
+      }
+      if (typeof val === "number") {
+        return Number.isFinite(val) ? Math.round(val) : val;
+      }
+      if (typeof val === "string") {
+        const parsed = Number.parseFloat(val);
+        return Number.isFinite(parsed) ? Math.round(parsed) : val;
+      }
+      return val;
+    },
+    z.number().int().positive().optional().nullable()
+  ),
+  approvedAmount: z.preprocess(
+    (val) => {
+      if (val === null || val === undefined || val === "") {
+        return null;
+      }
+      if (typeof val === "number") {
+        return Number.isFinite(val) ? Math.round(val) : val;
+      }
+      if (typeof val === "string") {
+        const parsed = Number.parseFloat(val);
+        return Number.isFinite(parsed) ? Math.round(parsed) : val;
+      }
+      return val;
+    },
+    z.number().int().positive().optional().nullable()
+  ),
+  adminReply: z.preprocess(
+    (val) => {
+      if (typeof val !== "string") {
+        return val;
+      }
+      const trimmed = val.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+    z.string().max(4000).optional().nullable()
+  ),
+  rejectionReason: z.preprocess(
+    (val) => {
+      if (typeof val !== "string") {
+        return val;
+      }
+      const trimmed = val.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+    z.string().max(4000).optional().nullable()
   ),
 });
 

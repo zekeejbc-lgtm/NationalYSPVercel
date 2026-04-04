@@ -11,13 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { createPdfExportContract } from "@/lib/export/pdfContract";
 import { reportPdfFallbackRequest } from "@/lib/export/pdfFallback";
 import { formatManilaDateTime12h, ORGANIZATION_REPORT_INFO } from "@/lib/export/pdfStandards";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin, Trophy, TrendingUp, CheckCircle2, Clock3, Users, Search, Copy, FileDown } from "lucide-react";
+import { Plus, Save, BarChart3, Trash2, Edit2, Target, Calendar, Building2, MapPin, Trophy, TrendingUp, CheckCircle2, Clock3, Users, Search, Copy, FileDown, Eye } from "lucide-react";
 import type { Chapter, KpiTemplate, KpiCompletion } from "@shared/schema";
 import {
   createDefaultKpiDependencyRule,
@@ -26,13 +27,28 @@ import {
   summarizeKpiDependencyConfig,
   type KpiDependencyRule,
 } from "@shared/kpi-dependencies";
-import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import KpiDependencyEditor from "@/components/kpi/KpiDependencyEditor";
 
 interface BarangayUser {
   id: string;
   barangayName: string;
   chapterId: string;
+  createdAt?: string;
+}
+
+interface KpiTemplateWithOrigin extends KpiTemplate {
+  createdByRole?: "admin" | "chapter";
+  createdByChapterId?: string | null;
+  createdByChapterName?: string | null;
+}
+
+interface ChapterTemplateBarangayRow {
+  barangayId: string;
+  barangayName: string;
+  chapterName: string;
+  isAffected: boolean;
+  exclusionReason: string | null;
 }
 
 interface LeaderboardEntry {
@@ -52,12 +68,28 @@ interface TemplateAnalyticsRow {
   templateName: string;
   timeframe: string;
   scope: string;
+  dependencySummary: string | null;
+  assignedChapterIds: string[];
+  completedChapterIds: string[];
+  pendingChapterIds: string[];
   assignedCount: number;
   completedCount: number;
   completionRate: number;
   completedPeople: Array<{ personName: string; chapterName: string }>;
   completedChapterNames: string[];
   pendingChapterNames: string[];
+}
+
+interface TemplateBarangayAnalyticsResponse {
+  assignedBarangays: Array<{
+    barangayId: string;
+    barangayName: string;
+    chapterId: string;
+    accomplished: boolean;
+  }>;
+  assignedCount: number;
+  accomplishedCount: number;
+  pendingCount: number;
 }
 
 type PdfSectionOptions = {
@@ -83,6 +115,12 @@ const SCOPE_OPTIONS = [
   { value: "selected_barangays", label: "Selected Barangays" },
 ];
 
+const truncateChartLabel = (value: string | number, maxLength = 12) => {
+  const text = String(value);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}...`;
+};
+
 export default function KpiManager() {
   const { toast } = useToast();
   const currentYear = new Date().getFullYear();
@@ -95,6 +133,8 @@ export default function KpiManager() {
   const [isCoverageDialogOpen, setIsCoverageDialogOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isChapterTemplateDetailsOpen, setIsChapterTemplateDetailsOpen] = useState(false);
+  const [selectedChapterTemplate, setSelectedChapterTemplate] = useState<KpiTemplateWithOrigin | null>(null);
   const [exportReportTitle, setExportReportTitle] = useState("KPI Summary Report");
   const [pdfSectionOptions, setPdfSectionOptions] = useState<PdfSectionOptions>({
     rankings: true,
@@ -149,7 +189,7 @@ export default function KpiManager() {
     },
   });
 
-  const { data: kpiTemplates = [], isLoading } = useQuery<KpiTemplate[]>({
+  const { data: kpiTemplates = [], isLoading } = useQuery<KpiTemplateWithOrigin[]>({
     queryKey: ["/api/kpi-templates", { year: selectedYear, quarter: selectedQuarter }],
     queryFn: async () => {
       const url = selectedQuarter 
@@ -343,7 +383,26 @@ export default function KpiManager() {
     });
   };
 
-  const handleEdit = async (template: KpiTemplate) => {
+  const handleOpenChapterTemplateDetails = (template: KpiTemplateWithOrigin) => {
+    setSelectedChapterTemplate(template);
+    setIsChapterTemplateDetailsOpen(true);
+  };
+
+  const handleOpenCreateTemplate = () => {
+    resetForm();
+    setIsCreating(true);
+  };
+
+  const handleEdit = async (template: KpiTemplateWithOrigin) => {
+    if (template.createdByRole === "chapter") {
+      toast({
+        title: "Read-only template",
+        description: "KPI templates created by chapters can only be viewed by national admins.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setEditingId(template.id);
     const dependencyConfig = parseKpiDependencyConfig(template.linkedEntityId);
     
@@ -501,9 +560,71 @@ export default function KpiManager() {
     both: kpiTemplates.filter(t => t.timeframe === "both")
   };
 
+  const chapterCreatedTemplates = useMemo(
+    () => kpiTemplates.filter((template) => template.createdByRole === "chapter"),
+    [kpiTemplates],
+  );
+
   const chapterById = useMemo(() => {
     return new Map(chapters.map((chapter) => [chapter.id, chapter]));
   }, [chapters]);
+
+  const chapterTemplateScopeBarangayIds = useMemo(() => {
+    if (!selectedChapterTemplate) {
+      return [] as string[];
+    }
+
+    return Array.from(
+      new Set(
+        (selectedScopesByTemplate[selectedChapterTemplate.id] || [])
+          .filter((scope) => scope.entityType === "barangay")
+          .map((scope) => scope.entityId),
+      ),
+    );
+  }, [selectedChapterTemplate, selectedScopesByTemplate]);
+
+  const chapterTemplateBarangayRows = useMemo<ChapterTemplateBarangayRow[]>(() => {
+    if (!selectedChapterTemplate?.createdByChapterId) {
+      return [];
+    }
+
+    const scopeBarangayIdSet = new Set(chapterTemplateScopeBarangayIds);
+    const creatorChapter = chapterById.get(selectedChapterTemplate.createdByChapterId);
+    const creatorChapterName =
+      selectedChapterTemplate.createdByChapterName || creatorChapter?.name || "Unknown chapter";
+    const templateCreatedAt = selectedChapterTemplate.createdAt
+      ? new Date(selectedChapterTemplate.createdAt).getTime()
+      : null;
+
+    return barangayUsers
+      .filter((barangay) => barangay.chapterId === selectedChapterTemplate.createdByChapterId)
+      .map((barangay) => {
+        const isAffected = scopeBarangayIdSet.has(barangay.id);
+        const barangayCreatedAt = barangay.createdAt ? new Date(barangay.createdAt).getTime() : null;
+        const exclusionReason = isAffected
+          ? null
+          : templateCreatedAt !== null && barangayCreatedAt !== null && barangayCreatedAt > templateCreatedAt
+            ? "Newly added barangay after KPI creation"
+            : "Excluded from chapter assignment list";
+
+        return {
+          barangayId: barangay.id,
+          barangayName: barangay.barangayName,
+          chapterName: creatorChapterName,
+          isAffected,
+          exclusionReason,
+        };
+      })
+      .sort((a, b) => {
+        if (a.isAffected !== b.isAffected) {
+          return a.isAffected ? -1 : 1;
+        }
+        return a.barangayName.localeCompare(b.barangayName);
+      });
+  }, [barangayUsers, chapterById, chapterTemplateScopeBarangayIds, selectedChapterTemplate]);
+
+  const chapterTemplateAffectedCount = chapterTemplateBarangayRows.filter((row) => row.isAffected).length;
+  const chapterTemplateExcludedCount = chapterTemplateBarangayRows.filter((row) => !row.isAffected).length;
 
   const selectedChapter = chapters.find(chapter => chapter.id === selectedChapterId);
   const activeChapterTemplates = selectedChapterTemplates.filter(template => template.isActive);
@@ -589,6 +710,10 @@ export default function KpiManager() {
           templateName: template.name,
           timeframe: template.timeframe,
           scope: template.scope,
+          dependencySummary: getTemplateDependencySummary(template),
+          assignedChapterIds: uniqueAssignedChapterIds,
+          completedChapterIds: completedWithinAssigned,
+          pendingChapterIds,
           assignedCount,
           completedCount,
           completionRate,
@@ -619,6 +744,124 @@ export default function KpiManager() {
   }, [coverageSearch, templateAnalyticsRows]);
 
   const selectedCoverageTemplate = templateAnalyticsRows.find((row) => row.templateId === selectedCoverageTemplateId);
+  const { data: selectedCoverageBarangayAnalytics, isLoading: isSelectedCoverageBarangayAnalyticsLoading } = useQuery<TemplateBarangayAnalyticsResponse | null>({
+    queryKey: [
+      "/api/kpi-template-barangay-analytics",
+      selectedCoverageTemplateId,
+      selectedCoverageTemplate?.scope,
+      selectedYear,
+      selectedQuarter,
+    ],
+    queryFn: async () => {
+      if (!selectedCoverageTemplateId) return null;
+      const res = await fetch(`/api/kpi-templates/${selectedCoverageTemplateId}/barangay-analytics`, { credentials: "include" });
+      if (!res.ok) {
+        throw new Error("Failed to fetch barangay KPI analytics");
+      }
+      return (await res.json()) as TemplateBarangayAnalyticsResponse;
+    },
+    enabled: isCoverageDialogOpen && !!selectedCoverageTemplateId && selectedCoverageTemplate?.scope === "selected_barangays",
+  });
+
+  const selectedCoverageBreakdown = useMemo(() => {
+    if (!selectedCoverageTemplate) {
+      return null;
+    }
+
+    const usesBarangayRecipients =
+      selectedCoverageTemplate.scope === "all_chapters_and_barangays" ||
+      selectedCoverageTemplate.scope === "all_barangays" ||
+      selectedCoverageTemplate.scope === "selected_barangays";
+
+    const accomplishedChapters = [...selectedCoverageTemplate.completedChapterNames].sort((a, b) => a.localeCompare(b));
+    const pendingChapters = [...selectedCoverageTemplate.pendingChapterNames].sort((a, b) => a.localeCompare(b));
+    const assignedChapterIdSet = new Set(selectedCoverageTemplate.assignedChapterIds);
+    const completedChapterIdSet = new Set(selectedCoverageTemplate.completedChapterIds);
+    const selectedScopeBarangayIds = (selectedScopesByTemplate[selectedCoverageTemplate.templateId] || [])
+      .filter((scope) => scope.entityType === "barangay")
+      .map((scope) => scope.entityId);
+
+    const hasDirectBarangayCompletionRows =
+      selectedCoverageTemplate.scope === "selected_barangays" &&
+      (selectedCoverageBarangayAnalytics?.assignedBarangays.length || 0) > 0;
+
+    const recipientBarangays = (hasDirectBarangayCompletionRows
+      ? selectedCoverageBarangayAnalytics!.assignedBarangays.map((barangay) => ({
+          barangayId: barangay.barangayId,
+          barangayName: barangay.barangayName,
+          chapterId: barangay.chapterId,
+          chapterName: chapterById.get(barangay.chapterId)?.name || "Unknown chapter",
+          accomplished: Boolean(barangay.accomplished),
+        }))
+      : (
+          usesBarangayRecipients && selectedCoverageTemplate.scope === "selected_barangays"
+            ? selectedScopeBarangayIds
+                .map((barangayId) => barangayUsers.find((barangay) => barangay.id === barangayId))
+                .filter((barangay): barangay is BarangayUser => Boolean(barangay))
+            : barangayUsers.filter((barangay) => assignedChapterIdSet.has(barangay.chapterId))
+        ).map((barangay) => ({
+          barangayId: barangay.id,
+          barangayName: barangay.barangayName,
+          chapterId: barangay.chapterId,
+          chapterName: chapterById.get(barangay.chapterId)?.name || "Unknown chapter",
+          accomplished: completedChapterIdSet.has(barangay.chapterId),
+        })))
+      .sort((a, b) => a.barangayName.localeCompare(b.barangayName));
+
+    const recipientChapterNames = Array.from(new Set(recipientBarangays.map((row) => row.chapterName))).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const recipientContextLabel = recipientChapterNames.length === 1
+      ? `${recipientChapterNames[0]} chapter only`
+      : recipientChapterNames.length > 1
+        ? `Across ${recipientChapterNames.length} chapters`
+        : "No recipient chapter available";
+
+    const accomplishedBarangays = recipientBarangays.filter((row) => row.accomplished);
+    const pendingBarangays = recipientBarangays.filter((row) => !row.accomplished);
+    const assignedRecipientCount = usesBarangayRecipients ? recipientBarangays.length : selectedCoverageTemplate.assignedCount;
+    const completedRecipientCount = usesBarangayRecipients ? accomplishedBarangays.length : selectedCoverageTemplate.completedCount;
+    const pendingRecipientCount = Math.max(assignedRecipientCount - completedRecipientCount, 0);
+    const completionRate = assignedRecipientCount > 0 ? Math.round((completedRecipientCount / assignedRecipientCount) * 100) : 0;
+    const totalRuleChecks = assignedRecipientCount;
+    const passedRuleChecks = completedRecipientCount;
+    const failedRuleChecks = pendingRecipientCount;
+    const completionPeopleByChapter = selectedCoverageTemplate.completedPeople.reduce((map, person) => {
+      map.set(person.chapterName, (map.get(person.chapterName) || 0) + 1);
+      return map;
+    }, new Map<string, number>());
+
+    const statusChartData = [
+      { name: "Accomplished", value: completedRecipientCount, fill: "#16a34a" },
+      { name: "Pending", value: pendingRecipientCount, fill: "#f97316" },
+    ].filter((entry) => entry.value > 0);
+
+    return {
+      accomplishedChapters,
+      pendingChapters,
+      accomplishedBarangays,
+      pendingBarangays,
+      pendingCount: pendingRecipientCount,
+      assignedRecipientCount,
+      completedRecipientCount,
+      completionRate,
+      recipientContextLabel,
+      recipientLabelPlural: usesBarangayRecipients ? "barangays" : "chapters",
+      recipientLabelTitle: usesBarangayRecipients ? "Barangays" : "Chapters",
+      totalRuleChecks,
+      passedRuleChecks,
+      failedRuleChecks,
+      statusChartData,
+      ruleCheckChartData: [
+        { label: "Passed checks", count: passedRuleChecks, fill: "#14b8a6" },
+        { label: "Failed checks", count: failedRuleChecks, fill: "#ef4444" },
+      ],
+      accomplishedChapterRows: accomplishedChapters.map((chapterName) => ({
+        chapterName,
+        completionPeopleCount: completionPeopleByChapter.get(chapterName) || 0,
+      })),
+    };
+  }, [barangayUsers, chapterById, selectedCoverageBarangayAnalytics, selectedCoverageTemplate, selectedScopesByTemplate]);
   const selectedPdfTemplates = useMemo(() => {
     const idSet = new Set(selectedPdfTemplateIds);
     return templateAnalyticsRows.filter((row) => idSet.has(row.templateId));
@@ -678,28 +921,61 @@ export default function KpiManager() {
     setIsCoverageDialogOpen(true);
   };
 
+  const handleOpenCoverageTemplateExport = () => {
+    if (!selectedCoverageTemplate) return;
+    setSelectedPdfTemplateIds([selectedCoverageTemplate.templateId]);
+    setIsCoverageDialogOpen(false);
+    setIsExportDialogOpen(true);
+  };
+
+  const handleTemplateCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, templateId: string) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleOpenCoverageDialog(templateId);
+    }
+  };
+
   const handleCopyCoverageSummary = async () => {
     if (!selectedCoverageTemplate) return;
 
-    const didSection = selectedCoverageTemplate.completedChapterNames.length > 0
-      ? selectedCoverageTemplate.completedChapterNames.map((name) => `- ${name}`).join("\n")
+    const recipientLabelPlural = (selectedCoverageBreakdown?.recipientLabelPlural || "chapters").toLowerCase();
+    const recipientTitle = selectedCoverageBreakdown?.recipientLabelTitle || "Chapters";
+    const completedNames = selectedCoverageBreakdown
+      ? (selectedCoverageBreakdown.accomplishedBarangays.length > 0
+        ? selectedCoverageBreakdown.accomplishedBarangays.map((row) => row.barangayName)
+        : selectedCoverageTemplate.completedChapterNames)
+      : selectedCoverageTemplate.completedChapterNames;
+    const pendingNames = selectedCoverageBreakdown
+      ? (selectedCoverageBreakdown.pendingBarangays.length > 0
+        ? selectedCoverageBreakdown.pendingBarangays.map((row) => row.barangayName)
+        : selectedCoverageTemplate.pendingChapterNames)
+      : selectedCoverageTemplate.pendingChapterNames;
+    const completedCount = selectedCoverageBreakdown?.completedRecipientCount ?? selectedCoverageTemplate.completedCount;
+    const pendingCount = selectedCoverageBreakdown?.pendingCount ?? selectedCoverageTemplate.pendingChapterNames.length;
+    const assignedCount = selectedCoverageBreakdown?.assignedRecipientCount ?? selectedCoverageTemplate.assignedCount;
+
+    const didSection = completedNames.length > 0
+      ? completedNames.map((name) => `- ${name}`).join("\n")
       : "- None";
-    const didNotSection = selectedCoverageTemplate.pendingChapterNames.length > 0
-      ? selectedCoverageTemplate.pendingChapterNames.map((name) => `- ${name}`).join("\n")
+    const didNotSection = pendingNames.length > 0
+      ? pendingNames.map((name) => `- ${name}`).join("\n")
       : "- None";
 
     const summaryText = [
       `KPI Requirement: ${selectedCoverageTemplate.templateName}`,
-      `Completed: ${selectedCoverageTemplate.completedCount}`,
-      `Pending: ${selectedCoverageTemplate.pendingChapterNames.length}`,
-      `Assigned: ${selectedCoverageTemplate.assignedCount}`,
+      `Completed ${recipientLabelPlural}: ${completedCount}`,
+      `Pending ${recipientLabelPlural}: ${pendingCount}`,
+      `Assigned ${recipientLabelPlural}: ${assignedCount}`,
+      selectedCoverageBreakdown?.recipientContextLabel
+        ? `Recipient Context: ${selectedCoverageBreakdown.recipientContextLabel}`
+        : null,
       "",
-      "Chapters that DID complete:",
+      `${recipientTitle} that DID complete:`,
       didSection,
       "",
-      "Chapters that DID NOT complete:",
+      `${recipientTitle} that DID NOT complete:`,
       didNotSection,
-    ].join("\n");
+    ].filter((line): line is string => Boolean(line)).join("\n");
 
     try {
       await navigator.clipboard.writeText(summaryText);
@@ -1312,18 +1588,30 @@ export default function KpiManager() {
             </Select>
           </div>
 
-          <Button type="button" onClick={() => setIsCreating((prev) => !prev)} data-testid="button-create-template">
+          <Button type="button" onClick={handleOpenCreateTemplate} data-testid="button-create-template">
             <Plus className="h-4 w-4 mr-2" />
             Create KPI Template
           </Button>
         </div>
 
-        {isCreating && (
-          <Card className="border-primary">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg">{editingId ? "Edit KPI Template" : "Create New KPI Template"}</CardTitle>
-            </CardHeader>
-            <CardContent>
+        <Dialog
+          open={isCreating}
+          onOpenChange={(open) => {
+            if (!open) {
+              resetForm();
+            } else {
+              setIsCreating(true);
+            }
+          }}
+        >
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editingId ? "Edit KPI Template" : "Create New KPI Template"}</DialogTitle>
+              <DialogDescription>
+                Configure KPI template details, assignment scope, and auto-tracking rules.
+              </DialogDescription>
+            </DialogHeader>
+
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
@@ -1546,12 +1834,11 @@ export default function KpiManager() {
                   </Button>
                 </div>
               </form>
-            </CardContent>
-          </Card>
-        )}
+          </DialogContent>
+        </Dialog>
 
         <Tabs value={viewTab} onValueChange={setViewTab} className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-5">
             <TabsTrigger value="templates" data-testid="tab-all-templates" className="py-2 text-xs sm:text-sm">
               <span className="sm:hidden">All ({kpiTemplates.length})</span>
               <span className="hidden sm:inline">All Templates ({kpiTemplates.length})</span>
@@ -1563,6 +1850,10 @@ export default function KpiManager() {
             <TabsTrigger value="yearly" data-testid="tab-yearly" className="py-2 text-xs sm:text-sm">
               <span className="sm:hidden">Yearly ({groupedTemplates.yearly.length + groupedTemplates.both.length})</span>
               <span className="hidden sm:inline">Yearly ({groupedTemplates.yearly.length + groupedTemplates.both.length})</span>
+            </TabsTrigger>
+            <TabsTrigger value="chapter-created" data-testid="tab-chapter-created" className="py-2 text-xs sm:text-sm">
+              <span className="sm:hidden">Chapter ({chapterCreatedTemplates.length})</span>
+              <span className="hidden sm:inline">Chapter-Created ({chapterCreatedTemplates.length})</span>
             </TabsTrigger>
             <TabsTrigger value="analytics" data-testid="tab-kpi-analytics" className="py-2 text-xs sm:text-sm">
               Analytics
@@ -1578,9 +1869,18 @@ export default function KpiManager() {
               ) : (
                 kpiTemplates.map((template) => {
                   const dependencySummary = getTemplateDependencySummary(template);
+                  const isChapterCreated = template.createdByRole === "chapter";
+                  const creatorChapterLabel = template.createdByChapterName || "Unknown chapter";
 
                   return (
-                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div
+                      key={template.id}
+                      className="flex cursor-pointer flex-col gap-3 rounded-lg border p-4 transition-colors hover:bg-muted/30 hover-elevate sm:flex-row sm:items-start sm:justify-between"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleOpenCoverageDialog(template.id)}
+                      onKeyDown={(event) => handleTemplateCardKeyDown(event, template.id)}
+                    >
                       <div className="min-w-0 flex-1">
                         <div className="mb-1 flex flex-wrap items-center gap-2">
                           <span className="font-medium break-words">{template.name}</span>
@@ -1588,12 +1888,18 @@ export default function KpiManager() {
                           {getInputTypeBadge(template.inputType)}
                           {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
                           {!template.isActive && <Badge variant="destructive">Inactive</Badge>}
+                          {isChapterCreated && <Badge variant="outline">Chapter-Created</Badge>}
                         </div>
                         {template.description && (
                           <p className="text-sm text-muted-foreground">{template.description}</p>
                         )}
                         {dependencySummary && (
                           <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                        )}
+                        {isChapterCreated && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Created by chapter: {creatorChapterLabel} (read-only for national)
+                          </p>
                         )}
                         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
                           <span className="flex items-center gap-1 whitespace-nowrap">
@@ -1609,18 +1915,45 @@ export default function KpiManager() {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)} data-testid={`button-edit-${template.id}`}>
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => deleteMutation.mutate(template.id)}
-                          disabled={deleteMutation.isPending}
-                          data-testid={`button-delete-${template.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {isChapterCreated ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenChapterTemplateDetails(template);
+                            }}
+                            data-testid={`button-view-chapter-template-${template.id}`}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleEdit(template);
+                              }}
+                              data-testid={`button-edit-${template.id}`}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteMutation.mutate(template.id);
+                              }}
+                              disabled={deleteMutation.isPending}
+                              data-testid={`button-delete-${template.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1638,15 +1971,25 @@ export default function KpiManager() {
               ) : (
                 groupedTemplates.quarterly.map((template) => {
                   const dependencySummary = getTemplateDependencySummary(template);
+                  const isChapterCreated = template.createdByRole === "chapter";
+                  const creatorChapterLabel = template.createdByChapterName || "Unknown chapter";
 
                   return (
-                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div
+                      key={template.id}
+                      className="flex cursor-pointer flex-col gap-3 rounded-lg border p-4 transition-colors hover:bg-muted/30 hover-elevate sm:flex-row sm:items-start sm:justify-between"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleOpenCoverageDialog(template.id)}
+                      onKeyDown={(event) => handleTemplateCardKeyDown(event, template.id)}
+                    >
                       <div className="min-w-0 flex-1">
                         <div className="mb-1 flex flex-wrap items-center gap-2">
                           <span className="font-medium break-words">{template.name}</span>
                           {template.quarter && <Badge variant="outline">Q{template.quarter}</Badge>}
                           {getInputTypeBadge(template.inputType)}
                           {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
+                          {isChapterCreated && <Badge variant="outline">Chapter-Created</Badge>}
                         </div>
                         {template.description && (
                           <p className="text-sm text-muted-foreground">{template.description}</p>
@@ -1654,14 +1997,46 @@ export default function KpiManager() {
                         {dependencySummary && (
                           <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
                         )}
+                        {isChapterCreated && (
+                          <p className="mt-1 text-xs text-muted-foreground">Created by chapter: {creatorChapterLabel}</p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {isChapterCreated ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenChapterTemplateDetails(template);
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleEdit(template);
+                              }}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteMutation.mutate(template.id);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1679,21 +2054,34 @@ export default function KpiManager() {
               ) : (
                 [...groupedTemplates.yearly, ...groupedTemplates.both].map((template) => {
                   const dependencySummary = getTemplateDependencySummary(template);
+                  const isChapterCreated = template.createdByRole === "chapter";
+                  const creatorChapterLabel = template.createdByChapterName || "Unknown chapter";
 
                   return (
-                    <div key={template.id} className="flex flex-col gap-3 p-4 border rounded-lg hover-elevate sm:flex-row sm:items-start sm:justify-between">
+                    <div
+                      key={template.id}
+                      className="flex cursor-pointer flex-col gap-3 rounded-lg border p-4 transition-colors hover:bg-muted/30 hover-elevate sm:flex-row sm:items-start sm:justify-between"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleOpenCoverageDialog(template.id)}
+                      onKeyDown={(event) => handleTemplateCardKeyDown(event, template.id)}
+                    >
                       <div className="min-w-0 flex-1">
                         <div className="mb-1 flex flex-wrap items-center gap-2">
                           <span className="font-medium break-words">{template.name}</span>
                           {getTimeframeBadge(template.timeframe)}
                           {getInputTypeBadge(template.inputType)}
                           {dependencySummary && <Badge className="bg-amber-600">Auto-Tracked</Badge>}
+                          {isChapterCreated && <Badge variant="outline">Chapter-Created</Badge>}
                         </div>
                         {template.description && (
                           <p className="text-sm text-muted-foreground">{template.description}</p>
                         )}
                         {dependencySummary && (
                           <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                        )}
+                        {isChapterCreated && (
+                          <p className="mt-1 text-xs text-muted-foreground">Created by chapter: {creatorChapterLabel}</p>
                         )}
                         {template.targetValue && (
                           <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground whitespace-nowrap">
@@ -1703,18 +2091,134 @@ export default function KpiManager() {
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-                        <Button size="icon" variant="ghost" onClick={() => handleEdit(template)}>
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button size="icon" variant="ghost" onClick={() => deleteMutation.mutate(template.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {isChapterCreated ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleOpenChapterTemplateDetails(template);
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleEdit(template);
+                              }}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteMutation.mutate(template.id);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
                 })
               )}
             </div>
+          </TabsContent>
+
+          <TabsContent value="chapter-created" className="mt-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Chapter-Created KPI Templates</CardTitle>
+                <CardDescription>
+                  National can view chapter-created KPI templates but cannot edit or delete them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {chapterCreatedTemplates.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No chapter-created KPI templates found for the selected period.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {chapterCreatedTemplates.map((template) => {
+                      const dependencySummary = getTemplateDependencySummary(template);
+                      const creatorChapterLabel = template.createdByChapterName || "Unknown chapter";
+
+                      return (
+                        <div
+                          key={template.id}
+                          className="cursor-pointer rounded-lg border p-4 transition-colors hover:bg-muted/30"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleOpenCoverageDialog(template.id)}
+                          onKeyDown={(event) => handleTemplateCardKeyDown(event, template.id)}
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-2">
+                                <span className="font-medium break-words">{template.name}</span>
+                                {getTimeframeBadge(template.timeframe)}
+                                {getInputTypeBadge(template.inputType)}
+                                <Badge variant="outline">Chapter-Created</Badge>
+                                {!template.isActive && <Badge variant="destructive">Inactive</Badge>}
+                              </div>
+
+                              {template.description && (
+                                <p className="text-sm text-muted-foreground">{template.description}</p>
+                              )}
+                              {dependencySummary && (
+                                <p className="mt-1 text-xs text-muted-foreground">{dependencySummary}</p>
+                              )}
+
+                              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+                                <span className="flex items-center gap-1 whitespace-nowrap">
+                                  <Building2 className="h-3 w-3" />
+                                  Chapter: {creatorChapterLabel}
+                                </span>
+                                <span className="flex items-center gap-1 whitespace-nowrap">
+                                  <Calendar className="h-3 w-3" />
+                                  {template.year}{template.quarter ? ` Q${template.quarter}` : ""}
+                                </span>
+                                {template.targetValue !== null && template.targetValue !== undefined && (
+                                  <span className="flex items-center gap-1 whitespace-nowrap">
+                                    <Target className="h-3 w-3" />
+                                    Target: {template.targetValue}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleOpenChapterTemplateDetails(template);
+                                }}
+                                data-testid={`button-view-chapter-created-${template.id}`}
+                              >
+                                <Eye className="h-4 w-4 mr-2" />
+                                View Details
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="analytics" className="mt-4 space-y-4">
@@ -1793,7 +2297,7 @@ export default function KpiManager() {
                   {isLeaderboardLoading ? (
                     <p className="text-sm text-muted-foreground">Loading chapter performance...</p>
                   ) : allAssignedSubmissionsCompleted ? (
-                    <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                    <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
                       All of them are completed.
                     </p>
                   ) : topChapterLeaderboardEntries.length === 0 ? (
@@ -1806,10 +2310,10 @@ export default function KpiManager() {
                             <span
                               className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${
                                 index === 0
-                                  ? "bg-yellow-100 text-yellow-800"
+                                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300"
                                   : index === 1
-                                    ? "bg-slate-100 text-slate-700"
-                                    : "bg-orange-100 text-orange-700"
+                                    ? "bg-slate-100 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200"
+                                    : "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300"
                               }`}
                             >
                               #{index + 1}
@@ -1959,7 +2463,7 @@ export default function KpiManager() {
                     ) : (
                       <div className="space-y-2">
                         {allAssignedSubmissionsCompleted ? (
-                          <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                          <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
                             All of them are completed.
                           </p>
                         ) : null}
@@ -2032,13 +2536,13 @@ export default function KpiManager() {
                 ) : (
                   <>
                     <div className="grid gap-3 md:grid-cols-3">
-                      <Card className="p-4 bg-green-50">
+                      <Card className="p-4 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20">
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="text-sm text-muted-foreground">Completed KPIs</div>
-                            <div className="text-2xl font-bold text-green-700">{completedChapterKpis}</div>
+                            <div className="text-2xl font-bold text-green-700 dark:text-green-300">{completedChapterKpis}</div>
                           </div>
-                          <CheckCircle2 className="h-6 w-6 text-green-700" />
+                          <CheckCircle2 className="h-6 w-6 text-green-700 dark:text-green-300" />
                         </div>
                       </Card>
 
@@ -2121,6 +2625,342 @@ export default function KpiManager() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog
+          open={isCoverageDialogOpen}
+          onOpenChange={(open) => {
+            setIsCoverageDialogOpen(open);
+            if (!open) {
+              setSelectedCoverageTemplateId("");
+            }
+          }}
+        >
+          <DialogContent className="max-w-5xl max-h-[88vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{selectedCoverageTemplate?.templateName || "KPI Template Analytics"}</DialogTitle>
+              <DialogDescription>
+                Assigned chapters, completion status, and rule-check health.
+              </DialogDescription>
+            </DialogHeader>
+
+            {!selectedCoverageTemplate ? (
+              <p className="text-sm text-muted-foreground">Select a KPI template to view analytics details.</p>
+            ) : (
+              <div className="space-y-5">
+                <div className="flex flex-wrap justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleOpenCoverageTemplateExport}
+                    data-testid="button-export-specific-admin-kpi-pdf"
+                  >
+                    <FileDown className="mr-2 h-4 w-4" />
+                    Customize KPI PDF
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Assigned {selectedCoverageBreakdown?.recipientLabelTitle || "Recipients"}</p>
+                    <p className="text-xl font-semibold">{selectedCoverageBreakdown?.assignedRecipientCount || 0}</p>
+                  </Card>
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Accomplished {selectedCoverageBreakdown?.recipientLabelTitle || "Recipients"}</p>
+                    <p className="text-xl font-semibold text-green-600">{selectedCoverageBreakdown?.completedRecipientCount || 0}</p>
+                  </Card>
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Pending {selectedCoverageBreakdown?.recipientLabelTitle || "Recipients"}</p>
+                    <p className="text-xl font-semibold text-orange-500">
+                      {selectedCoverageBreakdown?.pendingCount || 0}
+                    </p>
+                  </Card>
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Completion Rate</p>
+                    <p className="text-xl font-semibold">{selectedCoverageBreakdown?.completionRate || 0}%</p>
+                  </Card>
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Failed Rule Checks</p>
+                    <p className="text-xl font-semibold text-orange-500">{selectedCoverageBreakdown?.failedRuleChecks || 0}</p>
+                  </Card>
+                </div>
+
+                {selectedCoverageTemplate.dependencySummary && (
+                  <p className="text-xs text-muted-foreground">{selectedCoverageTemplate.dependencySummary}</p>
+                )}
+
+                {selectedCoverageTemplate.scope === "selected_barangays" && isSelectedCoverageBarangayAnalyticsLoading && (
+                  <p className="text-xs text-muted-foreground">Checking barangay completion records...</p>
+                )}
+
+                {selectedCoverageBreakdown?.recipientContextLabel && (
+                  <p className="text-xs text-muted-foreground">
+                    Recipient context: {selectedCoverageBreakdown.recipientContextLabel}
+                  </p>
+                )}
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card className="min-w-0 overflow-hidden">
+                    <CardHeader>
+                      <CardTitle className="text-base">Status Breakdown</CardTitle>
+                      <CardDescription>
+                        Visual split of accomplished and pending {selectedCoverageBreakdown?.recipientLabelPlural || "recipients"} for this template.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {(selectedCoverageBreakdown?.statusChartData.reduce((sum, item) => sum + item.value, 0) || 0) === 0 ? (
+                        <p className="text-sm text-muted-foreground">No status data available yet.</p>
+                      ) : (
+                        <div className="mx-auto h-[220px] w-full max-w-[320px] sm:h-[240px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Tooltip formatter={(value: number, name: string) => [value, name]} cursor={{ fill: "rgba(148, 163, 184, 0.12)" }} />
+                              <Legend verticalAlign="bottom" height={24} iconType="circle" />
+                              <Pie
+                                data={selectedCoverageBreakdown?.statusChartData || []}
+                                dataKey="value"
+                                nameKey="name"
+                                innerRadius="42%"
+                                outerRadius="78%"
+                                stroke="transparent"
+                                strokeWidth={0}
+                              >
+                                {(selectedCoverageBreakdown?.statusChartData || []).map((entry) => (
+                                  <Cell key={entry.name} fill={entry.fill} />
+                                ))}
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="min-w-0 overflow-hidden">
+                    <CardHeader>
+                      <CardTitle className="text-base">Rule Check Health</CardTitle>
+                      <CardDescription>
+                        Passed and failed rule checks across assigned {selectedCoverageBreakdown?.recipientLabelPlural || "recipients"}.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {(selectedCoverageBreakdown?.totalRuleChecks || 0) === 0 ? (
+                        <p className="text-sm text-muted-foreground">No rule checks recorded for this template.</p>
+                      ) : (
+                        <>
+                          <div className="h-[220px] w-full sm:h-[240px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={selectedCoverageBreakdown?.ruleCheckChartData || []}
+                                layout="vertical"
+                                margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
+                              >
+                                <CartesianGrid horizontal={false} />
+                                <XAxis
+                                  type="number"
+                                  tickLine={false}
+                                  axisLine={false}
+                                  allowDecimals={false}
+                                  domain={[0, Math.max(selectedCoverageBreakdown?.totalRuleChecks || 1, 1)]}
+                                />
+                                <YAxis
+                                  type="category"
+                                  dataKey="label"
+                                  tickLine={false}
+                                  axisLine={false}
+                                  width={84}
+                                  tickFormatter={(value) => truncateChartLabel(value, 12)}
+                                />
+                                <Tooltip formatter={(value: number, name: string) => [value, name]} cursor={{ fill: "rgba(148, 163, 184, 0.12)" }} />
+                                <Bar dataKey="count" radius={[0, 8, 8, 0]} barSize={24}>
+                                  {(selectedCoverageBreakdown?.ruleCheckChartData || []).map((entry) => (
+                                    <Cell key={entry.label} fill={entry.fill} />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <p className="mt-3 text-xs text-muted-foreground">
+                            {selectedCoverageBreakdown?.passedRuleChecks || 0} passed out of {selectedCoverageBreakdown?.totalRuleChecks || 0} total checks.
+                          </p>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Accomplished Barangays ({selectedCoverageBreakdown?.accomplishedBarangays.length || 0})
+                      </CardTitle>
+                      <CardDescription>
+                        Barangay recipients under {selectedCoverageBreakdown?.recipientContextLabel || "the assigned chapter scope"}.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {!selectedCoverageBreakdown || selectedCoverageBreakdown.accomplishedBarangays.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No barangays have accomplished this KPI yet.</p>
+                      ) : (
+                        <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                          {selectedCoverageBreakdown.accomplishedBarangays.map((barangay) => (
+                            <div key={`accomplished-${selectedCoverageTemplate.templateId}-${barangay.barangayId}`} className="rounded-md border p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="font-medium">{barangay.barangayName}</p>
+                                <Badge className="bg-green-600">Accomplished</Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{barangay.chapterName}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Pending Barangays ({selectedCoverageBreakdown?.pendingBarangays.length || 0})
+                      </CardTitle>
+                      <CardDescription>
+                        Barangay recipients that still have incomplete chapter-level requirements.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {!selectedCoverageBreakdown || selectedCoverageBreakdown.pendingBarangays.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">All assigned barangays have completed this KPI.</p>
+                      ) : (
+                        <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                          {selectedCoverageBreakdown.pendingBarangays.map((barangay) => (
+                            <div key={`pending-${selectedCoverageTemplate.templateId}-${barangay.barangayId}`} className="rounded-md border p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="font-medium">{barangay.barangayName}</p>
+                                <Badge className="bg-orange-500">Pending</Badge>
+                              </div>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {barangay.chapterName}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="button" variant="outline" onClick={handleCopyCoverageSummary}>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy Summary
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={isChapterTemplateDetailsOpen}
+          onOpenChange={(open) => {
+            setIsChapterTemplateDetailsOpen(open);
+            if (!open) {
+              setSelectedChapterTemplate(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Chapter-Created KPI Template Details</DialogTitle>
+              <DialogDescription>
+                National view only. This KPI affects only the barangays under the creator chapter.
+              </DialogDescription>
+            </DialogHeader>
+
+            {!selectedChapterTemplate ? (
+              <p className="text-sm text-muted-foreground">Select a chapter-created template to view details.</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-md border bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium">{selectedChapterTemplate.name}</p>
+                    {getTimeframeBadge(selectedChapterTemplate.timeframe)}
+                    {getInputTypeBadge(selectedChapterTemplate.inputType)}
+                    <Badge variant="outline">Chapter-Created</Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Creator Chapter: {selectedChapterTemplate.createdByChapterName || "Unknown chapter"}
+                  </p>
+                  {selectedChapterTemplate.description ? (
+                    <p className="mt-1 text-sm text-muted-foreground">{selectedChapterTemplate.description}</p>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <Card className="p-3">
+                    <p className="text-xs text-muted-foreground">Total Barangays Under Chapter</p>
+                    <p className="text-2xl font-semibold">{chapterTemplateBarangayRows.length}</p>
+                  </Card>
+                  <Card className="p-3 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20">
+                    <p className="text-xs text-muted-foreground">Affected Barangays</p>
+                    <p className="text-2xl font-semibold text-green-700 dark:text-green-300">{chapterTemplateAffectedCount}</p>
+                  </Card>
+                  <Card className="p-3 border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20">
+                    <p className="text-xs text-muted-foreground">Excluded Barangays</p>
+                    <p className="text-2xl font-semibold text-amber-700 dark:text-amber-300">{chapterTemplateExcludedCount}</p>
+                  </Card>
+                </div>
+
+                {!selectedChapterTemplate.createdByChapterId ? (
+                  <p className="text-sm text-muted-foreground">
+                    Creator chapter information is missing for this template.
+                  </p>
+                ) : isTemplateScopesLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading barangay coverage...</p>
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Barangay</TableHead>
+                          <TableHead>Chapter</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Exclusion Detail</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {chapterTemplateBarangayRows.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-muted-foreground">
+                              No barangays found for this creator chapter.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          chapterTemplateBarangayRows.map((row) => (
+                            <TableRow key={row.barangayId}>
+                              <TableCell className="font-medium">{row.barangayName}</TableCell>
+                              <TableCell>{row.chapterName}</TableCell>
+                              <TableCell>
+                                {row.isAffected ? (
+                                  <Badge className="bg-green-600">Affected</Badge>
+                                ) : (
+                                  <Badge variant="outline">Excluded</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {row.isAffected ? "-" : row.exclusionReason}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">

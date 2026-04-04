@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { useToast } from "@/hooks/use-toast";
+import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { getComparisonColor } from "@/lib/chartColors";
 import { createPdfExportContract } from "@/lib/export/pdfContract";
 import { reportPdfFallbackRequest } from "@/lib/export/pdfFallback";
@@ -168,6 +169,7 @@ function truncateChartLabel(value: string | number, maxLength = 16) {
 
 export default function ChapterKpiPanel({ chapterId }: ChapterKpiPanelProps) {
   const { toast } = useToast();
+  const confirmDelete = useDeleteConfirmation();
   const currentYear = new Date().getFullYear();
   const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
   const createInitialAssignFormData = (): ChapterAssignFormData => ({
@@ -1254,8 +1256,9 @@ export default function ChapterKpiPanel({ chapterId }: ChapterKpiPanelProps) {
                                 size="sm"
                                 variant="destructive"
                                 disabled={deleteTemplateMutation.isPending}
-                                onClick={() => {
-                                  if (!window.confirm("Delete this KPI template and its assignments?")) {
+                                onClick={async () => {
+                                  const shouldDelete = await confirmDelete("Delete this KPI template and its assignments?");
+                                  if (!shouldDelete) {
                                     return;
                                   }
                                   deleteTemplateMutation.mutate(template.id);

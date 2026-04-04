@@ -925,7 +925,7 @@ export default function PublicationsAnalyticsPanel() {
                               <div className="flex flex-col items-end gap-1">
                                 <Badge variant="outline">Resubmission #{publication.resubmissionCount || 0}</Badge>
                                 {moderationStatus === "approved" ? (
-                                  <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">Approved</Badge>
+                                  <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300" variant="outline">Approved</Badge>
                                 ) : moderationStatus === "rejected" ? (
                                   <Badge variant="destructive">Rejected</Badge>
                                 ) : (
