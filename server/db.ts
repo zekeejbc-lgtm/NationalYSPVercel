@@ -12,7 +12,25 @@ const missingDatabaseUrlError = () =>
   );
 
 const isDevelopment = process.env.NODE_ENV === "development";
-export const databaseUrl = process.env.DATABASE_URL;
+function resolveDatabaseUrl() {
+  const candidates = [
+    process.env.DATABASE_URL,
+    process.env.POSTGRES_URL,
+    process.env.POSTGRES_PRISMA_URL,
+    process.env.POSTGRES_URL_NON_POOLING,
+    process.env.SUPABASE_DB_URL,
+  ];
+
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+export const databaseUrl = resolveDatabaseUrl();
 export const hasDatabaseUrl = Boolean(databaseUrl);
 
 const DEFAULT_POOL_MAX = 10;

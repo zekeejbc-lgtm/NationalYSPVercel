@@ -1905,7 +1905,7 @@ function isPdfFallbackScopeAllowed(req: Request, contract: PdfExportContract) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  if (process.env.DATABASE_URL) {
+  if (hasDatabaseUrl) {
     try {
       await ensureKpiCompletionBarangayInfra();
       await ensureVolunteerOpportunityInfra();
@@ -4443,7 +4443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }
 
-  if (process.env.DATABASE_URL) {
+  if (hasDatabaseUrl) {
     try {
       await ensurePublicationShowcaseInfra();
     } catch (error: any) {
@@ -7712,7 +7712,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
-  if (process.env.DATABASE_URL) {
+  if (hasDatabaseUrl) {
     void ensureAdminRelationshipTable().catch((error: any) => {
       console.error("[startup] Failed to ensure admin relationship table", {
         message: error?.message,

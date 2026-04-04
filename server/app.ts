@@ -11,7 +11,7 @@ import express, {
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 
-import { databaseUrl, pool } from "./db";
+import { databaseUrl, hasDatabaseUrl, pool } from "./db";
 import { registerRoutes } from "./routes";
 import { ensureUploadsDir, getUploadsDir } from "./upload-path";
 
@@ -63,15 +63,28 @@ app.use("/uploads", (_req, res) => {
 
 const createSessionStore = () => {
   const shouldUsePgSessionStore = process.env.ENABLE_PG_SESSION_STORE !== "false";
+  const isProductionLike = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
 
-  if (!databaseUrl || !shouldUsePgSessionStore) {
+  if (!hasDatabaseUrl || !shouldUsePgSessionStore) {
     if (databaseUrl && !shouldUsePgSessionStore) {
       console.log("[session] using in-memory session store because ENABLE_PG_SESSION_STORE=false");
     }
+
+    if (isProductionLike && shouldUsePgSessionStore && !hasDatabaseUrl) {
+      console.error(
+        "[session] persistent session store is disabled because no database URL was resolved; hard-refresh logouts are expected in serverless mode",
+      );
+    }
+
     return undefined;
   }
 
   if (!PgSessionStore) {
+    if (isProductionLike && shouldUsePgSessionStore) {
+      console.error(
+        "[session] connect-pg-simple was not initialized; falling back to memory sessions in production can cause hard-refresh logouts",
+      );
+    }
     return undefined;
   }
 
@@ -109,8 +122,10 @@ function resolveSessionCookieSameSite(secureSetting: boolean | "auto"): "lax" | 
       ? configuredValue
       : "lax";
 
-  if (normalizedValue === "none" && secureSetting === false) {
-    console.warn("[session] SESSION_COOKIE_SAMESITE=none requires secure cookies; falling back to lax");
+  if (normalizedValue === "none" && secureSetting !== true) {
+    console.warn(
+      "[session] SESSION_COOKIE_SAMESITE=none requires SESSION_COOKIE_SECURE=true; falling back to lax",
+    );
     return "lax";
   }
 
