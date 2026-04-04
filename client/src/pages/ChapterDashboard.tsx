@@ -32,6 +32,8 @@ import {
   Trophy,
   Search,
   Facebook,
+  Instagram,
+  Globe,
   Phone,
   Mail,
   ArrowUpDown,
@@ -114,6 +116,19 @@ interface BarangayOfficerDirectoryGroup {
 }
 
 const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+
+function normalizeExternalLink(value?: string | null): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `https://${normalized}`;
+}
 
 function getChapterLogoSrc(photo?: string | null) {
   const normalizedPhoto = photo?.trim() || "";
@@ -1742,7 +1757,7 @@ export default function ChapterDashboard() {
                       )}
                       {chapter.facebookLink && (
                         <a 
-                          href={chapter.facebookLink} 
+                          href={normalizeExternalLink(chapter.facebookLink) || chapter.facebookLink} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
@@ -1750,6 +1765,30 @@ export default function ChapterDashboard() {
                         >
                           <Facebook className="h-4 w-4" />
                           Facebook Page
+                        </a>
+                      )}
+                      {chapter.instagramLink && (
+                        <a
+                          href={normalizeExternalLink(chapter.instagramLink) || chapter.instagramLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Instagram className="h-4 w-4" />
+                          Instagram
+                        </a>
+                      )}
+                      {chapter.websiteLink && (
+                        <a
+                          href={normalizeExternalLink(chapter.websiteLink) || chapter.websiteLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Globe className="h-4 w-4" />
+                          Website
                         </a>
                       )}
                     </CardContent>
@@ -1827,6 +1866,39 @@ export default function ChapterDashboard() {
                               )}
                               {selectedDirectoryChapter.contactPerson && (
                                 <p className="text-muted-foreground">Contact: {selectedDirectoryChapter.contactPerson}</p>
+                              )}
+                              {selectedDirectoryChapter.facebookLink && (
+                                <a
+                                  href={normalizeExternalLink(selectedDirectoryChapter.facebookLink) || selectedDirectoryChapter.facebookLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                                >
+                                  <Facebook className="h-4 w-4" />
+                                  Facebook Page
+                                </a>
+                              )}
+                              {selectedDirectoryChapter.instagramLink && (
+                                <a
+                                  href={normalizeExternalLink(selectedDirectoryChapter.instagramLink) || selectedDirectoryChapter.instagramLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                                >
+                                  <Instagram className="h-4 w-4" />
+                                  Instagram
+                                </a>
+                              )}
+                              {selectedDirectoryChapter.websiteLink && (
+                                <a
+                                  href={normalizeExternalLink(selectedDirectoryChapter.websiteLink) || selectedDirectoryChapter.websiteLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-primary hover:underline"
+                                >
+                                  <Globe className="h-4 w-4" />
+                                  Website
+                                </a>
                               )}
                             </div>
                           </div>

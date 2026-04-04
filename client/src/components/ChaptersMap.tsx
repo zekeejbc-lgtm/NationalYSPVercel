@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Chapter } from "@shared/schema";
-import { Mail, Phone, MapPin, User } from "lucide-react";
+import { Mail, Phone, MapPin, User, Facebook, Instagram, Globe } from "lucide-react";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
 
 const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
@@ -29,6 +29,19 @@ function getChapterLogoSrc(photo?: string | null): string {
   }
 
   return getDisplayImageUrl(normalizedPhoto);
+}
+
+function normalizeExternalLink(value?: string | null): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `https://${normalized}`;
 }
 
 function createMarkerIcon(logoSrc: string): L.DivIcon {
@@ -138,6 +151,12 @@ export default function ChaptersMap({ chapters }: ChaptersMapProps) {
             icon={getMarkerIcon(chapter.photo)}
           >
             <Popup>
+              {(() => {
+                const facebookLink = normalizeExternalLink(chapter.facebookLink);
+                const instagramLink = normalizeExternalLink(chapter.instagramLink);
+                const websiteLink = normalizeExternalLink(chapter.websiteLink);
+
+                return (
               <div className="min-w-[200px] max-w-[280px]">
                 <div className="mb-2 flex items-start gap-2">
                   <img
@@ -176,8 +195,47 @@ export default function ChaptersMap({ chapters }: ChaptersMapProps) {
                       <span>{chapter.contactPerson}</span>
                     </p>
                   )}
+                  {(facebookLink || instagramLink || websiteLink) && (
+                    <div className="pt-1 flex flex-wrap gap-x-3 gap-y-1">
+                      {facebookLink && (
+                        <a
+                          href={facebookLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
+                        >
+                          <Facebook className="h-3.5 w-3.5" />
+                          Facebook
+                        </a>
+                      )}
+                      {instagramLink && (
+                        <a
+                          href={instagramLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline"
+                        >
+                          <Instagram className="h-3.5 w-3.5" />
+                          Instagram
+                        </a>
+                      )}
+                      {websiteLink && (
+                        <a
+                          href={websiteLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 hover:underline break-all"
+                        >
+                          <Globe className="h-3.5 w-3.5" />
+                          Website
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
+                );
+              })()}
             </Popup>
           </Marker>
         ))}

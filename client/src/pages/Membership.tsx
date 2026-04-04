@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import ChapterCard from "@/components/ChapterCard";
 import ChaptersMap from "@/components/ChaptersMap";
-import { ExternalLink, Map, CheckCircle2, Mail, MapPin, Phone, Search, User, X } from "lucide-react";
+import { ExternalLink, Map, CheckCircle2, Mail, MapPin, Phone, Search, User, X, Facebook, Instagram, Globe } from "lucide-react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useToast } from "@/hooks/use-toast";
@@ -135,6 +135,19 @@ function getChapterLogoSrc(photo?: string | null): string {
   }
 
   return getDisplayImageUrl(normalizedPhoto);
+}
+
+function normalizeExternalLink(value?: string | null): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `https://${normalized}`;
 }
 
 function normalizeApplicationReferenceInput(value: string) {
@@ -318,6 +331,9 @@ export default function Membership() {
       chapter.contact,
       chapter.email ?? "",
       chapter.contactPerson ?? "",
+      chapter.facebookLink ?? "",
+      chapter.instagramLink ?? "",
+      chapter.websiteLink ?? "",
     ];
 
     return searchableValues.some((value) => value.toLowerCase().includes(normalizedChapterSearchTerm));
@@ -1198,20 +1214,27 @@ export default function Membership() {
               <DialogContent hideClose className="max-w-2xl max-h-[90vh] overflow-hidden p-0 gap-0">
                 {selectedChapter && (
                   <>
-                    <div className="z-20 flex items-start justify-between gap-4 border-b bg-background px-6 py-4">
-                      <DialogTitle className="text-2xl leading-tight">{selectedChapter.name}</DialogTitle>
-                      <DialogClose asChild>
-                        <button
-                          type="button"
-                          className="rounded-full border border-primary/40 p-1.5 text-primary transition-colors hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                          aria-label="Close chapter details"
-                        >
-                          <X className="h-5 w-5" />
-                        </button>
-                      </DialogClose>
-                    </div>
+                    {(() => {
+                      const chapterFacebookLink = normalizeExternalLink(selectedChapter.facebookLink);
+                      const chapterInstagramLink = normalizeExternalLink(selectedChapter.instagramLink);
+                      const chapterWebsiteLink = normalizeExternalLink(selectedChapter.websiteLink);
 
-                    <div className="max-h-[calc(90vh-5rem)] overflow-y-auto px-6 py-5 space-y-6">
+                      return (
+                        <>
+                          <div className="z-20 flex items-start justify-between gap-4 border-b bg-background px-6 py-4">
+                            <DialogTitle className="text-2xl leading-tight">{selectedChapter.name}</DialogTitle>
+                            <DialogClose asChild>
+                              <button
+                                type="button"
+                                className="rounded-full border border-primary/40 p-1.5 text-primary transition-colors hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                aria-label="Close chapter details"
+                              >
+                                <X className="h-5 w-5" />
+                              </button>
+                            </DialogClose>
+                          </div>
+
+                          <div className="max-h-[calc(90vh-5rem)] overflow-y-auto px-6 py-5 space-y-6">
 
                     <div className="flex items-start gap-4">
                       <img
@@ -1247,6 +1270,43 @@ export default function Membership() {
                             <User className="h-4 w-4" />
                             <span>{selectedChapter.contactPerson}</span>
                           </p>
+                        )}
+                        {(chapterFacebookLink || chapterInstagramLink || chapterWebsiteLink) && (
+                          <div className="pt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                            {chapterFacebookLink && (
+                              <a
+                                href={chapterFacebookLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary hover:underline"
+                              >
+                                <Facebook className="h-3.5 w-3.5" />
+                                Facebook
+                              </a>
+                            )}
+                            {chapterInstagramLink && (
+                              <a
+                                href={chapterInstagramLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary hover:underline"
+                              >
+                                <Instagram className="h-3.5 w-3.5" />
+                                Instagram
+                              </a>
+                            )}
+                            {chapterWebsiteLink && (
+                              <a
+                                href={chapterWebsiteLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary hover:underline"
+                              >
+                                <Globe className="h-3.5 w-3.5" />
+                                Website
+                              </a>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1336,7 +1396,10 @@ export default function Membership() {
                         </div>
                       )}
                     </div>
-                  </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 )}
               </DialogContent>

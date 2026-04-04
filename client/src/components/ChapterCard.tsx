@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { MapPin, Phone, Mail, User } from "lucide-react";
+import { MapPin, Phone, Mail, User, Facebook, Instagram, Globe } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
 
@@ -11,12 +11,28 @@ function isUnsupportedPhotoUrl(photoUrl: string): boolean {
   return normalized.includes("facebook.com/") || normalized.includes("fb.com/");
 }
 
+function normalizeExternalLink(value?: string | null): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `https://${normalized}`;
+}
+
 interface ChapterCardProps {
   id: string;
   name: string;
   location: string;
   contact: string;
   email?: string | null;
+  facebookLink?: string | null;
+  instagramLink?: string | null;
+  websiteLink?: string | null;
   photo?: string | null;
   representative?: string | null;
   contactPerson?: string | null;
@@ -29,6 +45,9 @@ export default function ChapterCard({
   location, 
   contact, 
   email,
+  facebookLink,
+  instagramLink,
+  websiteLink,
   photo,
   representative,
   contactPerson,
@@ -39,6 +58,9 @@ export default function ChapterCard({
   const displayPhotoUrl = normalizedPhoto && !isUnsupportedPhotoUrl(normalizedPhoto)
     ? getDisplayImageUrl(normalizedPhoto)
     : undefined;
+  const normalizedFacebookLink = normalizeExternalLink(facebookLink);
+  const normalizedInstagramLink = normalizeExternalLink(instagramLink);
+  const normalizedWebsiteLink = normalizeExternalLink(websiteLink);
   const [avatarSrc, setAvatarSrc] = useState(displayPhotoUrl || WEBSITE_LOGO_SRC);
 
   useEffect(() => {
@@ -122,6 +144,49 @@ export default function ChapterCard({
             >
               {email}
             </a>
+          </div>
+        )}
+        {(normalizedFacebookLink || normalizedInstagramLink || normalizedWebsiteLink) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs">
+            {normalizedFacebookLink && (
+              <a
+                href={normalizedFacebookLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+                data-testid={`link-chapter-facebook-${id}`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Facebook className="h-3.5 w-3.5" />
+                Facebook
+              </a>
+            )}
+            {normalizedInstagramLink && (
+              <a
+                href={normalizedInstagramLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+                data-testid={`link-chapter-instagram-${id}`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Instagram className="h-3.5 w-3.5" />
+                Instagram
+              </a>
+            )}
+            {normalizedWebsiteLink && (
+              <a
+                href={normalizedWebsiteLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+                data-testid={`link-chapter-website-${id}`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Globe className="h-3.5 w-3.5" />
+                Website
+              </a>
+            )}
           </div>
         )}
       </CardContent>

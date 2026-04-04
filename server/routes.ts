@@ -1374,6 +1374,7 @@ let volunteerOpportunityAffiliationInfraEnsured = false;
 let chapterRequestInfraEnsured = false;
 let publicationsModerationInfraEnsured = false;
 let publicationShowcaseInfraEnsured = false;
+let chapterWebsiteInfraEnsured = false;
 const CHAPTER_REQUEST_STATUSES = ["new", "in_review", "approved", "rejected"] as const;
 
 const chapterRequestAdminUpdateSchema = z
@@ -1808,6 +1809,16 @@ async function ensurePublicationShowcaseInfra() {
   publicationShowcaseInfraEnsured = true;
 }
 
+async function ensureChapterWebsiteInfra() {
+  if (chapterWebsiteInfraEnsured || !pool) {
+    return;
+  }
+
+  await pool.query(`ALTER TABLE chapters ADD COLUMN IF NOT EXISTS website_link text`);
+
+  chapterWebsiteInfraEnsured = true;
+}
+
 async function ensureBackfilledMemberApplicationReferenceIds() {
   if (!pool || memberApplicationReferenceBackfillCompleted) {
     return;
@@ -1996,6 +2007,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await ensureVolunteerOpportunityAffiliationInfra();
       await ensureChapterRequestInfra();
       await ensurePublicationsModerationInfra();
+      await ensureChapterWebsiteInfra();
     } catch (error: any) {
       console.error("[startup] Failed to ensure startup schema infra", {
         message: error?.message,
@@ -2918,6 +2930,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/chapters", async (req, res) => {
     const chapters = await storage.getChapters();
     res.json(chapters);
+  });
+
+  app.get("/api/chapters/showcase-ranking", async (req, res) => {
+    const [chapters, leaderboard] = await Promise.all([
+      storage.getChapters(),
+      storage.getLeaderboard(),
+    ]);
+
+    const completedKpisByChapterId = new Map(
+      leaderboard.map((entry) => [entry.chapterId, entry.completedKpis || 0]),
+    );
+
+    const rankedChapters = await Promise.all(
+      chapters.map(async (chapter) => {
+        const [chapterMembers, approvedPublications, projectReports] = await Promise.all([
+          storage.getMembersByChapter(chapter.id),
+          storage.getApprovedPublicationsByChapter(chapter.id),
+          storage.getProjectReportsByChapter(chapter.id),
+        ]);
+
+        const activeMembersCount = chapterMembers.filter((member) => member.isActive).length;
+        const completedKpis = completedKpisByChapterId.get(chapter.id) || 0;
+        const publicationsCount = approvedPublications.length;
+        const projectReportsCount = projectReports.length;
+        const submissionCount = publicationsCount + projectReportsCount;
+        const rankingScore = completedKpis + activeMembersCount + submissionCount;
+
+        return {
+          ...chapter,
+          rank: 0,
+          rankingScore,
+          metrics: {
+            completedKpis,
+            activeMembersCount,
+            publicationsCount,
+            projectReportsCount,
+            submissionCount,
+          },
+        };
+      }),
+    );
+
+    rankedChapters.sort((left, right) => {
+      if (right.rankingScore !== left.rankingScore) {
+        return right.rankingScore - left.rankingScore;
+      }
+
+      if (right.metrics.completedKpis !== left.metrics.completedKpis) {
+        return right.metrics.completedKpis - left.metrics.completedKpis;
+      }
+
+      if (right.metrics.activeMembersCount !== left.metrics.activeMembersCount) {
+        return right.metrics.activeMembersCount - left.metrics.activeMembersCount;
+      }
+
+      if (right.metrics.submissionCount !== left.metrics.submissionCount) {
+        return right.metrics.submissionCount - left.metrics.submissionCount;
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+
+    const rankedShowcase = rankedChapters.slice(0, 4).map((chapter, index) => ({
+      ...chapter,
+      rank: index + 1,
+    }));
+
+    res.json(rankedShowcase);
   });
 
   app.get("/api/chapters/:id", async (req, res) => {
@@ -6792,8 +6872,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     try {
-      const { facebookLink, instagramLink } = req.body;
-      const chapter = await storage.updateChapter(req.params.id, { facebookLink, instagramLink });
+      const { facebookLink, instagramLink, websiteLink } = req.body;
+      const chapter = await storage.updateChapter(req.params.id, {
+        facebookLink,
+        instagramLink,
+        websiteLink,
+      });
       if (!chapter) {
         return res.status(404).json({ error: "Chapter not found" });
       }
@@ -7800,6 +7884,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void ensurePublicationsModerationInfra().catch((error: any) => {
       console.error("[startup] Failed to ensure publications moderation infra", {
+        message: error?.message,
+      });
+    });
+    void ensureChapterWebsiteInfra().catch((error: any) => {
+      console.error("[startup] Failed to ensure chapter website infra", {
         message: error?.message,
       });
     });

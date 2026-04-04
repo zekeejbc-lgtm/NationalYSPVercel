@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Share2, Save, Facebook, Instagram, ExternalLink } from "lucide-react";
+import { Share2, Save, Facebook, Instagram, Globe, ExternalLink } from "lucide-react";
 import type { Chapter } from "@shared/schema";
 
 interface SocialMediaPanelProps {
@@ -17,6 +17,7 @@ export default function SocialMediaPanel({ chapterId }: SocialMediaPanelProps) {
   const { toast } = useToast();
   const [facebookLink, setFacebookLink] = useState("");
   const [instagramLink, setInstagramLink] = useState("");
+  const [websiteLink, setWebsiteLink] = useState("");
 
   const { data: chapter } = useQuery<Chapter>({
     queryKey: ["/api/chapters", chapterId],
@@ -32,11 +33,12 @@ export default function SocialMediaPanel({ chapterId }: SocialMediaPanelProps) {
     if (chapter) {
       setFacebookLink(chapter.facebookLink || "");
       setInstagramLink(chapter.instagramLink || "");
+      setWebsiteLink(chapter.websiteLink || "");
     }
   }, [chapter]);
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { facebookLink: string; instagramLink: string }) => {
+    mutationFn: async (data: { facebookLink: string; instagramLink: string; websiteLink: string }) => {
       return await apiRequest("PUT", `/api/chapters/${chapterId}/social-media`, data);
     },
     onSuccess: () => {
@@ -50,7 +52,7 @@ export default function SocialMediaPanel({ chapterId }: SocialMediaPanelProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateMutation.mutate({ facebookLink, instagramLink });
+    updateMutation.mutate({ facebookLink, instagramLink, websiteLink });
   };
 
   return (
@@ -58,10 +60,10 @@ export default function SocialMediaPanel({ chapterId }: SocialMediaPanelProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Share2 className="h-5 w-5" />
-          Social Media Links
+          Social Links
         </CardTitle>
         <CardDescription>
-          Add your chapter's social media pages to increase visibility
+          Add your chapter social pages and website to increase visibility
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -112,6 +114,32 @@ export default function SocialMediaPanel({ chapterId }: SocialMediaPanelProps) {
               >
                 <ExternalLink className="h-3 w-3" />
                 Visit Page
+              </a>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="website" className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-emerald-600" />
+              Chapter Website URL
+            </Label>
+            <Input
+              id="website"
+              type="url"
+              value={websiteLink}
+              onChange={(e) => setWebsiteLink(e.target.value)}
+              placeholder="https://www.yourchapter.org"
+              data-testid="input-website-link"
+            />
+            {websiteLink && (
+              <a
+                href={websiteLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-primary flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Visit Website
               </a>
             )}
           </div>

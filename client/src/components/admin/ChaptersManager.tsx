@@ -65,6 +65,7 @@ const emptyChapterForm = {
   contactPerson: "",
   email: "",
   facebookLink: "",
+  websiteLink: "",
   nextgenBatch: "",
   photo: "",
   latitude: "",
@@ -1170,6 +1171,7 @@ export default function ChaptersManager() {
       contactPerson: chapter.contactPerson || "",
       email: chapter.email || "",
       facebookLink: chapter.facebookLink || "",
+      websiteLink: chapter.websiteLink || "",
       nextgenBatch: chapter.nextgenBatch || "",
       photo: chapter.photo || "",
       latitude: chapter.latitude || "",
@@ -1206,6 +1208,7 @@ export default function ChaptersManager() {
       contactPerson: chapterFormData.contactPerson || undefined,
       email: chapterFormData.email || undefined,
       facebookLink: chapterFormData.facebookLink || undefined,
+      websiteLink: chapterFormData.websiteLink || undefined,
       nextgenBatch: chapterFormData.nextgenBatch || undefined,
       photo: chapterFormData.photo || undefined,
       latitude: chapterFormData.latitude || undefined,
@@ -2197,6 +2200,17 @@ export default function ChaptersManager() {
                 onChange={(e) => setChapterFormData({ ...chapterFormData, facebookLink: e.target.value })}
                 placeholder="https://facebook.com/yspmanila"
                 data-testid="input-chapter-facebook"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="websiteLink">Website Link (Optional)</Label>
+              <Input
+                id="websiteLink"
+                type="url"
+                value={chapterFormData.websiteLink}
+                onChange={(e) => setChapterFormData({ ...chapterFormData, websiteLink: e.target.value })}
+                placeholder="https://www.yspmanila.org"
+                data-testid="input-chapter-website"
               />
             </div>
             <div className="space-y-2">

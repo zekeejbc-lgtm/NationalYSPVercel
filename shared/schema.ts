@@ -19,6 +19,7 @@ export const chapters = pgTable("chapters", {
   email: text("email"),
   facebookLink: text("facebook_link"),
   instagramLink: text("instagram_link"),
+  websiteLink: text("website_link"),
   nextgenBatch: text("nextgen_batch"),
   photo: text("photo"),
   latitude: text("latitude"),
