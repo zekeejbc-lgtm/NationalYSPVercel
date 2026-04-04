@@ -6,7 +6,7 @@ import "./index.css";
 registerSW({
 	immediate: true,
 	onOfflineReady() {
-		console.log("App ready to work offline");
+		console.error("App ready to work offline");
 	},
 });
 

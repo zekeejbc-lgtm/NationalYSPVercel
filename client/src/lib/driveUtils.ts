@@ -46,7 +46,7 @@ export function normalizeDriveImageUrl(url: string): string {
   if (fileId) {
     const normalizedUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
     if (IMAGE_DEBUG_ENABLED) {
-      console.log("[Image Debug] Normalized Drive URL", {
+      console.error("[Image Debug] Normalized Drive URL", {
         originalUrl: url,
         normalizedUrl,
         fileId,
@@ -107,7 +107,7 @@ export function getDisplayImageUrl(imageUrl: string): string {
   if (isIbbPageUrl(sanitizedUrl)) {
     const proxyUrl = getImageProxyUrl(sanitizedUrl);
     if (IMAGE_DEBUG_ENABLED) {
-      console.log("[Image Debug] Using image proxy URL", { imageUrl: sanitizedUrl, proxyUrl });
+      console.error("[Image Debug] Using image proxy URL", { imageUrl: sanitizedUrl, proxyUrl });
     }
     return proxyUrl;
   }

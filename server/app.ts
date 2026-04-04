@@ -23,7 +23,7 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  console.error(`${formattedTime} [${source}] ${message}`);
 }
 
 export const app = express();
@@ -67,7 +67,7 @@ const createSessionStore = () => {
 
   if (!hasDatabaseUrl || !shouldUsePgSessionStore) {
     if (databaseUrl && !shouldUsePgSessionStore) {
-      console.log("[session] using in-memory session store because ENABLE_PG_SESSION_STORE=false");
+      console.error("[session] using in-memory session store because ENABLE_PG_SESSION_STORE=false");
     }
 
     if (isProductionLike && shouldUsePgSessionStore && !hasDatabaseUrl) {
@@ -123,7 +123,7 @@ function resolveSessionCookieSameSite(secureSetting: boolean | "auto"): "lax" | 
       : "lax";
 
   if (normalizedValue === "none" && secureSetting !== true) {
-    console.warn(
+    console.error(
       "[session] SESSION_COOKIE_SAMESITE=none requires SESSION_COOKIE_SECURE=true; falling back to lax",
     );
     return "lax";

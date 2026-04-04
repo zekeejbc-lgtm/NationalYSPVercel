@@ -108,7 +108,7 @@ export default function Admin() {
   }, [activeTab]);
 
   const checkAuth = async () => {
-    console.log("[Admin] DASHBOARD_MOUNTED, checking auth...");
+    console.error("[Admin] DASHBOARD_MOUNTED, checking auth...");
     setLoading(true);
     setAuthError(null);
 
@@ -129,20 +129,20 @@ export default function Admin() {
         return;
       }
 
-      console.log("[Admin] Auth check result:", {
+      console.error("[Admin] Auth check result:", {
         authenticated: true,
         role: authResult.user.role,
       });
 
       if (authResult.user.role === "admin") {
-        console.log("[Admin] AUTH_STATE: authenticated=true, role=ADMIN");
+        console.error("[Admin] AUTH_STATE: authenticated=true, role=ADMIN");
         setAuthenticated(true);
       } else if (authResult.user.role === "chapter") {
-        console.log("[Admin] User is chapter, redirecting to /chapter-dashboard");
+        console.error("[Admin] User is chapter, redirecting to /chapter-dashboard");
         setLocation("/chapter-dashboard");
         return;
       } else if (authResult.user.role === "barangay") {
-        console.log("[Admin] User is barangay, redirecting to /barangay-dashboard");
+        console.error("[Admin] User is barangay, redirecting to /barangay-dashboard");
         setLocation("/barangay-dashboard");
         return;
       } else {
@@ -153,7 +153,7 @@ export default function Admin() {
         return;
       }
     } catch (error) {
-      console.log("[Admin] Auth check error:", error);
+      console.error("[Admin] Auth check error:", error);
       setAuthenticated(false);
       setAuthError("Unable to verify your session right now. Please retry.");
       return;
@@ -165,7 +165,7 @@ export default function Admin() {
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/auth/logout");
-      console.log("[Admin] Logged out successfully");
+      console.error("[Admin] Logged out successfully");
       toast({
         title: "Logged out",
         description: "You have been logged out successfully",
@@ -173,7 +173,7 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       setLocation("/");
     } catch (error) {
-      console.log("[Admin] Logout error:", error);
+      console.error("[Admin] Logout error:", error);
       toast({
         title: "Error",
         description: "Failed to logout",

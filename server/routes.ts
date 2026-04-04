@@ -114,7 +114,7 @@ async function initializeDefaultsWithoutBlockingStartup() {
         }, timeoutMs);
       }),
     ]);
-    console.log("[startup] Default data initialization finished");
+    console.error("[startup] Default data initialization finished");
   } catch (error: any) {
     console.error("[startup] Failed to initialize default data", {
       message: error?.message,
@@ -248,7 +248,7 @@ function normalizeDriveUrl(url: string): string {
   }
 
   const normalized = `https://drive.google.com/uc?export=view&id=${fileId}`;
-  console.log("[image] normalized drive url", {
+  console.error("[image] normalized drive url", {
     originalUrl: url,
     normalizedUrl: normalized,
   });
@@ -490,7 +490,7 @@ const upload = multer({
     const mimetype = allowedTypes.test(file.mimetype);
     
     if (mimetype && extname) {
-      console.log("[image-upload] accepted file", {
+      console.error("[image-upload] accepted file", {
         route: req.originalUrl,
         originalName: file.originalname,
         mimeType: file.mimetype,
@@ -525,7 +525,7 @@ const volunteerUpload = multer({
     const mimetype = allowedTypes.test(file.mimetype);
     
     if (mimetype && extname) {
-      console.log("[volunteer-image-upload] accepted file", {
+      console.error("[volunteer-image-upload] accepted file", {
         route: req.originalUrl,
         originalName: file.originalname,
         mimeType: file.mimetype,
@@ -1839,7 +1839,7 @@ function normalizePublicSiteOrigin(rawUrl?: string) {
   try {
     return new URL(withProtocol).origin;
   } catch {
-    console.warn(`[startup] Invalid PUBLIC_SITE_URL \"${rawUrl}\". Falling back to https://youthserviceph.org`);
+    console.error(`[startup] Invalid PUBLIC_SITE_URL \"${rawUrl}\". Falling back to https://youthserviceph.org`);
     return "https://youthserviceph.org";
   }
 }
@@ -2008,7 +2008,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const resolvedUrl = await resolveImageProxyTarget(rawUrl);
-      console.log("[image-proxy] resolved", { rawUrl, resolvedUrl });
+      console.error("[image-proxy] resolved", { rawUrl, resolvedUrl });
 
       // Some networks can access ibb page URLs but cannot fetch i.ibb image files directly.
       // Redirecting through a relay keeps the response fast and avoids stalled image loads.
@@ -2131,7 +2131,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userAgent: req.get("user-agent") || "unknown",
       });
 
-      console.warn("[pdf-fallback] request accepted", {
+      console.error("[pdf-fallback] request accepted", {
         id: acceptedEntry.id,
         reportId: acceptedEntry.reportId,
         actorRole: acceptedEntry.actorRole,
@@ -2317,7 +2317,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const updateData: any = { failedLoginAttempts: attempts };
         if (attempts >= 3) {
           updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
-          console.log("[Auth] Chapter account locked due to 3 failed attempts:", chapterUser.username);
+          console.error("[Auth] Chapter account locked due to 3 failed attempts:", chapterUser.username);
         }
         await storage.updateChapterUser(chapterUser.id, updateData);
         return res.status(401).json({ error: "Invalid credentials" });
@@ -2368,7 +2368,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const updateData: any = { failedLoginAttempts: attempts };
         if (attempts >= 3) {
           updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
-          console.log("[Auth] Barangay account locked due to 3 failed attempts:", barangayUser.username);
+          console.error("[Auth] Barangay account locked due to 3 failed attempts:", barangayUser.username);
         }
         await storage.updateBarangayUser(barangayUser.id, updateData);
         return res.status(401).json({ error: "Invalid credentials" });
@@ -2435,7 +2435,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateData: any = { failedLoginAttempts: attempts };
       if (attempts >= 3) {
         updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
-        console.log("[Auth] Chapter account locked due to 3 failed attempts:", user.username);
+        console.error("[Auth] Chapter account locked due to 3 failed attempts:", user.username);
       }
       await storage.updateChapterUser(user.id, updateData);
       return res.status(401).json({ error: "Invalid credentials" });
@@ -2497,7 +2497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateData: any = { failedLoginAttempts: attempts };
       if (attempts >= 3) {
         updateData.lockedUntil = new Date(Date.now() + 5 * 60 * 1000);
-        console.log("[Auth] Barangay account locked due to 3 failed attempts:", user.username);
+        console.error("[Auth] Barangay account locked due to 3 failed attempts:", user.username);
       }
       await storage.updateBarangayUser(user.id, updateData);
       return res.status(401).json({ error: "Invalid credentials" });
@@ -2795,11 +2795,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     if (!updated) {
-      console.log("[Auth] Change password failed for user:", req.session.userId);
+      console.error("[Auth] Change password failed for user:", req.session.userId);
       return res.status(500).json({ error: "Failed to update password" });
     }
 
-    console.log("[Auth] Password updated for user:", req.session.userId, "role:", req.session.role);
+    console.error("[Auth] Password updated for user:", req.session.userId, "role:", req.session.role);
     res.json({ success: true, message: "Password Updated Successfully." });
   });
 
@@ -3020,7 +3020,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .remove([previousLogoPath]);
 
         if (deleteOldLogoError) {
-          console.warn("[chapter-logo-upload] failed to remove old logo", {
+          console.error("[chapter-logo-upload] failed to remove old logo", {
             chapterId,
             previousLogoPath,
             message: deleteOldLogoError.message,
@@ -3355,7 +3355,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "Account not found" });
     }
 
-    console.log("[Auth] Password reset for", normalizedAccountType, "account:", id, "by role:", req.session.role);
+    console.error("[Auth] Password reset for", normalizedAccountType, "account:", id, "by role:", req.session.role);
     res.json({ success: true, temporaryPassword: tempPassword });
   });
 
@@ -3967,7 +3967,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-      console.log("[volunteer-image-upload] admin create", {
+      console.error("[volunteer-image-upload] admin create", {
         route: req.originalUrl,
         hasFile: Boolean(req.file),
         photoUrl,
@@ -4057,7 +4057,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-      console.log("[volunteer-image-upload] admin update", {
+      console.error("[volunteer-image-upload] admin update", {
         route: req.originalUrl,
         hasFile: Boolean(req.file),
         photoUrl,
@@ -4143,7 +4143,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     const imageUrl = `/uploads/${req.file.filename}`;
-    console.log("[member-photo-upload] upload success", {
+    console.error("[member-photo-upload] upload success", {
       route: req.originalUrl,
       originalName: req.file.originalname,
       mimeType: req.file.mimetype,
@@ -4161,7 +4161,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     const imageUrl = `/uploads/${req.file.filename}`;
-    console.log("[image-upload] upload success", {
+    console.error("[image-upload] upload success", {
       route: req.originalUrl,
       originalName: req.file.originalname,
       mimeType: req.file.mimetype,
@@ -6788,7 +6788,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const barangayIdsCsv = connectedBarangayIds.length > 0 ? connectedBarangayIds.join(",") : undefined;
 
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-      console.log("[volunteer-image-upload] chapter create", {
+      console.error("[volunteer-image-upload] chapter create", {
         route: req.originalUrl,
         chapterId,
         hasFile: Boolean(req.file),
@@ -7186,7 +7186,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const chapterLabel = `${chapter?.name || "Chapter"} - ${barangay.barangayName}`;
       const photoUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
-      console.log("[volunteer-image-upload] barangay create", {
+      console.error("[volunteer-image-upload] barangay create", {
         route: req.originalUrl,
         chapterId,
         barangayId,
@@ -7750,11 +7750,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
     void initializeDefaultsWithoutBlockingStartup();
   } else if (process.env.NODE_ENV === "development") {
-    console.warn(
+    console.error(
       "[startup] DATABASE_URL is not set; skipping database initialization in development.",
     );
   } else {
-    console.warn("[startup] DATABASE_URL is not set; database-backed routes will be unavailable.");
+    console.error("[startup] DATABASE_URL is not set; database-backed routes will be unavailable.");
   }
 
   const httpServer = createServer(app);

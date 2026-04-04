@@ -51,7 +51,7 @@ function shouldEnableSslForDatabaseUrl(url?: string) {
 }
 
 if (!databaseUrl && !isDevelopment) {
-  console.warn(
+  console.error(
     "[startup] DATABASE_URL is not set; database-backed API routes will fail until configured.",
   );
 }

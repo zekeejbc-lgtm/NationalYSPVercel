@@ -25,7 +25,7 @@ export async function reportPdfFallbackRequest(contract: PdfExportContract, erro
     });
     return true;
   } catch (fallbackError) {
-    console.warn("Failed to submit PDF fallback request", fallbackError);
+    console.error("Failed to submit PDF fallback request", fallbackError);
     return false;
   }
 }

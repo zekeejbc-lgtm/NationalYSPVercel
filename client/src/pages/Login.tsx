@@ -117,7 +117,7 @@ export default function Login() {
     hasRedirected.current = false;
     
     const checkExistingAuth = async () => {
-      console.log("[Login] Checking existing auth...");
+      console.error("[Login] Checking existing auth...");
       try {
         const response = await fetch("/api/auth/check", { credentials: "include" });
         const payload = await readResponsePayload<AuthResponse>(response);
@@ -133,7 +133,7 @@ export default function Login() {
           throw new Error("Auth check returned invalid response format");
         }
 
-        console.log("[Login] Auth check result:", data);
+        console.error("[Login] Auth check result:", data);
         
         if (showDebug) {
           setDebugInfo({
@@ -145,15 +145,15 @@ export default function Login() {
         
         if (data.authenticated && data.user) {
           const userRole = data.user.role;
-          console.log("[Login] Already authenticated, role:", userRole);
+          console.error("[Login] Already authenticated, role:", userRole);
           if (userRole === "admin" || userRole === "chapter" || userRole === "barangay") {
             const targetRoute = resolveTargetRoute(userRole, data.user.mustChangePassword);
-            console.log("[Login] Redirecting to:", targetRoute);
+            console.error("[Login] Redirecting to:", targetRoute);
             hasRedirected.current = true;
             setLocation(targetRoute);
             return;
           } else {
-            console.log("[Login] Unknown role:", userRole);
+            console.error("[Login] Unknown role:", userRole);
             toast({
               title: "Error",
               description: "Role not found. Please contact admin.",
@@ -161,12 +161,12 @@ export default function Login() {
             });
           }
         } else {
-          console.log("[Login] Not authenticated, showing login form");
+          console.error("[Login] Not authenticated, showing login form");
           queryClient.clear();
           clearSessionQueryPersistence();
         }
       } catch (error) {
-        console.log("[Login] Auth check error:", error);
+        console.error("[Login] Auth check error:", error);
       } finally {
         setCheckingAuth(false);
       }
@@ -178,11 +178,11 @@ export default function Login() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    console.log("[Login] LOGIN_STARTED");
+    console.error("[Login] LOGIN_STARTED");
 
     try {
       const endpoint = "/api/auth/login";
-      console.log("[Login] Attempting unified login");
+      console.error("[Login] Attempting unified login");
       
       const response = await fetch(endpoint, {
         method: "POST",
@@ -207,15 +207,15 @@ export default function Login() {
         throw new Error("Login returned invalid response format");
       }
 
-      console.log("[Login] LOGIN_SUCCESS, payload keys:", Object.keys(data));
-      console.log("[Login] Login response:", data);
+      console.error("[Login] LOGIN_SUCCESS, payload keys:", Object.keys(data));
+      console.error("[Login] Login response:", data);
       
       if (!data?.success) {
         throw new Error("Login failed");
       }
       
-      console.log("[Login] TOKEN_SAVED: true");
-      console.log("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
+      console.error("[Login] TOKEN_SAVED: true");
+      console.error("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
 
       const userRole = data?.user?.role;
       if (!userRole) {
@@ -223,7 +223,7 @@ export default function Login() {
       }
 
       const targetPath = resolveTargetRoute(userRole, data.user?.mustChangePassword);
-      console.log("[Login] REDIRECT_TO:", targetPath);
+      console.error("[Login] REDIRECT_TO:", targetPath);
       
       toast({
         title: "Success",
@@ -235,7 +235,7 @@ export default function Login() {
       hasRedirected.current = true;
       setLocation(targetPath);
     } catch (error: any) {
-      console.log("[Login] Login failed:", error.message);
+      console.error("[Login] Login failed:", error.message);
       toast({
         title: "Error",
         description: error.message || "Invalid credentials",

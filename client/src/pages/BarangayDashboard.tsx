@@ -80,7 +80,7 @@ export default function BarangayDashboard() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      console.log("[Barangay] DASHBOARD_MOUNTED, checking auth...");
+      console.error("[Barangay] DASHBOARD_MOUNTED, checking auth...");
       setLoading(true);
       setAuthError(null);
 
@@ -95,7 +95,7 @@ export default function BarangayDashboard() {
         }
 
         if (authResult.status === "unauthenticated") {
-          console.log("[Barangay] Not authenticated, redirecting to /login");
+          console.error("[Barangay] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -104,25 +104,25 @@ export default function BarangayDashboard() {
           return;
         }
 
-        console.log("[Barangay] Auth check result:", {
+        console.error("[Barangay] Auth check result:", {
           authenticated: true,
           role: authResult.user.role,
         });
         
         if (authResult.user.role === "admin") {
-          console.log("[Barangay] User is admin, redirecting to /admin");
+          console.error("[Barangay] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
 
         if (authResult.user.role === "chapter") {
-          console.log("[Barangay] User is chapter, redirecting to /chapter-dashboard");
+          console.error("[Barangay] User is chapter, redirecting to /chapter-dashboard");
           setLocation("/chapter-dashboard");
           return;
         }
         
         if (authResult.user.role !== "barangay") {
-          console.log("[Barangay] Unknown role:", authResult.user.role, "redirecting to /login");
+          console.error("[Barangay] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -131,7 +131,7 @@ export default function BarangayDashboard() {
           return;
         }
         
-        console.log("[Barangay] AUTH_STATE: authenticated=true, role=BARANGAY, barangayName:", authResult.user.barangayName);
+        console.error("[Barangay] AUTH_STATE: authenticated=true, role=BARANGAY, barangayName:", authResult.user.barangayName);
         const barangayUser: AuthUser = {
           id: authResult.user.id,
           username: authResult.user.username,
@@ -149,7 +149,7 @@ export default function BarangayDashboard() {
           setShowPasswordDialog(true);
         }
       } catch (error) {
-        console.log("[Barangay] Auth check error:", error);
+        console.error("[Barangay] Auth check error:", error);
         setAuthenticated(false);
         setAuthUser(null);
         setAuthError("Unable to verify your session right now. Please retry.");
@@ -200,10 +200,10 @@ export default function BarangayDashboard() {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       queryClient.clear();
       clearSessionQueryPersistence();
-      console.log("[Barangay] Logged out successfully");
+      console.error("[Barangay] Logged out successfully");
       setLocation("/");
     } catch (error) {
-      console.log("[Barangay] Logout error:", error);
+      console.error("[Barangay] Logout error:", error);
     }
   };
 

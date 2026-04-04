@@ -9,7 +9,7 @@ export default function ProgramCardExample() {
         title="Education Program"
         description="Providing quality education and tutoring to underprivileged children in rural communities across the Philippines."
         image={educationImage}
-        onClick={() => console.log("Program clicked")}
+        onClick={() => console.error("Program clicked")}
       />
     </div>
   );

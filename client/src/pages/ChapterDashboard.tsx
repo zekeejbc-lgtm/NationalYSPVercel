@@ -348,7 +348,7 @@ export default function ChapterDashboard() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      console.log("[Chapter] DASHBOARD_MOUNTED, checking auth...");
+      console.error("[Chapter] DASHBOARD_MOUNTED, checking auth...");
       setLoading(true);
       setAuthError(null);
 
@@ -363,7 +363,7 @@ export default function ChapterDashboard() {
         }
 
         if (authResult.status === "unauthenticated") {
-          console.log("[Chapter] Not authenticated, redirecting to /login");
+          console.error("[Chapter] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -372,19 +372,19 @@ export default function ChapterDashboard() {
           return;
         }
 
-        console.log("[Chapter] Auth check result:", {
+        console.error("[Chapter] Auth check result:", {
           authenticated: true,
           role: authResult.user.role,
         });
 
         if (authResult.user.role === "admin") {
-          console.log("[Chapter] User is admin, redirecting to /admin");
+          console.error("[Chapter] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
 
         if (authResult.user.role !== "chapter") {
-          console.log("[Chapter] Unknown role:", authResult.user.role, "redirecting to /login");
+          console.error("[Chapter] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -393,7 +393,7 @@ export default function ChapterDashboard() {
           return;
         }
 
-        console.log(
+        console.error(
           "[Chapter] AUTH_STATE: authenticated=true, role=CHAPTER, chapterName:",
           authResult.user.chapterName,
         );
@@ -412,7 +412,7 @@ export default function ChapterDashboard() {
           setShowPasswordDialog(true);
         }
       } catch (error) {
-        console.log("[Chapter] Auth check error:", error);
+        console.error("[Chapter] Auth check error:", error);
         setAuthenticated(false);
         setAuthUser(null);
         setAuthError("Unable to verify your session right now. Please retry.");
@@ -519,7 +519,7 @@ export default function ChapterDashboard() {
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout", {});
-    console.log("[Chapter] Logged out successfully");
+    console.error("[Chapter] Logged out successfully");
     queryClient.clear();
     clearSessionQueryPersistence();
     setLocation("/");

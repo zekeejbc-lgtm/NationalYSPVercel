@@ -446,7 +446,7 @@ function AppContent() {
         return;
       }
 
-      console.log("[Image Debug] Loaded", {
+      console.error("[Image Debug] Loaded", {
         page: window.location.pathname,
         src: target.currentSrc || target.src,
         alt: target.alt,

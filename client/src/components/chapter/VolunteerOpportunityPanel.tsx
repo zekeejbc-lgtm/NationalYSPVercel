@@ -232,7 +232,7 @@ export default function VolunteerOpportunityPanel({
         ? "/api/volunteer-opportunities/by-barangay"
         : `/api/volunteer-opportunities/by-chapter?chapterId=${chapterId}`;
 
-      console.log("[VolunteerDebug] fetch opportunities start", {
+      console.error("[VolunteerDebug] fetch opportunities start", {
         role,
         chapterId,
         barangayId,
@@ -248,7 +248,7 @@ export default function VolunteerOpportunityPanel({
           errorText.includes("Volunteer opportunity not found");
 
         if (canUseChapterFallback) {
-          console.warn("[VolunteerDebug] by-chapter endpoint returned 404; using fallback list endpoint", {
+          console.error("[VolunteerDebug] by-chapter endpoint returned 404; using fallback list endpoint", {
             chapterId,
             endpoint,
           });
@@ -260,7 +260,7 @@ export default function VolunteerOpportunityPanel({
           if (fallbackResponse.ok) {
             const fallbackItems = (await fallbackResponse.json()) as VolunteerOpportunityRow[];
             const chapterScoped = fallbackItems.filter((item) => item.chapterId === chapterId);
-            console.log("[VolunteerDebug] fallback list success", {
+            console.error("[VolunteerDebug] fallback list success", {
               chapterId,
               totalFallbackCount: fallbackItems.length,
               chapterScopedCount: chapterScoped.length,
@@ -296,7 +296,7 @@ export default function VolunteerOpportunityPanel({
       }
 
       const fetched = (await response.json()) as VolunteerOpportunityRow[];
-      console.log("[VolunteerDebug] fetch opportunities success", {
+      console.error("[VolunteerDebug] fetch opportunities success", {
         role,
         chapterId,
         barangayId,
@@ -481,7 +481,7 @@ export default function VolunteerOpportunityPanel({
       const payload = new FormData();
       const deadlineAt = toManilaUtcIsoFromInput(data.deadlineAt);
 
-      console.log("[VolunteerDebug] create submit start", {
+      console.error("[VolunteerDebug] create submit start", {
         role,
         chapterId,
         barangayId,
@@ -547,7 +547,7 @@ export default function VolunteerOpportunityPanel({
       }
 
       const created = (await response.json()) as VolunteerOpportunity;
-      console.log("[VolunteerDebug] create submit success", {
+      console.error("[VolunteerDebug] create submit success", {
         role,
         chapterId,
         barangayId,
@@ -562,7 +562,7 @@ export default function VolunteerOpportunityPanel({
     },
     onSuccess: (createdOpportunity) => {
       lastCreatedOpportunityIdRef.current = createdOpportunity?.id || null;
-      console.log("[VolunteerDebug] invalidating volunteer opportunities queries after create", {
+      console.error("[VolunteerDebug] invalidating volunteer opportunities queries after create", {
         role,
         chapterId,
         barangayId,
@@ -712,7 +712,7 @@ export default function VolunteerOpportunityPanel({
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
 
-    console.log("[VolunteerDebug] form submit", {
+    console.error("[VolunteerDebug] form submit", {
       mode: editingOpportunity ? "update" : "create",
       role,
       chapterId,
@@ -754,7 +754,7 @@ export default function VolunteerOpportunityPanel({
   const openPublicPreview = (opportunity: VolunteerOpportunity) => {
     setPublicPreviewOpportunity(opportunity);
     setPublicPreviewFullImageUrl(null);
-    console.log("[VolunteerDebug] open public preview", {
+    console.error("[VolunteerDebug] open public preview", {
       opportunityId: opportunity.id,
       mode: "modal",
     });
@@ -943,7 +943,7 @@ export default function VolunteerOpportunityPanel({
   }, [barangayScopedOpportunityCount, filteredOpportunities.length]);
 
   useEffect(() => {
-    console.log("[VolunteerDebug] panel list state", {
+    console.error("[VolunteerDebug] panel list state", {
       role,
       chapterId,
       barangayId,
@@ -992,7 +992,7 @@ export default function VolunteerOpportunityPanel({
       return;
     }
 
-    console.log("[VolunteerDebug] created opportunity is visible in current view", {
+    console.error("[VolunteerDebug] created opportunity is visible in current view", {
       createdId,
     });
   }, [
