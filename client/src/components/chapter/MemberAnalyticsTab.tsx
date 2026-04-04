@@ -220,7 +220,13 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
   const [passwordPreview, setPasswordPreview] = useState<PasswordPreview | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
 
-  const { data: members = [], isLoading: membersLoading } = useQuery<MemberRecord[]>({
+  const analyticsQueryEnabled = !!chapterId;
+
+  const {
+    data: members = [],
+    isLoading: membersLoading,
+    isFetched: membersFetched,
+  } = useQuery<MemberRecord[]>({
     queryKey: ["/api/members", { chapterId, scope: "analytics" }],
     queryFn: async () => {
       const response = await fetch(`/api/members?chapterId=${chapterId}`, { credentials: "include" });
@@ -229,10 +235,14 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
       }
       return response.json();
     },
-    enabled: !!chapterId,
+    enabled: analyticsQueryEnabled,
   });
 
-  const { data: barangays = [] } = useQuery<BarangayOption[]>({
+  const {
+    data: barangays = [],
+    isLoading: barangaysLoading,
+    isFetched: barangaysFetched,
+  } = useQuery<BarangayOption[]>({
     queryKey: ["/api/chapters", chapterId, "barangays"],
     queryFn: async () => {
       const response = await fetch(`/api/chapters/${chapterId}/barangays`, { credentials: "include" });
@@ -241,12 +251,13 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
       }
       return response.json();
     },
-    enabled: !!chapterId,
+    enabled: analyticsQueryEnabled,
   });
 
   const {
     data: barangayAccounts = [],
     isLoading: accountsLoading,
+    isFetched: accountsFetched,
     isError: accountsError,
     error: accountsErrorDetails,
   } = useQuery<BarangayAccount[]>({
@@ -275,7 +286,7 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
 
       throw new Error(`Failed to load barangay accounts: ${errorDetails}`);
     },
-    enabled: !!chapterId,
+    enabled: analyticsQueryEnabled,
   });
 
   const accountByNormalizedName = useMemo(() => {
@@ -293,7 +304,11 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
     return map;
   }, [barangayAccounts]);
 
-  const { data: barangayLeaderboard = [] } = useQuery<BarangayLeaderboardEntry[]>({
+  const {
+    data: barangayLeaderboard = [],
+    isLoading: barangayLeaderboardLoading,
+    isFetched: barangayLeaderboardFetched,
+  } = useQuery<BarangayLeaderboardEntry[]>({
     queryKey: ["/api/barangay-leaderboard", { chapterId, scope: "analytics" }],
     queryFn: async () => {
       const response = await fetch(`/api/barangay-leaderboard?chapterId=${chapterId}`, { credentials: "include" });
@@ -302,10 +317,14 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
       }
       return response.json();
     },
-    enabled: !!chapterId,
+    enabled: analyticsQueryEnabled,
   });
 
-  const { data: chapterLeaderboard = [] } = useQuery<ChapterLeaderboardEntry[]>({
+  const {
+    data: chapterLeaderboard = [],
+    isLoading: chapterLeaderboardLoading,
+    isFetched: chapterLeaderboardFetched,
+  } = useQuery<ChapterLeaderboardEntry[]>({
     queryKey: ["/api/leaderboard", { year: currentYear, scope: "analytics" }],
     queryFn: async () => {
       const response = await fetch(`/api/leaderboard?timeframe=all&year=${currentYear}`, { credentials: "include" });
@@ -314,7 +333,7 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
       }
       return response.json();
     },
-    enabled: !!chapterId,
+    enabled: analyticsQueryEnabled,
   });
 
   const { data: selectedBarangayOfficers = [], isLoading: officersLoading } = useQuery<OfficerEntry[]>({
@@ -629,7 +648,21 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
     ].filter((entry) => entry.value > 0);
   }, [accountSummary.changed, accountSummary.locked, accountSummary.notOpened]);
 
-  const isLoading = membersLoading || accountsLoading;
+  const isDashboardAnalyticsLoading =
+    analyticsQueryEnabled &&
+    !accountsError &&
+    (
+      membersLoading ||
+      !membersFetched ||
+      accountsLoading ||
+      !accountsFetched ||
+      barangaysLoading ||
+      !barangaysFetched ||
+      barangayLeaderboardLoading ||
+      !barangayLeaderboardFetched ||
+      chapterLeaderboardLoading ||
+      !chapterLeaderboardFetched
+    );
 
   const beginEdit = (row: BarangayAnalyticsRow) => {
     if (!row.account) {
@@ -837,7 +870,7 @@ export default function MemberAnalyticsTab({ chapterId, chapterName }: MemberAna
             </div>
           </div>
 
-          {isLoading ? (
+          {isDashboardAnalyticsLoading ? (
             <LoadingState label="Loading barangay analytics..." rows={3} compact />
           ) : filteredRows.length === 0 ? (
             <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">

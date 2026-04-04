@@ -24,11 +24,19 @@ export default function BarangayAccountsManager() {
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: barangayUsers = [], isLoading: usersLoading } = useQuery<BarangayUser[]>({
+  const {
+    data: barangayUsers = [],
+    isLoading: usersLoading,
+    isFetched: usersFetched,
+  } = useQuery<BarangayUser[]>({
     queryKey: ["/api/barangay-users", { chapterId: selectedChapterId }],
     queryFn: async () => {
       const res = await fetch(`/api/barangay-users?chapterId=${selectedChapterId}`, { credentials: "include" });
@@ -37,6 +45,11 @@ export default function BarangayAccountsManager() {
     },
     enabled: !!selectedChapterId,
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    (Boolean(selectedChapterId) && (usersLoading || !usersFetched));
 
   const createUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -172,7 +185,7 @@ export default function BarangayAccountsManager() {
 
         {selectedChapterId && (
           <div className="space-y-4 mt-4">
-            {usersLoading ? (
+            {isDashboardDataLoading ? (
               <LoadingState label="Loading barangay accounts..." rows={2} compact />
             ) : barangayUsers.length === 0 ? (
               <p className="text-muted-foreground">No barangay accounts for this chapter yet.</p>

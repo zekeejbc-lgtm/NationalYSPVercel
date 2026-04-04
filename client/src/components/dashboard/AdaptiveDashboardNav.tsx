@@ -187,8 +187,8 @@ export default function AdaptiveDashboardNav({
         </div>
       </nav>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur md:hidden">
-        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${mobileSlots.length}, minmax(0, 1fr))` }}>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-1.5 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur sm:px-2 md:hidden">
+        <div className="grid gap-0.5 sm:gap-1" style={{ gridTemplateColumns: `repeat(${mobileSlots.length}, minmax(0, 1fr))` }}>
           {mobileSlots.map((slot, index) => {
             if (slot.kind === "tab") {
               const tab = slot.tab;
@@ -202,13 +202,13 @@ export default function AdaptiveDashboardNav({
                   variant="ghost"
                   onClick={() => onChange(tab.value)}
                   className={cn(
-                    "h-12 min-h-[44px] flex-col gap-1 rounded-lg px-1",
+                    "h-11 min-h-[42px] flex-col gap-1 rounded-lg px-0.5 sm:h-12 sm:min-h-[44px] sm:px-1",
                     isActive ? "bg-secondary text-foreground" : "text-muted-foreground",
                   )}
                   data-testid={tab.dataTestId ? `${tab.dataTestId}-mobile-quick` : undefined}
                 >
-                  {Icon && <Icon className="h-4 w-4" />}
-                  <span className="max-w-full truncate text-[11px] leading-none">{tab.label}</span>
+                  {Icon && <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+                  <span className="max-w-full truncate text-[10px] leading-none sm:text-[11px]">{tab.label}</span>
                 </Button>
               );
             }
@@ -221,12 +221,12 @@ export default function AdaptiveDashboardNav({
                       type="button"
                       variant="ghost"
                       className={cn(
-                        "h-16 w-16 -translate-y-5 rounded-full border-4 border-background bg-primary p-0 text-primary-foreground shadow-xl hover:bg-primary/90",
+                        "h-14 w-14 -translate-y-4 rounded-full border-4 border-background bg-primary p-0 text-primary-foreground shadow-xl hover:bg-primary/90 sm:h-16 sm:w-16 sm:-translate-y-5",
                         mobileMenuOpen && "scale-105",
                       )}
                       data-testid="tab-more-mobile"
                     >
-                      <MoreHorizontal className="h-6 w-6" />
+                      <MoreHorizontal className="h-5 w-5 sm:h-6 sm:w-6" />
                       <span className="sr-only">More</span>
                     </Button>
                   </SheetTrigger>

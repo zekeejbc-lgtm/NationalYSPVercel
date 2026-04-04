@@ -6,9 +6,28 @@ const FALLBACK_APPLIED_DATASET_KEY = "fallbackApplied";
 export function extractDriveFileId(url: string): string | null {
   if (!url) return null;
 
+  try {
+    const parsedUrl = new URL(url);
+    const queryId =
+      parsedUrl.searchParams.get("id") ||
+      parsedUrl.searchParams.get("fileId") ||
+      parsedUrl.searchParams.get("docid");
+
+    if (queryId && /^[a-zA-Z0-9_-]+$/.test(queryId)) {
+      return queryId;
+    }
+  } catch {
+    // Continue with regex extraction for non-URL strings.
+  }
+
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /\/document\/d\/([a-zA-Z0-9_-]+)/,
+    /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/,
+    /\/presentation\/d\/([a-zA-Z0-9_-]+)/,
     /[?&]id=([a-zA-Z0-9_-]+)/,
+    /[?&]fileId=([a-zA-Z0-9_-]+)/,
+    /[?&]docid=([a-zA-Z0-9_-]+)/,
     /\/d\/([a-zA-Z0-9_-]+)/,
   ];
 
@@ -44,7 +63,14 @@ export function normalizeDriveImageUrl(url: string): string {
 }
 
 export function isDriveUrl(url: string): boolean {
-  return url.includes("drive.google.com");
+  const hostname = getHostname(url);
+  return (
+    hostname === "drive.google.com" ||
+    hostname === "www.drive.google.com" ||
+    hostname === "docs.google.com" ||
+    hostname === "www.docs.google.com" ||
+    hostname === "drive.usercontent.google.com"
+  );
 }
 
 function getHostname(url: string): string | null {

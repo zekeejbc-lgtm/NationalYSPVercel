@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   applyImageFallback,
   DEFAULT_IMAGE_FALLBACK_SRC,
@@ -101,9 +102,15 @@ export default function Volunteer() {
   const [openVisibleCount, setOpenVisibleCount] = useState(6);
   const [completedVisibleCount, setCompletedVisibleCount] = useState(6);
 
-  const { data: opportunities = [] } = useQuery<VolunteerOpportunity[]>({ 
+  const {
+    data: opportunities = [],
+    isLoading: opportunitiesLoading,
+    isFetched: opportunitiesFetched,
+  } = useQuery<VolunteerOpportunity[]>({
     queryKey: ["/api/volunteer-opportunities"] 
   });
+
+  const isVolunteerDataLoading = opportunitiesLoading || !opportunitiesFetched;
 
   const previewOpportunityId = useMemo(() => {
     if (typeof window === "undefined") {
@@ -353,6 +360,30 @@ export default function Volunteer() {
             )}
           </div>
 
+          {isVolunteerDataLoading ? (
+            <div className="space-y-8" role="status" aria-label="Loading volunteer opportunities">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <Card key={`volunteer-skeleton-${index}`} className="overflow-hidden" aria-hidden="true">
+                    <Skeleton className="h-48 w-full rounded-none" />
+                    <CardHeader className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <Skeleton className="h-6 w-2/3" />
+                        <Skeleton className="h-5 w-16 rounded-full" />
+                      </div>
+                      <Skeleton className="h-4 w-1/2" />
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-5/6" />
+                      <Skeleton className="h-9 w-36" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
           {openOpportunities.length > 0 && (
             <div className="mb-12">
               <div className="mb-4 flex items-center justify-between">
@@ -431,6 +462,8 @@ export default function Volunteer() {
                 No volunteer opportunities match your current search and filters.
               </p>
             </div>
+          )}
+            </>
           )}
 
           <Dialog

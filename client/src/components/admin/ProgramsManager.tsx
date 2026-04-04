@@ -14,7 +14,6 @@ import type { Program } from "@shared/schema";
 import {
   applyImageFallback,
   DEFAULT_IMAGE_FALLBACK_SRC,
-  extractDriveFileId,
   getDisplayImageUrl,
   resetImageFallback,
 } from "@/lib/driveUtils";
@@ -32,13 +31,16 @@ export default function ProgramsManager() {
   const [animatedFromIndex, setAnimatedFromIndex] = useState<number | null>(null);
   const [isCollapsingPrograms, setIsCollapsingPrograms] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
+  const [uploadedPhotoPreviewUrl, setUploadedPhotoPreviewUrl] = useState("");
+  const [selectedImageSource, setSelectedImageSource] = useState<"upload" | "url" | null>(null);
   const [formData, setFormData] = useState({
     title: "",
     description: "",
     fullDescription: "",
     image: "",
   });
-  const [linkError, setLinkError] = useState("");
 
   const { data: programs = [], isLoading } = useQuery<Program[]>({
     queryKey: ["/api/programs"]
@@ -64,52 +66,136 @@ export default function ProgramsManager() {
     };
   }, [animatedFromIndex]);
 
+  useEffect(() => {
+    return () => {
+      revokeObjectUrl(uploadedPhotoPreviewUrl);
+    };
+  }, [uploadedPhotoPreviewUrl]);
+
+  const revokeObjectUrl = (url: string) => {
+    if (url && url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const clearSelectedUpload = () => {
+    revokeObjectUrl(uploadedPhotoPreviewUrl);
+    setSelectedPhotoFile(null);
+    setUploadedPhotoPreviewUrl("");
+  };
+
   const handleAdd = () => {
     setEditingProgram(null);
+    clearSelectedUpload();
+    setSelectedImageSource(null);
     setFormData({
       title: "",
       description: "",
       fullDescription: "",
       image: "",
     });
-    setLinkError("");
     setIsDialogOpen(true);
   };
 
   const handleEdit = (program: Program) => {
     setEditingProgram(program);
+    clearSelectedUpload();
+    setSelectedImageSource(program.image?.trim() ? "url" : null);
     setFormData({
       title: program.title,
       description: program.description,
       fullDescription: program.fullDescription,
       image: program.image,
     });
-    setLinkError("");
     setIsDialogOpen(true);
   };
 
   const handleImageLinkChange = (value: string) => {
-    setFormData({ ...formData, image: value });
-    if (value && value.includes("drive.google.com")) {
-      const fileId = extractDriveFileId(value);
-      if (!fileId) {
-        setLinkError("Invalid Google Drive link format");
-      } else {
-        setLinkError("");
-      }
-    } else if (value) {
-      setLinkError("");
-    } else {
-      setLinkError("");
+    setFormData((prev) => ({ ...prev, image: value }));
+    if (value.trim()) {
+      setSelectedImageSource("url");
+      return;
     }
+
+    setSelectedImageSource(uploadedPhotoPreviewUrl.trim() ? "upload" : null);
   };
 
-  const previewUrl = getDisplayImageUrl(formData.image);
+  const previewImageRaw = selectedImageSource === "upload" ? uploadedPhotoPreviewUrl : formData.image;
+  const previewUrl = getDisplayImageUrl(previewImageRaw.trim());
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Error",
+        description: "Please upload an image file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "Image must be less than 5MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    clearSelectedUpload();
+    const previewObjectUrl = URL.createObjectURL(file);
+    setSelectedPhotoFile(file);
+    setUploadedPhotoPreviewUrl(previewObjectUrl);
+    setSelectedImageSource("upload");
+
+    toast({
+      title: "Image selected",
+      description: "Image will upload only when you press Save Program",
+    });
+  };
+
+  const uploadSelectedImage = async () => {
+    if (selectedImageSource !== "upload" || !selectedPhotoFile) {
+      return formData.image.trim();
+    }
+
+    setIsUploading(true);
+
+    try {
+      const uploadFormData = new FormData();
+      uploadFormData.append("image", selectedPhotoFile);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: uploadFormData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Upload failed");
+      }
+
+      const data = await response.json();
+      const uploadedUrl = typeof data?.url === "string" ? data.url.trim() : "";
+      if (!uploadedUrl) {
+        throw new Error("Upload URL missing");
+      }
+
+      return uploadedUrl;
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: (data: typeof formData) => apiRequest("POST", "/api/programs", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
+      clearSelectedUpload();
+      setSelectedImageSource(null);
       toast({
         title: "Success",
         description: "Program created successfully",
@@ -130,6 +216,8 @@ export default function ProgramsManager() {
       apiRequest("PUT", `/api/programs/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
+      clearSelectedUpload();
+      setSelectedImageSource(null);
       toast({
         title: "Success",
         description: "Program updated successfully",
@@ -165,10 +253,34 @@ export default function ProgramsManager() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingProgram) {
-      updateMutation.mutate({ id: editingProgram.id, data: formData });
-    } else {
-      createMutation.mutate(formData);
+
+    try {
+      const resolvedImage = (await uploadSelectedImage()).trim();
+      if (!resolvedImage) {
+        toast({
+          title: "Program image required",
+          description: "Add a program image using a link or upload a media file.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const payload = {
+        ...formData,
+        image: resolvedImage,
+      };
+
+      if (editingProgram) {
+        updateMutation.mutate({ id: editingProgram.id, data: payload });
+      } else {
+        createMutation.mutate(payload);
+      }
+    } catch {
+      toast({
+        title: "Image upload failed",
+        description: "Could not upload the selected image. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -327,7 +439,15 @@ export default function ProgramsManager() {
         </CardContent>
       </Card>
 
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open);
+          if (!open) {
+            clearSelectedUpload();
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
@@ -368,21 +488,36 @@ export default function ProgramsManager() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="image">Google Drive Photo Link</Label>
-              <Input
-                id="image"
-                value={formData.image}
-                onChange={(e) => handleImageLinkChange(e.target.value)}
-                placeholder="https://drive.google.com/file/d/FILE_ID/view"
-                data-testid="input-program-image"
-              />
+              <Label>Program Photo</Label>
+              <div className="flex gap-2 items-end flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    disabled={isUploading}
+                    data-testid="input-program-image-upload"
+                  />
+                </div>
+                <span className="text-sm text-muted-foreground">or</span>
+                <div className="flex-1 min-w-[200px]">
+                  <Input
+                    id="image"
+                    value={formData.image}
+                    onChange={(e) => handleImageLinkChange(e.target.value)}
+                    placeholder="Paste image URL (Google Drive, imgbb, direct image, etc.)"
+                    data-testid="input-program-image"
+                  />
+                </div>
+              </div>
               <p className="text-xs text-muted-foreground">
-                Paste a Google Drive sharing link or any direct image URL
+                Supports uploaded media files and image links, including Google Drive sharing links.
               </p>
-              {linkError && (
-                <p className="text-xs text-destructive" data-testid="text-link-error">{linkError}</p>
+              {isUploading && <p className="text-xs text-muted-foreground">Uploading...</p>}
+              {selectedImageSource === "upload" && selectedPhotoFile && (
+                <p className="text-xs text-muted-foreground break-all">Using selected media: {selectedPhotoFile.name}</p>
               )}
-              {previewUrl && !linkError && (
+              {previewUrl && (
                 <div className="mt-2 rounded-md overflow-hidden border bg-muted">
                   <img
                     src={previewUrl}
@@ -404,15 +539,18 @@ export default function ProgramsManager() {
             <div className="flex gap-2">
               <Button 
                 type="submit" 
-                disabled={createMutation.isPending || updateMutation.isPending || !!linkError} 
+                disabled={createMutation.isPending || updateMutation.isPending || isUploading} 
                 data-testid="button-save-program"
               >
-                {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save Program"}
+                {(createMutation.isPending || updateMutation.isPending || isUploading) ? "Saving..." : "Save Program"}
               </Button>
               <Button 
                 type="button" 
                 variant="outline" 
-                onClick={() => setIsDialogOpen(false)}
+                onClick={() => {
+                  clearSelectedUpload();
+                  setIsDialogOpen(false);
+                }}
                 data-testid="button-cancel-program"
               >
                 Cancel

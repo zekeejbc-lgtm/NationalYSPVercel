@@ -32,13 +32,27 @@ export default function ImportantDocumentsManager() {
     notes: "",
   });
 
-  const { data: documents = [], isLoading } = useQuery<ImportantDocument[]>({
+  const {
+    data: documents = [],
+    isLoading: documentsLoading,
+    isFetched: documentsFetched,
+  } = useQuery<ImportantDocument[]>({
     queryKey: ["/api/important-documents"]
   });
 
-  const { data: acknowledgements = [] } = useQuery<DocumentAcknowledgement[]>({
+  const {
+    data: acknowledgements = [],
+    isLoading: acknowledgementsLoading,
+    isFetched: acknowledgementsFetched,
+  } = useQuery<DocumentAcknowledgement[]>({
     queryKey: ["/api/important-documents/acknowledgements"],
   });
+
+  const isDashboardDataLoading =
+    documentsLoading ||
+    !documentsFetched ||
+    acknowledgementsLoading ||
+    !acknowledgementsFetched;
 
   const acknowledgementsByDocumentId = useMemo(() => {
     return acknowledgements.reduce<Record<string, DocumentAcknowledgement[]>>((acc, acknowledgement) => {
@@ -148,7 +162,7 @@ export default function ImportantDocumentsManager() {
     }));
   };
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return <LoadingState label="Loading documents..." rows={3} compact />;
   }
 

@@ -161,6 +161,18 @@ function canUseSessionStorage() {
   return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
 }
 
+export function clearSessionQueryPersistence() {
+  if (!canUseSessionStorage()) {
+    return;
+  }
+
+  try {
+    window.sessionStorage.removeItem(SESSION_QUERY_CACHE_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
 function shouldPersistQuery(queryKey: unknown): queryKey is unknown[] {
   if (!Array.isArray(queryKey) || typeof queryKey[0] !== "string") {
     return false;

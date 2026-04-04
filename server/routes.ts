@@ -184,26 +184,74 @@ async function getDbDiagnostics(): Promise<DbDiagnostics> {
   }
 }
 
-function normalizeDriveUrl(url: string): string {
-  if (!url || !url.includes("drive.google.com")) return url;
+function isGoogleDriveLikeUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return (
+      hostname === "drive.google.com" ||
+      hostname === "www.drive.google.com" ||
+      hostname === "docs.google.com" ||
+      hostname === "www.docs.google.com" ||
+      hostname === "drive.usercontent.google.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function extractDriveFileIdForNormalization(url: string): string | null {
+  if (!url) return null;
+
+  try {
+    const parsedUrl = new URL(url);
+    const queryId =
+      parsedUrl.searchParams.get("id") ||
+      parsedUrl.searchParams.get("fileId") ||
+      parsedUrl.searchParams.get("docid");
+
+    if (queryId && /^[a-zA-Z0-9_-]+$/.test(queryId)) {
+      return queryId;
+    }
+  } catch {
+    // Continue with regex extraction for loosely formatted URLs.
+  }
+
   const patterns = [
     /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /\/document\/d\/([a-zA-Z0-9_-]+)/,
+    /\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/,
+    /\/presentation\/d\/([a-zA-Z0-9_-]+)/,
     /[?&]id=([a-zA-Z0-9_-]+)/,
+    /[?&]fileId=([a-zA-Z0-9_-]+)/,
+    /[?&]docid=([a-zA-Z0-9_-]+)/,
     /\/d\/([a-zA-Z0-9_-]+)/,
   ];
+
   for (const pattern of patterns) {
     const match = url.match(pattern);
-    if (match) {
-      const normalized = `https://drive.google.com/uc?export=view&id=${match[1]}`;
-      console.log("[image] normalized drive url", {
-        originalUrl: url,
-        normalizedUrl: normalized,
-      });
-      return normalized;
+    if (match?.[1]) {
+      return match[1];
     }
   }
-  console.error("[image] failed to normalize drive url", { url });
-  return url;
+
+  return null;
+}
+
+function normalizeDriveUrl(url: string): string {
+  if (!url || !isGoogleDriveLikeUrl(url)) return url;
+
+  const fileId = extractDriveFileIdForNormalization(url);
+  if (!fileId) {
+    console.error("[image] failed to normalize drive url", { url });
+    return url;
+  }
+
+  const normalized = `https://drive.google.com/uc?export=view&id=${fileId}`;
+  console.log("[image] normalized drive url", {
+    originalUrl: url,
+    normalizedUrl: normalized,
+  });
+  return normalized;
 }
 
 const imageProxyAllowedHosts = new Set([
@@ -213,6 +261,28 @@ const imageProxyAllowedHosts = new Set([
   "www.imgbb.com",
   "i.ibb.co",
 ]);
+
+const IMAGE_RELAY_BASE_URL = process.env.IMAGE_RELAY_BASE_URL || "https://images.weserv.nl/";
+const IMAGE_PROXY_USE_RELAY =
+  process.env.IMAGE_PROXY_USE_RELAY === "true" || process.env.NODE_ENV === "development";
+
+const DEFAULT_IMAGE_PROXY_TIMEOUT_MS = 10000;
+
+function getImageProxyTimeoutMs() {
+  const parsed = Number.parseInt(process.env.IMAGE_PROXY_TIMEOUT_MS || `${DEFAULT_IMAGE_PROXY_TIMEOUT_MS}`, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return DEFAULT_IMAGE_PROXY_TIMEOUT_MS;
+  }
+  return parsed;
+}
+
+async function fetchWithImageProxyTimeout(url: string, options?: RequestInit) {
+  const timeoutMs = getImageProxyTimeoutMs();
+  return fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
 
 function extractOgImageFromHtml(html: string): string | null {
   const patterns = [
@@ -235,7 +305,7 @@ async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
   const host = parsed.hostname.toLowerCase();
 
   if (host === "ibb.co" || host === "www.ibb.co" || host === "imgbb.com" || host === "www.imgbb.com") {
-    const pageResponse = await fetch(rawUrl, { redirect: "follow" });
+    const pageResponse = await fetchWithImageProxyTimeout(rawUrl, { redirect: "follow" });
     if (!pageResponse.ok) {
       throw new Error(`Image page request failed with status ${pageResponse.status}`);
     }
@@ -250,6 +320,12 @@ async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
   }
 
   return rawUrl;
+}
+
+function getRelayedImageUrl(imageUrl: string): string {
+  const relayUrl = new URL(IMAGE_RELAY_BASE_URL);
+  relayUrl.searchParams.set("url", imageUrl);
+  return relayUrl.toString();
 }
 
 const CHAPTER_LOGO_BUCKET = process.env.SUPABASE_CHAPTER_LOGO_BUCKET || "chapter-logos";
@@ -1494,7 +1570,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const resolvedUrl = await resolveImageProxyTarget(rawUrl);
       console.log("[image-proxy] resolved", { rawUrl, resolvedUrl });
 
-      const imageResponse = await fetch(resolvedUrl, { redirect: "follow" });
+      // Some networks can access ibb page URLs but cannot fetch i.ibb image files directly.
+      // Redirecting through a relay keeps the response fast and avoids stalled image loads.
+      if (IMAGE_PROXY_USE_RELAY && new URL(resolvedUrl).hostname.toLowerCase() === "i.ibb.co") {
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.redirect(302, getRelayedImageUrl(resolvedUrl));
+      }
+
+      const imageResponse = await fetchWithImageProxyTimeout(resolvedUrl, { redirect: "follow" });
       if (!imageResponse.ok) {
         return res.status(imageResponse.status).json({ error: "Failed to fetch image" });
       }

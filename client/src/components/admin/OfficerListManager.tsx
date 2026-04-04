@@ -99,11 +99,19 @@ const isChapterLevelOfficer = (officer: ChapterOfficer) =>
 export default function OfficerListManager() {
   const [searchTerm, setSearchTerm] = useState("");
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: officers = [], isLoading } = useQuery<ChapterOfficer[]>({
+  const {
+    data: officers = [],
+    isLoading: officersLoading,
+    isFetched: officersFetched,
+  } = useQuery<ChapterOfficer[]>({
     queryKey: ["/api/officers"],
     queryFn: async () => {
       const res = await fetch("/api/officers", { credentials: "include" });
@@ -111,6 +119,12 @@ export default function OfficerListManager() {
       return res.json();
     },
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    officersLoading ||
+    !officersFetched;
 
   const groupedByChapter = chapters.reduce((acc, chapter) => {
     acc[chapter.id] = officers.filter(
@@ -231,7 +245,7 @@ export default function OfficerListManager() {
         <div className="mt-2">
           <h3 className="font-medium mb-4">Officers by Chapter</h3>
 
-          {isLoading ? (
+          {isDashboardDataLoading ? (
             <LoadingState label="Loading officers by chapter..." rows={4} compact />
           ) : filteredChapterSummaries.length === 0 ? (
             <p className="text-sm text-muted-foreground">No chapter matched your search.</p>

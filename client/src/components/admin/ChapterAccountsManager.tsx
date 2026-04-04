@@ -23,11 +23,19 @@ export default function ChapterAccountsManager() {
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: chapterUsers = [], isLoading: usersLoading } = useQuery<ChapterUser[]>({
+  const {
+    data: chapterUsers = [],
+    isLoading: usersLoading,
+    isFetched: usersFetched,
+  } = useQuery<ChapterUser[]>({
     queryKey: ["/api/chapters", selectedChapterId, "users"],
     queryFn: async () => {
       const res = await fetch(`/api/chapters/${selectedChapterId}/users`, { credentials: "include" });
@@ -36,6 +44,11 @@ export default function ChapterAccountsManager() {
     },
     enabled: !!selectedChapterId,
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    (Boolean(selectedChapterId) && (usersLoading || !usersFetched));
 
   const createUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -158,7 +171,7 @@ export default function ChapterAccountsManager() {
             <h3 className="font-medium">
               Users for {selectedChapter?.name}
             </h3>
-            {usersLoading ? (
+            {isDashboardDataLoading ? (
               <LoadingState label="Loading chapter users..." rows={2} compact />
             ) : chapterUsers.length === 0 ? (
               <p className="text-muted-foreground">No users created for this chapter yet.</p>

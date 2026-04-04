@@ -56,14 +56,29 @@ export default function Publications() {
   const [selectedPublication, setSelectedPublication] = useState<Publication | null>(null);
   const [visibleCount, setVisibleCount] = useState(PUBLICATIONS_BATCH_SIZE);
 
-  const { data: publications = [], isLoading, isError } = useQuery<Publication[]>({
+  const {
+    data: publications = [],
+    isLoading: publicationsLoading,
+    isFetched: publicationsFetched,
+    isError,
+  } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
   });
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
+
+  const isPublicationsDataLoading =
+    publicationsLoading ||
+    !publicationsFetched ||
+    chaptersLoading ||
+    !chaptersFetched;
 
   const chapterNameById = useMemo(
     () => new Map(chapters.map((chapter) => [chapter.id, chapter.name])),
@@ -164,7 +179,7 @@ export default function Publications() {
 
       <section className="py-12 md:py-20 flex-1">
         <div className="max-w-5xl mx-auto px-4 md:px-8">
-          {isLoading ? (
+          {isPublicationsDataLoading ? (
             <div className="space-y-8" role="status" aria-label="Loading publications">
               {Array.from({ length: PUBLICATIONS_BATCH_SIZE }).map((_, index) => (
                 <PublicationCardSkeleton key={`publication-skeleton-${index}`} isAlternatingRow={index % 2 === 1} />

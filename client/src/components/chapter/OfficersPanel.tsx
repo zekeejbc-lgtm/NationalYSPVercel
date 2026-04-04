@@ -117,7 +117,11 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     chapterEmail: ""
   });
 
-  const { data: officers = [], isLoading } = useQuery<ChapterOfficer[]>({
+  const {
+    data: officers = [],
+    isLoading: officersLoading,
+    isFetched: officersFetched,
+  } = useQuery<ChapterOfficer[]>({
     queryKey: ["/api/chapter-officers", { chapterId, barangayId, level }],
     queryFn: async () => {
       let url = `/api/chapter-officers?chapterId=${chapterId}`;
@@ -134,7 +138,11 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     enabled: !!chapterId,
   });
 
-  const { data: barangays = [] } = useQuery<BarangayOption[]>({
+  const {
+    data: barangays = [],
+    isLoading: barangaysLoading,
+    isFetched: barangaysFetched,
+  } = useQuery<BarangayOption[]>({
     queryKey: ["/api/chapters", chapterId, "barangays"],
     queryFn: async () => {
       const res = await fetch(`/api/chapters/${chapterId}/barangays`, { credentials: "include" });
@@ -143,6 +151,11 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
     },
     enabled: level === "chapter" && !!chapterId,
   });
+
+  const isDashboardDataLoading =
+    officersLoading ||
+    !officersFetched ||
+    (level === "chapter" && (barangaysLoading || !barangaysFetched));
 
   const isBarangayOfficer = (officer: ChapterOfficer) => officer.level === "barangay" || Boolean(officer.barangayId);
   const chapterOfficers = level === "chapter" ? officers.filter((officer) => !isBarangayOfficer(officer)) : officers;
@@ -645,7 +658,7 @@ export default function OfficersPanel({ chapterId, level = "chapter", barangayId
           <p>Footer also includes Facebook, website, email, and export date in Manila local time (12-hour format).</p>
         </div>
 
-        {isLoading ? (
+        {isDashboardDataLoading ? (
           <LoadingState label="Loading officers..." rows={2} compact />
         ) : officers.length === 0 ? (
           <p className="text-center text-muted-foreground py-4">

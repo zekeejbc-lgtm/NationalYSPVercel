@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { Eye, EyeOff } from "lucide-react";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 
@@ -162,6 +162,8 @@ export default function Login() {
           }
         } else {
           console.log("[Login] Not authenticated, showing login form");
+          queryClient.clear();
+          clearSessionQueryPersistence();
         }
       } catch (error) {
         console.log("[Login] Auth check error:", error);

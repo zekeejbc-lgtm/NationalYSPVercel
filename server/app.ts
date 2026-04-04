@@ -89,6 +89,37 @@ const createSessionStore = () => {
 
 const sessionStore = createSessionStore();
 
+function resolveSessionCookieSecure(): boolean | "auto" {
+  const configuredValue = (process.env.SESSION_COOKIE_SECURE || "").trim().toLowerCase();
+  if (configuredValue === "true") {
+    return true;
+  }
+
+  if (configuredValue === "false") {
+    return false;
+  }
+
+  return process.env.NODE_ENV === "production" ? "auto" : false;
+}
+
+function resolveSessionCookieSameSite(secureSetting: boolean | "auto"): "lax" | "strict" | "none" {
+  const configuredValue = (process.env.SESSION_COOKIE_SAMESITE || "").trim().toLowerCase();
+  const normalizedValue =
+    configuredValue === "lax" || configuredValue === "strict" || configuredValue === "none"
+      ? configuredValue
+      : "lax";
+
+  if (normalizedValue === "none" && secureSetting === false) {
+    console.warn("[session] SESSION_COOKIE_SAMESITE=none requires secure cookies; falling back to lax");
+    return "lax";
+  }
+
+  return normalizedValue;
+}
+
+const sessionCookieSecure = resolveSessionCookieSecure();
+const sessionCookieSameSite = resolveSessionCookieSameSite(sessionCookieSecure);
+
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
@@ -97,9 +128,9 @@ app.use(
     saveUninitialized: false,
     proxy: true,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: sessionCookieSecure,
       httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: sessionCookieSameSite,
       maxAge: 24 * 60 * 60 * 1000,
     },
   })

@@ -15,13 +15,27 @@ export default function ChapterRequestsPanel() {
   const { toast } = useToast();
   const [selectedRequest, setSelectedRequest] = useState<ChapterRequest | null>(null);
 
-  const { data: requests = [], isLoading } = useQuery<ChapterRequest[]>({
+  const {
+    data: requests = [],
+    isLoading: requestsLoading,
+    isFetched: requestsFetched,
+  } = useQuery<ChapterRequest[]>({
     queryKey: ["/api/chapter-requests"]
   });
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"]
   });
+
+  const isDashboardDataLoading =
+    requestsLoading ||
+    !requestsFetched ||
+    chaptersLoading ||
+    !chaptersFetched;
 
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => 
@@ -69,7 +83,7 @@ export default function ChapterRequestsPanel() {
     return "No additional details provided.";
   };
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return <LoadingState label="Loading chapter requests..." rows={3} compact />;
   }
 

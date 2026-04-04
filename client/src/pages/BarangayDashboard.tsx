@@ -7,12 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import LoadingState from "@/components/ui/loading-state";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
+import DashboardTabSkeleton from "@/components/dashboard/DashboardTabSkeleton";
 import {
   Eye,
   EyeOff,
@@ -66,7 +66,11 @@ export default function BarangayDashboard() {
   const [authenticated, setAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
     enabled: authenticated,
   });
@@ -81,6 +85,8 @@ export default function BarangayDashboard() {
         
         if (!data.authenticated) {
           console.log("[Barangay] Not authenticated, redirecting to /login");
+          queryClient.clear();
+          clearSessionQueryPersistence();
           setLocation("/login");
           return;
         }
@@ -99,6 +105,8 @@ export default function BarangayDashboard() {
         
         if (data.user?.role !== "barangay") {
           console.log("[Barangay] Unknown role:", data.user?.role, "redirecting to /login");
+          queryClient.clear();
+          clearSessionQueryPersistence();
           setLocation("/login");
           return;
         }
@@ -159,6 +167,7 @@ export default function BarangayDashboard() {
     try {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       queryClient.clear();
+      clearSessionQueryPersistence();
       console.log("[Barangay] Logged out successfully");
       setLocation("/");
     } catch (error) {
@@ -166,7 +175,9 @@ export default function BarangayDashboard() {
     }
   };
 
-  if (loading) {
+  const isDashboardDataLoading = loading || (authenticated && (chaptersLoading || !chaptersFetched));
+
+  if (isDashboardDataLoading) {
     return <AuthLoadingScreen label="Preparing barangay dashboard..." />;
   }
 
@@ -187,14 +198,6 @@ export default function BarangayDashboard() {
     { value: "leaderboard", label: "Leaderboard", icon: Trophy, group: "Insights", dataTestId: "tab-leaderboard", mobilePriority: true, desktopPriority: true },
     { value: "national", label: "Message National", icon: MessageSquare, group: "Communication", dataTestId: "tab-national", desktopPriority: true },
   ];
-
-  const renderTabFallback = (label: string) => (
-    <Card>
-      <CardContent className="p-6">
-        <LoadingState label={label} rows={3} compact />
-      </CardContent>
-    </Card>
-  );
 
   return (
     <div className="min-h-screen bg-muted/30">
@@ -289,7 +292,7 @@ export default function BarangayDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Suspense fallback={renderTabFallback("Loading members...")}>
+                <Suspense fallback={<DashboardTabSkeleton variant="members" label="Loading members..." embedded />}>
                   <MemberDashboardPanel 
                     chapterId={authUser.chapterId || ""} 
                     barangayId={authUser.barangayId}
@@ -308,7 +311,7 @@ export default function BarangayDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Suspense fallback={renderTabFallback("Loading officers...")}>
+                <Suspense fallback={<DashboardTabSkeleton variant="officers" label="Loading officers..." embedded />}>
                   <OfficersPanel 
                     chapterId={authUser.chapterId || ""} 
                     level="barangay"
@@ -320,7 +323,7 @@ export default function BarangayDashboard() {
           </TabsContent>
 
           <TabsContent value="volunteer">
-            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="volunteer" label="Loading volunteer opportunities..." />}>
               {authUser?.chapterId && authUser?.barangayId && (
                 <VolunteerOpportunityPanel
                   chapterId={authUser.chapterId}
@@ -332,7 +335,7 @@ export default function BarangayDashboard() {
           </TabsContent>
 
           <TabsContent value="kpis">
-            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="kpis" label="Loading KPIs..." />}>
               {authUser?.chapterId && authUser?.barangayId && (
                 <BarangayKpiPanel 
                   chapterId={authUser.chapterId} 
@@ -343,7 +346,7 @@ export default function BarangayDashboard() {
           </TabsContent>
 
           <TabsContent value="leaderboard">
-            <Suspense fallback={renderTabFallback("Loading leaderboard...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="leaderboard" label="Loading leaderboard..." />}>
               {authUser?.chapterId && authUser?.barangayId && (
                 <BarangayLeaderboard 
                   chapterId={authUser.chapterId} 
@@ -354,7 +357,7 @@ export default function BarangayDashboard() {
           </TabsContent>
 
           <TabsContent value="national">
-            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="inbox" label="Loading inbox..." />}>
               <NationalRequestPanel senderType="barangay" />
             </Suspense>
           </TabsContent>

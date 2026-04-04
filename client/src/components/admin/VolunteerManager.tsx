@@ -136,11 +136,19 @@ export default function VolunteerManager() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState<VolunteerFormState>(EMPTY_FORM);
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: opportunities = [], isLoading } = useQuery<VolunteerOpportunity[]>({
+  const {
+    data: opportunities = [],
+    isLoading: opportunitiesLoading,
+    isFetched: opportunitiesFetched,
+  } = useQuery<VolunteerOpportunity[]>({
     queryKey: ["/api/volunteer-opportunities"],
   });
 
@@ -156,7 +164,11 @@ export default function VolunteerManager() {
     return "";
   }, [formData.chapterId, selectedChapterId]);
 
-  const { data: activeChapterBarangays = [] } = useQuery<Array<{ id: string; barangayName: string }>>({
+  const {
+    data: activeChapterBarangays = [],
+    isLoading: activeChapterBarangaysLoading,
+    isFetched: activeChapterBarangaysFetched,
+  } = useQuery<Array<{ id: string; barangayName: string }>>({
     queryKey: ["/api/chapters", activeBarangayHintChapterId, "barangays", "admin-volunteer"],
     queryFn: async () => {
       const response = await fetch(`/api/chapters/${activeBarangayHintChapterId}/barangays`, { credentials: "include" });
@@ -167,6 +179,13 @@ export default function VolunteerManager() {
     },
     enabled: Boolean(activeBarangayHintChapterId),
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    opportunitiesLoading ||
+    !opportunitiesFetched ||
+    (Boolean(activeBarangayHintChapterId) && (activeChapterBarangaysLoading || !activeChapterBarangaysFetched));
 
   const barangayNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -751,7 +770,7 @@ export default function VolunteerManager() {
     );
   };
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return <LoadingState label="Loading volunteer opportunities..." rows={3} compact />;
   }
 

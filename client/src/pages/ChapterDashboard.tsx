@@ -10,15 +10,15 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import LoadingState from "@/components/ui/loading-state";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import PaginationControls from "@/components/ui/pagination-controls";
 import { useToast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/use-pagination";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
+import DashboardTabSkeleton from "@/components/dashboard/DashboardTabSkeleton";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { 
   Eye,
@@ -165,25 +165,41 @@ export default function ChapterDashboard() {
   const chapterPublicationStatusUrl = authUser?.chapterId
     ? `/api/publications?chapterId=${encodeURIComponent(authUser.chapterId)}&includeAll=true`
     : "/api/publications?chapterId=&includeAll=true";
+  const chapterPublicationStatusQueryEnabled = authenticated && !!authUser?.chapterId && authUser?.role === "chapter";
+  const submittedReportsQueryEnabled = authenticated && !!authUser?.chapterId;
 
   const { data: publications = [] } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
     enabled: authenticated,
   });
 
-  const { data: chapterPublicationsWithStatus = [] } = useQuery<Publication[]>({
+  const {
+    data: chapterPublicationsWithStatus = [],
+    isLoading: chapterPublicationStatusLoading,
+    isFetched: chapterPublicationStatusFetched,
+  } = useQuery<Publication[]>({
     queryKey: [chapterPublicationStatusUrl],
-    enabled: authenticated && !!authUser?.chapterId && authUser?.role === "chapter",
+    enabled: chapterPublicationStatusQueryEnabled,
   });
 
   const {
     data: submittedReports = [],
     isLoading: submittedReportsLoading,
+    isFetched: submittedReportsFetched,
     isError: submittedReportsError,
   } = useQuery<ProjectReport[]>({
     queryKey: [chapterReportsUrl],
-    enabled: authenticated && !!authUser?.chapterId,
+    enabled: submittedReportsQueryEnabled,
   });
+
+  const isSubmittedReportsDataLoading =
+    submittedReportsQueryEnabled &&
+    (
+      submittedReportsLoading ||
+      !submittedReportsFetched ||
+      (chapterPublicationStatusQueryEnabled &&
+        (chapterPublicationStatusLoading || !chapterPublicationStatusFetched))
+    );
 
   const { data: chapters = [] } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
@@ -329,6 +345,8 @@ export default function ChapterDashboard() {
         
         if (!data.authenticated) {
           console.log("[Chapter] Not authenticated, redirecting to /login");
+          queryClient.clear();
+          clearSessionQueryPersistence();
           setLocation("/login");
           return;
         }
@@ -341,6 +359,8 @@ export default function ChapterDashboard() {
         
         if (data.user?.role !== "chapter") {
           console.log("[Chapter] Unknown role:", data.user?.role, "redirecting to /login");
+          queryClient.clear();
+          clearSessionQueryPersistence();
           setLocation("/login");
           return;
         }
@@ -459,7 +479,8 @@ export default function ChapterDashboard() {
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout", {});
     console.log("[Chapter] Logged out successfully");
-    queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
+    queryClient.clear();
+    clearSessionQueryPersistence();
     setLocation("/");
   };
 
@@ -794,14 +815,6 @@ export default function ChapterDashboard() {
     return <AuthLoadingScreen label="Preparing chapter dashboard..." />;
   }
 
-  const renderTabFallback = (label: string) => (
-    <Card>
-      <CardContent className="p-6">
-        <LoadingState label={label} rows={3} compact />
-      </CardContent>
-    </Card>
-  );
-
   return (
     <div className="min-h-screen bg-muted/30">
       <UniversalDashboardHeader
@@ -856,13 +869,13 @@ export default function ChapterDashboard() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="photo">Photo</Label>
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                         <Input
                           id="photo"
                           type="file"
                           accept="image/*"
                           onChange={handleImageUpload}
-                          className="max-w-xs"
+                          className="w-full sm:max-w-xs"
                           data-testid="input-photo"
                         />
                         {uploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
@@ -927,6 +940,7 @@ export default function ChapterDashboard() {
                     )}
                     <Button 
                       type="submit" 
+                      className="w-full sm:w-auto"
                       disabled={submitReportMutation.isPending}
                       data-testid="button-submit-report"
                     >
@@ -945,8 +959,8 @@ export default function ChapterDashboard() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="relative max-w-md w-full">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="relative w-full lg:max-w-md">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Search submitted reports..."
@@ -956,10 +970,10 @@ export default function ChapterDashboard() {
                         data-testid="input-submitted-report-search"
                       />
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
                       <Badge
                         variant="outline"
-                        className="whitespace-nowrap"
+                        className="w-full justify-center text-center sm:w-auto"
                         data-testid="badge-pending-resubmissions-count-chapter"
                       >
                         Pending Resubmissions: {pendingResubmissionCount}
@@ -967,6 +981,7 @@ export default function ChapterDashboard() {
                       <Button
                         type="button"
                         size="sm"
+                        className="w-full whitespace-normal text-center sm:w-auto"
                         variant={showPendingResubmissionsOnly ? "default" : "outline"}
                         onClick={() => setShowPendingResubmissionsOnly((previous) => !previous)}
                         data-testid="button-filter-pending-resubmissions-chapter"
@@ -980,8 +995,8 @@ export default function ChapterDashboard() {
                     Showing {filteredSubmittedReports.length} of {submittedReports.length} submitted reports
                   </p>
 
-                  {submittedReportsLoading ? (
-                    <LoadingState label="Loading submitted reports..." rows={3} compact />
+                  {isSubmittedReportsDataLoading ? (
+                    <DashboardTabSkeleton variant="reports" label="Loading submitted reports..." embedded />
                   ) : submittedReportsError ? (
                     <p className="text-sm text-destructive">
                       Unable to load submitted reports right now. Please refresh and try again.
@@ -1014,9 +1029,9 @@ export default function ChapterDashboard() {
                               data-testid={`card-submitted-report-${report.id}`}
                             >
                               <CardHeader className="pb-2">
-                                <div className="flex items-start justify-between gap-2">
-                                  <CardTitle className="text-base leading-tight">{report.projectName}</CardTitle>
-                                  <div className="flex items-center gap-2">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <CardTitle className="text-base leading-tight break-words">{report.projectName}</CardTitle>
+                                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                                     {isAwaitingAdminReview ? (
                                       <Badge
                                         variant="secondary"
@@ -1113,12 +1128,13 @@ export default function ChapterDashboard() {
                                       View Uploaded Photo
                                     </a>
                                   )}
-                                  <div className="ml-auto flex items-center gap-2">
+                                  <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto sm:justify-end">
                                     {isRejected && (
                                       <Button
                                         type="button"
                                         variant="secondary"
                                         size="sm"
+                                        className="w-full sm:w-auto"
                                         disabled={resubmitReportMutation.isPending}
                                         onClick={() => handleResubmitReport(report.id)}
                                         data-testid={`button-resubmit-report-${report.id}`}
@@ -1131,6 +1147,7 @@ export default function ChapterDashboard() {
                                       type="button"
                                       variant="outline"
                                       size="sm"
+                                      className="w-full sm:w-auto"
                                       onClick={() => openEditReportForm(report)}
                                       data-testid={`button-edit-report-${report.id}`}
                                     >
@@ -1141,6 +1158,7 @@ export default function ChapterDashboard() {
                                       type="button"
                                       variant="destructive"
                                       size="sm"
+                                      className="w-full sm:w-auto"
                                       disabled={deleteReportMutation.isPending}
                                       onClick={() => handleDeleteReport(report.id)}
                                       data-testid={`button-delete-report-${report.id}`}
@@ -1216,13 +1234,13 @@ export default function ChapterDashboard() {
 
                     <div className="space-y-2">
                       <Label htmlFor="editPhoto">Photo</Label>
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                         <Input
                           id="editPhoto"
                           type="file"
                           accept="image/*"
                           onChange={handleEditImageUpload}
-                          className="max-w-xs"
+                          className="w-full sm:max-w-xs"
                           data-testid="input-edit-photo"
                         />
                         {editUploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
@@ -1313,7 +1331,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="members">
-            <Suspense fallback={renderTabFallback("Loading members...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="members" label="Loading members..." />}>
               {authUser?.chapterId && authUser?.chapterName && (
                 <MemberDashboardPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
               )}
@@ -1321,7 +1339,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="officers">
-            <Suspense fallback={renderTabFallback("Loading officers...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="officers" label="Loading officers..." />}>
               {authUser?.chapterId && (
                 <OfficersPanel chapterId={authUser.chapterId} chapterName={authUser.chapterName} />
               )}
@@ -1329,7 +1347,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="kpis">
-            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="kpis" label="Loading KPIs..." />}>
               {authUser?.chapterId && (
                 <ChapterKpiPanel chapterId={authUser.chapterId} />
               )}
@@ -1337,7 +1355,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="volunteer">
-            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="volunteer" label="Loading volunteer opportunities..." />}>
               {authUser?.chapterId && (
                 <VolunteerOpportunityPanel chapterId={authUser.chapterId} role="chapter" />
               )}
@@ -1345,7 +1363,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="documents">
-            <Suspense fallback={renderTabFallback("Loading documents...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="documents" label="Loading documents..." />}>
               {authUser?.chapterId && (
                 <ImportantDocumentsPanel chapterId={authUser.chapterId} />
               )}
@@ -1353,7 +1371,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="requests">
-            <Suspense fallback={renderTabFallback("Loading funding requests...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="requests" label="Loading funding requests..." />}>
               {authUser?.chapterId && (
                 <FundingRequestPanel chapterId={authUser.chapterId} />
               )}
@@ -1361,7 +1379,7 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="social">
-            <Suspense fallback={renderTabFallback("Loading social media panel...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="social" label="Loading social media panel..." />}>
               {authUser?.chapterId && (
                 <SocialMediaPanel chapterId={authUser.chapterId} />
               )}
@@ -1370,8 +1388,8 @@ export default function ChapterDashboard() {
 
           <TabsContent value="publications">
             <div className="space-y-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="relative flex-1 min-w-[220px]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative w-full min-w-0 sm:flex-1 sm:min-w-[220px]">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search publications by title, chapter, or content..."
@@ -1382,7 +1400,7 @@ export default function ChapterDashboard() {
                   />
                 </div>
                 <Select value={publicationChapterFilter} onValueChange={setPublicationChapterFilter}>
-                  <SelectTrigger className="w-[220px]" data-testid="select-publication-filter">
+                  <SelectTrigger className="w-full sm:w-[220px]" data-testid="select-publication-filter">
                     <SelectValue placeholder="Filter chapters" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1452,8 +1470,8 @@ export default function ChapterDashboard() {
                       </div>
                     )}
                     <CardHeader className="pb-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <CardTitle className="text-lg leading-tight">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <CardTitle className="text-lg leading-tight break-words">
                           {truncateText(pub.title, 80)}
                         </CardTitle>
                         <Badge variant="secondary" className="shrink-0">
@@ -1587,8 +1605,8 @@ export default function ChapterDashboard() {
 
           <TabsContent value="chapters">
             <div className="space-y-4">
-              <div className="flex items-center gap-4 flex-wrap">
-                <div className="relative flex-1 min-w-[200px]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative w-full min-w-0 sm:flex-1 sm:min-w-[200px]">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search chapters..."
@@ -1600,6 +1618,7 @@ export default function ChapterDashboard() {
                 </div>
                 <Button 
                   variant="outline" 
+                  className="w-full sm:w-auto"
                   onClick={() => setChapterSort(s => s === "asc" ? "desc" : "asc")}
                   data-testid="button-sort-chapters"
                 >
@@ -1678,9 +1697,9 @@ export default function ChapterDashboard() {
                   }
                 }}
               >
-                <DialogContent hideClose className="max-w-5xl max-h-[85vh] overflow-y-auto p-0 gap-0">
-                  <DialogHeader className="sticky top-0 z-20 border-b bg-background/95 px-6 py-4 backdrop-blur">
-                    <div className="flex items-start justify-between gap-4">
+                <DialogContent hideClose className="w-[calc(100vw-1rem)] max-w-5xl max-h-[85vh] overflow-y-auto p-0 gap-0">
+                  <DialogHeader className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6 sm:py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="space-y-1 pr-2">
                         <DialogTitle>
                           {selectedDirectoryChapter
@@ -1704,7 +1723,7 @@ export default function ChapterDashboard() {
                   </DialogHeader>
 
                   {selectedDirectoryChapter && (
-                    <div className="space-y-6 px-6 py-6">
+                    <div className="space-y-6 px-4 py-4 sm:px-6 sm:py-6">
                       <section className="space-y-3">
                         <h4 className="text-sm font-semibold">Chapter Info</h4>
                         <div className="rounded-lg border p-4">
@@ -1712,7 +1731,7 @@ export default function ChapterDashboard() {
                             <img
                               src={getChapterLogoSrc(selectedDirectoryChapter.photo)}
                               alt={`${selectedDirectoryChapter.name} logo`}
-                              className="h-16 w-16 rounded-full border bg-card object-contain p-1"
+                              className="h-14 w-14 rounded-full border bg-card object-contain p-1 sm:h-16 sm:w-16"
                               onError={(event) => {
                                 event.currentTarget.onerror = null;
                                 event.currentTarget.src = WEBSITE_LOGO_SRC;
@@ -1748,7 +1767,7 @@ export default function ChapterDashboard() {
 
                       <section className="space-y-3">
                         <h4 className="text-sm font-semibold">Map</h4>
-                        <Suspense fallback={renderTabFallback("Loading map...")}>
+                        <Suspense fallback={<DashboardTabSkeleton variant="map" label="Loading map..." embedded />}>
                           <ChaptersMap chapters={[selectedDirectoryChapter]} />
                         </Suspense>
                       </section>
@@ -1756,7 +1775,7 @@ export default function ChapterDashboard() {
                       <section className="space-y-3">
                         <h4 className="text-sm font-semibold">Officer Directory</h4>
                         {selectedChapterDirectoryLoading ? (
-                          <LoadingState label="Loading officer directory..." rows={3} compact />
+                          <DashboardTabSkeleton variant="officers" label="Loading officer directory..." embedded />
                         ) : selectedChapterDirectory.length === 0 ? (
                           <p className="text-sm text-muted-foreground">No officer directory entries available yet.</p>
                         ) : (
@@ -1786,7 +1805,7 @@ export default function ChapterDashboard() {
                       <section className="space-y-3">
                         <h4 className="text-sm font-semibold">Barangay Directory</h4>
                         {selectedBarangayOfficerGroupsLoading || selectedChapterBarangaysLoading ? (
-                          <LoadingState label="Loading barangay directories..." rows={3} compact />
+                          <DashboardTabSkeleton variant="chapters" label="Loading barangay directories..." embedded />
                         ) : selectedBarangayOfficerGroups.length === 0 && selectedChapterBarangays.length === 0 ? (
                           <p className="text-sm text-muted-foreground">No barangay chapters available for this chapter yet.</p>
                         ) : (
@@ -1872,13 +1891,13 @@ export default function ChapterDashboard() {
           </TabsContent>
 
           <TabsContent value="leaderboard">
-            <Suspense fallback={renderTabFallback("Loading leaderboard...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="leaderboard" label="Loading leaderboard..." />}>
               <EnhancedLeaderboard currentChapterId={authUser?.chapterId} />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="national">
-            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="inbox" label="Loading inbox..." />}>
               <NationalRequestPanel senderType="chapter" />
             </Suspense>
           </TabsContent>

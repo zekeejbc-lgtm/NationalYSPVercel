@@ -27,15 +27,27 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
   const [mouDialogOpen, setMouDialogOpen] = useState(false);
   const [mouFileLink, setMouFileLink] = useState("");
 
-  const { data: documents = [], isLoading } = useQuery<ImportantDocument[]>({
+  const {
+    data: documents = [],
+    isLoading: documentsLoading,
+    isFetched: documentsFetched,
+  } = useQuery<ImportantDocument[]>({
     queryKey: ["/api/important-documents"]
   });
 
-  const { data: acks = [] } = useQuery<ChapterDocumentAck[]>({
+  const {
+    data: acks = [],
+    isLoading: acksLoading,
+    isFetched: acksFetched,
+  } = useQuery<ChapterDocumentAck[]>({
     queryKey: ["/api/chapter-document-acks"]
   });
 
-  const { data: mouSubmission } = useQuery<MouSubmission | null>({
+  const {
+    data: mouSubmission,
+    isLoading: mouSubmissionLoading,
+    isFetched: mouSubmissionFetched,
+  } = useQuery<MouSubmission | null>({
     queryKey: ["/api/mou-submissions/my-submission"],
     queryFn: async () => {
       const res = await fetch("/api/mou-submissions/my-submission", { credentials: "include" });
@@ -43,6 +55,14 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
       return res.json();
     }
   });
+
+  const isDashboardDataLoading =
+    documentsLoading ||
+    !documentsFetched ||
+    acksLoading ||
+    !acksFetched ||
+    mouSubmissionLoading ||
+    !mouSubmissionFetched;
 
   const acknowledgeMutation = useMutation({
     mutationFn: (documentId: string) => 
@@ -111,7 +131,7 @@ export default function ImportantDocumentsPanel({ chapterId }: ImportantDocument
     resetKey: documents.length,
   });
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return (
       <Card>
         <CardContent className="p-6">

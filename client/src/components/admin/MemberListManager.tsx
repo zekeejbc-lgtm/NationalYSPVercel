@@ -234,11 +234,19 @@ export default function MemberListManager() {
     }
   });
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: members = [], isLoading } = useQuery<Member[]>({
+  const {
+    data: members = [],
+    isLoading: membersLoading,
+    isFetched: membersFetched,
+  } = useQuery<Member[]>({
     queryKey: ["/api/members", { chapterId: filterChapter }],
     queryFn: async () => {
       const url = filterChapter && filterChapter !== "all"
@@ -250,7 +258,11 @@ export default function MemberListManager() {
     },
   });
 
-  const { data: barangayUsers = [] } = useQuery<BarangayUser[]>({
+  const {
+    data: barangayUsers = [],
+    isLoading: barangayUsersLoading,
+    isFetched: barangayUsersFetched,
+  } = useQuery<BarangayUser[]>({
     queryKey: ["/api/barangay-users", { chapterId: filterChapter }],
     queryFn: async () => {
       const url = filterChapter && filterChapter !== "all"
@@ -264,6 +276,14 @@ export default function MemberListManager() {
       return response.json();
     },
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    membersLoading ||
+    !membersFetched ||
+    barangayUsersLoading ||
+    !barangayUsersFetched;
 
   const resolveMemberApplicationStatus = (member: Member): "approved" | "pending" | "rejected" => {
     const normalizedStatus = (member.applicationStatus || "").toLowerCase();
@@ -1358,19 +1378,19 @@ export default function MemberListManager() {
               View and manage all registered YSP members across chapters
             </CardDescription>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExportCSV} data-testid="button-export-csv">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <Button variant="outline" className="w-full sm:w-auto" onClick={handleExportCSV} data-testid="button-export-csv">
               <Download className="h-4 w-4 mr-2" />
               Download Excel
             </Button>
             <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
               <DialogTrigger asChild>
-                <Button data-testid="button-add-member">
+                <Button className="w-full sm:w-auto" data-testid="button-add-member">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Member
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-md">
+              <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Add New Member</DialogTitle>
                   <DialogDescription>Add a new member to Youth Service Philippines</DialogDescription>
@@ -1487,7 +1507,7 @@ export default function MemberListManager() {
                         </FormItem>
                       )}
                     />
-                    <div className="flex gap-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:gap-6">
                       <FormField
                         control={form.control}
                         name="registeredVoter"
@@ -1577,7 +1597,9 @@ export default function MemberListManager() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {pendingApplications.length === 0 ? (
+                {isDashboardDataLoading ? (
+                  <LoadingState label="Loading member applications..." rows={3} compact />
+                ) : pendingApplications.length === 0 ? (
                   <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                     No pending applications right now.
                   </div>
@@ -1810,7 +1832,7 @@ export default function MemberListManager() {
 
                           return (
                             <section key={group.groupKey} className="rounded-md border overflow-hidden">
-                              <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -2328,8 +2350,8 @@ export default function MemberListManager() {
 
           <TabsContent value="directory" className="space-y-6">
 
-        <div className="flex items-end gap-4 flex-wrap">
-          <div className="flex-1 min-w-[200px]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="w-full min-w-0 sm:flex-1 sm:min-w-[220px]">
             <Label>Search Members</Label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -2342,7 +2364,7 @@ export default function MemberListManager() {
               />
             </div>
           </div>
-          <div className="w-64">
+          <div className="w-full sm:w-[220px]">
             <Label>Filter by Chapter</Label>
             <Select value={filterChapter} onValueChange={setFilterChapter}>
               <SelectTrigger data-testid="select-filter-chapter">
@@ -2372,7 +2394,7 @@ export default function MemberListManager() {
             <Button
               type="button"
               variant="outline"
-              className="mt-2"
+              className="mt-2 w-full sm:w-auto"
               onClick={() => setDirectoryExportDialogOpen(true)}
               disabled={isExportingDirectoryPdf}
               data-testid="button-export-admin-directory-pdf"
@@ -2385,7 +2407,7 @@ export default function MemberListManager() {
 
         {viewMode === "table" ? (
           <div className="space-y-4">
-            {isLoading ? (
+            {isDashboardDataLoading ? (
               <Card>
                 <CardContent className="p-4">
                   <LoadingState label="Loading members..." rows={3} compact />
@@ -2404,7 +2426,7 @@ export default function MemberListManager() {
 
                 return (
                   <section key={group.groupKey} className="rounded-lg border overflow-hidden">
-                    <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
                       <Button
                         type="button"
                         variant="ghost"
@@ -2566,7 +2588,7 @@ export default function MemberListManager() {
           </div>
         ) : (
           <div className="space-y-4">
-            {isLoading ? (
+            {isDashboardDataLoading ? (
               <Card>
                 <CardContent className="p-4">
                   <LoadingState label="Loading members..." rows={3} compact />

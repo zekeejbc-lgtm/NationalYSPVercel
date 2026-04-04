@@ -486,7 +486,11 @@ export default function ChaptersManager() {
   });
   const [copied, setCopied] = useState(false);
 
-  const { data: chapters = [], isLoading } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
@@ -1309,7 +1313,7 @@ export default function ChaptersManager() {
     }
   };
 
-  if (isLoading) {
+  if (chaptersLoading || !chaptersFetched) {
     return <LoadingState label="Loading chapters..." rows={3} compact />;
   }
 

@@ -529,7 +529,13 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
     }
   });
 
-  const { data: members = [], isLoading } = useQuery<MemberWithLifecycle[]>({
+  const membersQueryEnabled = !!chapterId;
+
+  const {
+    data: members = [],
+    isLoading: membersLoading,
+    isFetched: membersFetched,
+  } = useQuery<MemberWithLifecycle[]>({
     queryKey: ["/api/members", { chapterId, barangayId }],
     queryFn: async () => {
       let url = `/api/members?chapterId=${chapterId}`;
@@ -540,10 +546,14 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
       if (!res.ok) throw new Error("Failed to fetch members");
       return res.json();
     },
-    enabled: !!chapterId,
+    enabled: membersQueryEnabled,
   });
 
-  const { data: barangays = [] } = useQuery<BarangayOption[]>({
+  const {
+    data: barangays = [],
+    isLoading: barangaysLoading,
+    isFetched: barangaysFetched,
+  } = useQuery<BarangayOption[]>({
     queryKey: ["/api/chapters", chapterId, "barangays"],
     queryFn: async () => {
       if (!chapterId) return [];
@@ -551,8 +561,12 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!chapterId,
+    enabled: membersQueryEnabled,
   });
+
+  const isDashboardMembersLoading =
+    membersQueryEnabled &&
+    (membersLoading || !membersFetched || barangaysLoading || !barangaysFetched);
 
   const createMutation = useMutation({
     mutationFn: async (data: AddMemberFormData) => {
@@ -2038,7 +2052,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           </div>
           <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
             <DialogTrigger asChild>
-              <Button data-testid="button-add-chapter-member">
+              <Button className="w-full sm:w-auto" data-testid="button-add-chapter-member">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Member
               </Button>
@@ -3267,7 +3281,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
+                {isDashboardMembersLoading ? (
                   <tr>
                     <td colSpan={10} className="p-6">
                       <LoadingState label="Loading members..." rows={1} compact />
@@ -3361,7 +3375,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {isLoading ? (
+            {isDashboardMembersLoading ? (
               <Card className="sm:col-span-2">
                 <CardContent className="p-4">
                   <LoadingState label="Loading members..." rows={1} compact />
@@ -3820,7 +3834,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
 
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div className="rounded-md border px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <span className="text-sm">Registered Voter</span>
                         <Switch
                           checked={directoryEditRegisteredVoter}
@@ -3832,7 +3846,7 @@ export default function MemberDashboardPanel({ chapterId, chapterName, barangayI
                     </div>
 
                     <div className="rounded-md border px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <span className="text-sm">Active Member</span>
                         <Switch
                           checked={directoryEditIsActive}

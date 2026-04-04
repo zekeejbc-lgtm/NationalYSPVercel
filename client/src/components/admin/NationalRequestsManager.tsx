@@ -22,17 +22,37 @@ export default function NationalRequestsManager() {
   const [replyText, setReplyText] = useState("");
   const [newStatus, setNewStatus] = useState<string>("");
 
-  const { data: requests = [], isLoading } = useQuery<NationalRequest[]>({
+  const {
+    data: requests = [],
+    isLoading: requestsLoading,
+    isFetched: requestsFetched,
+  } = useQuery<NationalRequest[]>({
     queryKey: ["/api/national-requests"],
   });
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: barangayUsers = [] } = useQuery<BarangayUser[]>({
+  const {
+    data: barangayUsers = [],
+    isLoading: barangayUsersLoading,
+    isFetched: barangayUsersFetched,
+  } = useQuery<BarangayUser[]>({
     queryKey: ["/api/barangay-users"],
   });
+
+  const isDashboardDataLoading =
+    requestsLoading ||
+    !requestsFetched ||
+    chaptersLoading ||
+    !chaptersFetched ||
+    barangayUsersLoading ||
+    !barangayUsersFetched;
 
   const updateMutation = useMutation({
     mutationFn: async (data: { id: string; status: string; adminReply?: string }) => {
@@ -98,7 +118,7 @@ export default function NationalRequestsManager() {
     });
   };
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return (
       <Card>
         <CardContent className="p-6">

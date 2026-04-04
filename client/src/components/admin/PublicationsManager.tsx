@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import LoadingState from "@/components/ui/loading-state";
+import PublicationsManagerSkeleton from "@/components/admin/PublicationsManagerSkeleton";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -68,15 +68,29 @@ export default function PublicationsManager() {
   const selectedPhotoUrlRaw = selectedImageSource === "upload" ? uploadedPhotoPreviewUrl : formData.photoUrl;
   const previewUrl = getDisplayImageUrl(selectedPhotoUrlRaw.trim());
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"],
   });
 
-  const { data: publications = [], isLoading } = useQuery<Publication[]>({
+  const {
+    data: publications = [],
+    isLoading: publicationsLoading,
+    isFetched: publicationsFetched,
+  } = useQuery<Publication[]>({
     queryKey: [ADMIN_PUBLICATIONS_QUERY_KEY],
     refetchInterval: 4000,
     refetchIntervalInBackground: true,
   });
+
+  const isDashboardDataLoading =
+    chaptersLoading ||
+    !chaptersFetched ||
+    publicationsLoading ||
+    !publicationsFetched;
 
   const chapterNameById = useMemo(
     () => new Map(chapters.map((chapter) => [chapter.id, chapter.name])),
@@ -868,8 +882,8 @@ export default function PublicationsManager() {
     setSelectedPublication(publication);
   };
 
-  if (isLoading) {
-    return <LoadingState label="Loading publications..." rows={3} compact />;
+  if (isDashboardDataLoading) {
+    return <PublicationsManagerSkeleton label="Loading publications..." />;
   }
 
   return (

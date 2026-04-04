@@ -195,7 +195,11 @@ export default function Membership() {
   const [memberPhotoFile, setMemberPhotoFile] = useState<File | null>(null);
   const [memberPhotoPreviewUrl, setMemberPhotoPreviewUrl] = useState<string | null>(null);
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({ 
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters"] 
   });
 
@@ -491,6 +495,40 @@ export default function Membership() {
     setLookupReferenceInput(normalizedReferenceId);
     lookupMutation.mutate(normalizedReferenceId);
   };
+
+  const isMembershipPageLoading = chaptersLoading || !chaptersFetched;
+
+  if (isMembershipPageLoading) {
+    return (
+      <div className="min-h-screen">
+        <section className="py-16 md:py-20 bg-muted/30">
+          <div className="max-w-7xl mx-auto px-4 md:px-8 space-y-8" role="status" aria-label="Loading membership page">
+            <div className="text-center space-y-3">
+              <Skeleton className="mx-auto h-10 w-80 max-w-full" />
+              <Skeleton className="mx-auto h-4 w-[32rem] max-w-full" />
+              <Skeleton className="mx-auto h-4 w-[28rem] max-w-full" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {Array.from({ length: 2 }).map((_, index) => (
+                <Card key={`membership-skeleton-card-${index}`} aria-hidden="true">
+                  <CardHeader>
+                    <Skeleton className="h-7 w-52" />
+                    <Skeleton className="h-4 w-64" />
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {Array.from({ length: 7 }).map((__, fieldIndex) => (
+                      <Skeleton key={`membership-skeleton-field-${index}-${fieldIndex}`} className="h-10 w-full" />
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

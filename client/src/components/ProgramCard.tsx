@@ -39,7 +39,6 @@ export default function ProgramCard({ id, title, description, image, onClick }: 
       setCurrentImageSrc(PROGRAM_FALLBACK_IMAGE);
       return;
     }
-
     setShowImageFallbackText(true);
   };
 

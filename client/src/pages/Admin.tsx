@@ -3,13 +3,14 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, ShieldCheck } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
+import DashboardTabSkeleton from "@/components/dashboard/DashboardTabSkeleton";
+import PublicationsManagerSkeleton from "@/components/admin/PublicationsManagerSkeleton";
 
 const ProgramsManager = lazy(() => import("@/components/admin/ProgramsManager"));
 const ChaptersManager = lazy(() => import("@/components/admin/ChaptersManager"));
@@ -70,15 +71,26 @@ export default function Admin() {
   const [authenticated, setAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState(readInitialAdminTab);
 
-  const { data: householdSummary } = useQuery<HouseholdSummary>({
+  const {
+    data: householdSummary,
+    isLoading: householdSummaryLoading,
+    isFetched: householdSummaryFetched,
+  } = useQuery<HouseholdSummary>({
     queryKey: ["/api/household-summary"],
     enabled: authenticated,
   });
 
-  const { data: birthdaysToday } = useQuery<BirthdayData>({
+  const {
+    data: birthdaysToday,
+    isLoading: birthdaysLoading,
+    isFetched: birthdaysFetched,
+  } = useQuery<BirthdayData>({
     queryKey: ["/api/birthdays-today"],
     enabled: authenticated,
   });
+
+  const isBirthdaysPending = authenticated && (birthdaysLoading || !birthdaysFetched);
+  const isHouseholdSummaryPending = authenticated && (householdSummaryLoading || !householdSummaryFetched);
 
   useEffect(() => {
     checkAuth();
@@ -176,14 +188,6 @@ export default function Admin() {
     setActiveTab(value);
   };
 
-  const renderTabFallback = (label: string) => (
-    <Card>
-      <CardContent className="p-6">
-        <LoadingState label={label} rows={3} compact />
-      </CardContent>
-    </Card>
-  );
-
   return (
     <div className="min-h-screen bg-muted/30">
       <UniversalDashboardHeader
@@ -204,7 +208,11 @@ export default function Admin() {
           />
 
           <TabsContent value="stats">
-            {birthdaysToday && (birthdaysToday.members.length > 0 || birthdaysToday.officers.length > 0) && (
+            {isBirthdaysPending ? (
+              <div className="mb-6">
+                <DashboardTabSkeleton variant="stats" label="Loading birthdays..." embedded />
+              </div>
+            ) : birthdaysToday && (birthdaysToday.members.length > 0 || birthdaysToday.officers.length > 0) && (
               <Card className="mb-6" data-testid="card-birthdays-today">
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-lg">
@@ -230,31 +238,35 @@ export default function Admin() {
                 </CardContent>
               </Card>
             )}
-            <Suspense fallback={renderTabFallback("Loading stats...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="stats" label="Loading stats..." />}>
               <StatsManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="programs">
-            <Suspense fallback={renderTabFallback("Loading programs...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="programs" label="Loading programs..." />}>
               <ProgramsManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="publications">
-            <Suspense fallback={renderTabFallback("Loading publications...")}>
+            <Suspense fallback={<PublicationsManagerSkeleton label="Loading publications..." />}>
               <PublicationsManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="chapters">
-            <Suspense fallback={renderTabFallback("Loading chapters...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="chapters" label="Loading chapters..." />}>
               <ChaptersManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="members">
-            {householdSummary && (
+            {isHouseholdSummaryPending ? (
+              <div className="mb-6">
+                <DashboardTabSkeleton variant="members" label="Loading household summary..." embedded />
+              </div>
+            ) : householdSummary && (
               <Card className="mb-6" data-testid="card-household-summary">
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-lg">
@@ -286,43 +298,43 @@ export default function Admin() {
                 </CardContent>
               </Card>
             )}
-            <Suspense fallback={renderTabFallback("Loading members...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="members" label="Loading members..." />}>
               <MemberListManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="kpis">
-            <Suspense fallback={renderTabFallback("Loading KPIs...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="kpis" label="Loading KPIs..." />}>
               <KpiManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="volunteer">
-            <Suspense fallback={renderTabFallback("Loading volunteer opportunities...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="volunteer" label="Loading volunteer opportunities..." />}>
               <VolunteerManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="documents">
-            <Suspense fallback={renderTabFallback("Loading documents...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="documents" label="Loading documents..." />}>
               <ImportantDocumentsManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="requests">
-            <Suspense fallback={renderTabFallback("Loading funding requests...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="requests" label="Loading funding requests..." />}>
               <ChapterRequestsPanel />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="inbox">
-            <Suspense fallback={renderTabFallback("Loading inbox...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="inbox" label="Loading inbox..." />}>
               <NationalRequestsManager />
             </Suspense>
           </TabsContent>
 
           <TabsContent value="contact">
-            <Suspense fallback={renderTabFallback("Loading contact section...")}>
+            <Suspense fallback={<DashboardTabSkeleton variant="contact" label="Loading contact section..." />}>
               <ContactManager />
             </Suspense>
           </TabsContent>

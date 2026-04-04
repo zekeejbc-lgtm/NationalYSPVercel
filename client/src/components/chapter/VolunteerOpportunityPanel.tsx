@@ -217,9 +217,12 @@ export default function VolunteerOpportunityPanel({
         .filter((item) => item.length > 0)
     : [];
 
+  const opportunitiesQueryEnabled = role === "barangay" ? Boolean(barangayId) : Boolean(chapterId);
+
   const {
     data: opportunities = [],
     isLoading,
+    isFetched: opportunitiesFetched,
     isError: opportunitiesQueryFailed,
     error: opportunitiesQueryError,
   } = useQuery<VolunteerOpportunityRow[]>({
@@ -303,10 +306,14 @@ export default function VolunteerOpportunityPanel({
       });
       return fetched;
     },
-    enabled: role === "barangay" ? Boolean(barangayId) : Boolean(chapterId),
+    enabled: opportunitiesQueryEnabled,
   });
 
-  const { data: barangays = [] } = useQuery<ChapterBarangayOption[]>({
+  const {
+    data: barangays = [],
+    isLoading: barangaysLoading,
+    isFetched: barangaysFetched,
+  } = useQuery<ChapterBarangayOption[]>({
     queryKey: ["/api/chapters", chapterId, "barangays", "volunteer-panel"],
     queryFn: async () => {
       const response = await fetch(`/api/chapters/${chapterId}/barangays`, { credentials: "include" });
@@ -318,7 +325,11 @@ export default function VolunteerOpportunityPanel({
     enabled: Boolean(chapterId),
   });
 
-  const { data: chapters = [] } = useQuery<Chapter[]>({
+  const {
+    data: chapters = [],
+    isLoading: chaptersLoading,
+    isFetched: chaptersFetched,
+  } = useQuery<Chapter[]>({
     queryKey: ["/api/chapters", "volunteer-panel", "affiliations"],
     queryFn: async () => {
       const response = await fetch("/api/chapters", { credentials: "include" });
@@ -329,6 +340,12 @@ export default function VolunteerOpportunityPanel({
     },
     enabled: role === "chapter",
   });
+
+  const isOpportunitiesPending = opportunitiesQueryEnabled && (!opportunitiesFetched || isLoading);
+  const isBarangaysPending = Boolean(chapterId) && (!barangaysFetched || barangaysLoading);
+  const isChaptersPending = role === "chapter" && (!chaptersFetched || chaptersLoading);
+  const isDashboardDataLoading =
+    (isOpportunitiesPending || isBarangaysPending || isChaptersPending) && !opportunitiesQueryFailed;
 
   const barangayNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1056,9 +1073,9 @@ export default function VolunteerOpportunityPanel({
             )}
 
             <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <h4 className="text-sm font-semibold leading-tight break-words sm:text-base">{opportunity.eventName}</h4>
-                <Badge className="shrink-0">{opportunity.ageRequirement}</Badge>
+                <Badge className="max-w-full shrink-0 whitespace-normal text-center">{opportunity.ageRequirement}</Badge>
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1232,7 +1249,7 @@ export default function VolunteerOpportunityPanel({
         </Alert>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Button onClick={openCreateDialog} data-testid="button-create-opportunity">
+          <Button className="w-full sm:w-auto" onClick={openCreateDialog} data-testid="button-create-opportunity">
             <Plus className="mr-2 h-4 w-4" />
             Create Volunteer Opportunity
           </Button>
@@ -1298,7 +1315,7 @@ export default function VolunteerOpportunityPanel({
           </div>
         </div>
 
-        {!isLoading && !opportunitiesQueryFailed && (
+        {!isDashboardDataLoading && !opportunitiesQueryFailed && (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg border bg-muted/20 p-3">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">All Opportunities</p>
@@ -1320,7 +1337,7 @@ export default function VolunteerOpportunityPanel({
         )}
 
         <Dialog open={isDialogOpen} onOpenChange={(open) => (open ? setIsDialogOpen(true) : resetForm())}>
-          <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100vh-1.5rem)] max-w-3xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingOpportunity ? "Edit Volunteer Opportunity" : "Create Volunteer Opportunity"}</DialogTitle>
               <DialogDescription>
@@ -1614,11 +1631,11 @@ export default function VolunteerOpportunityPanel({
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                <Button type="submit" disabled={isPending} data-testid="button-submit-opportunity">
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                <Button type="submit" className="w-full sm:w-auto" disabled={isPending} data-testid="button-submit-opportunity">
                   {editingOpportunity ? "Save Changes" : "Create Opportunity"}
                 </Button>
-                <Button type="button" variant="outline" onClick={resetForm}>
+                <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={resetForm}>
                   Cancel
                 </Button>
               </div>
@@ -1635,8 +1652,8 @@ export default function VolunteerOpportunityPanel({
             }
           }}
         >
-          <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden p-0">
-            <DialogHeader className="sticky top-0 z-10 border-b bg-background px-6 py-4 pr-14">
+          <DialogContent className="w-[calc(100vw-1rem)] max-h-[calc(100vh-1.5rem)] max-w-3xl overflow-hidden p-0">
+            <DialogHeader className="sticky top-0 z-10 border-b bg-background px-4 py-3 pr-12 sm:px-6 sm:py-4 sm:pr-14">
               <DialogTitle>{publicPreviewOpportunity?.eventName || "Public Preview"}</DialogTitle>
               <DialogDescription>
                 Public preview mode: this mirrors how the opportunity appears on the public volunteer page.
@@ -1644,7 +1661,7 @@ export default function VolunteerOpportunityPanel({
             </DialogHeader>
 
             {publicPreviewOpportunity && (
-              <div className="max-h-[calc(85vh-108px)] space-y-4 overflow-y-auto px-6 py-4">
+              <div className="max-h-[calc(85vh-108px)] space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
                 {publicPreviewDisplayPhoto && (
                   <div className="h-64 w-full overflow-hidden rounded-lg border">
                     <img
@@ -1803,9 +1820,9 @@ export default function VolunteerOpportunityPanel({
           </DialogContent>
         </Dialog>
 
-        {isLoading && <LoadingState label="Loading volunteer opportunities..." rows={3} compact />}
+        {isDashboardDataLoading && <LoadingState label="Loading volunteer opportunities..." rows={3} compact />}
 
-        {!isLoading && role === "chapter" && !chapterId && (
+        {!isDashboardDataLoading && role === "chapter" && !chapterId && (
           <Alert variant="destructive">
             <AlertDescription>
               Chapter scope is missing from your account session. Please log out, log in again, and refresh.
@@ -1813,7 +1830,7 @@ export default function VolunteerOpportunityPanel({
           </Alert>
         )}
 
-        {!isLoading && role === "barangay" && (!chapterId || !barangayId) && (
+        {!isDashboardDataLoading && role === "barangay" && (!chapterId || !barangayId) && (
           <Alert variant="destructive">
             <AlertDescription>
               Barangay scope is missing from your account session. Please log out, log in again, and refresh.
@@ -1821,7 +1838,7 @@ export default function VolunteerOpportunityPanel({
           </Alert>
         )}
 
-        {!isLoading && opportunitiesQueryFailed && (
+        {!isDashboardDataLoading && opportunitiesQueryFailed && (
           <Alert variant="destructive">
             <AlertDescription>
               {opportunitiesQueryError instanceof Error
@@ -1831,10 +1848,10 @@ export default function VolunteerOpportunityPanel({
           </Alert>
         )}
 
-        {!isLoading && !opportunitiesQueryFailed && role === "chapter" && (
+        {!isDashboardDataLoading && !opportunitiesQueryFailed && role === "chapter" && (
           <div className="space-y-6">
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">City Chapter Opportunities</h3>
                 <Badge variant="outline">{cityChapterOpportunities.length}</Badge>
               </div>
@@ -1852,7 +1869,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Barangay Opportunities</h3>
                 <Badge variant="outline">{barangayGroupedOpportunityCount}</Badge>
               </div>
@@ -1864,8 +1881,8 @@ export default function VolunteerOpportunityPanel({
                 <div className="space-y-4">
                   {barangayOpportunityGroups.map((group) => (
                     <div key={group.key} className="space-y-3 rounded-lg border p-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-medium">{group.label}</h4>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="font-medium break-words">{group.label}</h4>
                         <Badge variant="secondary">{group.opportunities.length}</Badge>
                       </div>
                       <div className="space-y-3">
@@ -1880,7 +1897,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Affiliated Chapter Opportunities</h3>
                 <Badge variant="outline">{affiliatedCityChapterOpportunities.length}</Badge>
               </div>
@@ -1898,7 +1915,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Affiliated Barangay Opportunities</h3>
                 <Badge variant="outline">{affiliatedBarangayOpportunities.length}</Badge>
               </div>
@@ -1917,10 +1934,10 @@ export default function VolunteerOpportunityPanel({
           </div>
         )}
 
-        {!isLoading && !opportunitiesQueryFailed && role === "barangay" && (
+        {!isDashboardDataLoading && !opportunitiesQueryFailed && role === "barangay" && (
           <div className="space-y-6">
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">My Barangay Opportunities</h3>
                 <Badge variant="outline">{barangayOwnedOpportunities.length}</Badge>
               </div>
@@ -1938,7 +1955,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Connected from City Chapter</h3>
                 <Badge variant="outline">{barangayConnectedFromCity.length}</Badge>
               </div>
@@ -1956,7 +1973,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Affiliated Chapter Opportunities</h3>
                 <Badge variant="outline">{affiliatedCityChapterOpportunities.length}</Badge>
               </div>
@@ -1974,7 +1991,7 @@ export default function VolunteerOpportunityPanel({
             </section>
 
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Affiliated Barangay Opportunities</h3>
                 <Badge variant="outline">{affiliatedBarangayOpportunities.length}</Badge>
               </div>
@@ -1993,7 +2010,7 @@ export default function VolunteerOpportunityPanel({
           </div>
         )}
 
-        {!isLoading && !opportunitiesQueryFailed && filteredOpportunities.length === 0 && (
+        {!isDashboardDataLoading && !opportunitiesQueryFailed && filteredOpportunities.length === 0 && (
           <p className="py-8 text-center text-muted-foreground">
             No volunteer opportunities found for your current filters.
           </p>

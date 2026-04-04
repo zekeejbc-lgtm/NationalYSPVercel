@@ -25,7 +25,11 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
   const [draftValue, setDraftValue] = useState("");
 
-  const { data: templates = [], isLoading } = useQuery<KpiTemplate[]>({
+  const {
+    data: templates = [],
+    isLoading: templatesLoading,
+    isFetched: templatesFetched,
+  } = useQuery<KpiTemplate[]>({
     queryKey: ["/api/kpi-templates", { year: currentYear, barangayId }],
     queryFn: async () => {
       const res = await fetch(`/api/kpi-templates?year=${currentYear}&barangayScope=true&barangayId=${barangayId}&chapterId=${chapterId}`, { credentials: "include" });
@@ -35,7 +39,11 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
     enabled: !!barangayId,
   });
 
-  const { data: completions = [] } = useQuery<KpiCompletion[]>({
+  const {
+    data: completions = [],
+    isLoading: completionsLoading,
+    isFetched: completionsFetched,
+  } = useQuery<KpiCompletion[]>({
     queryKey: ["/api/barangay-kpi-completions", { year: currentYear, barangayId }],
     queryFn: async () => {
       const res = await fetch(`/api/barangay-kpi-completions?year=${currentYear}`, { credentials: "include" });
@@ -44,6 +52,12 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
     },
     enabled: !!barangayId,
   });
+
+  const isDashboardDataLoading =
+    templatesLoading ||
+    !templatesFetched ||
+    completionsLoading ||
+    !completionsFetched;
 
   const submitMutation = useMutation({
     mutationFn: async (data: { kpiTemplateId: string; numericValue?: number | null; textValue?: string | null }) => {
@@ -132,7 +146,7 @@ export default function BarangayKpiPanel({ chapterId, barangayId }: BarangayKpiP
     }
   };
 
-  if (isLoading) {
+  if (isDashboardDataLoading) {
     return (
       <Card>
         <CardContent className="py-6">
