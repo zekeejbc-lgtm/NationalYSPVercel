@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { checkAuthSession } from "@/lib/authSession";
-import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, BarChart3, ShieldCheck } from "lucide-react";
+import { Users, Home, Cake, FileText, Newspaper, Building2, Target, HandHeart, ClipboardList, Send, MessageSquare, Phone, Mail, BarChart3, ShieldCheck } from "lucide-react";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
@@ -25,11 +25,14 @@ const MemberListManager = lazy(() => import("@/components/admin/MemberListManage
 const ImportantDocumentsManager = lazy(() => import("@/components/admin/ImportantDocumentsManager"));
 const ChapterRequestsPanel = lazy(() => import("@/components/admin/ChapterRequestsPanel"));
 const NationalRequestsManager = lazy(() => import("@/components/admin/NationalRequestsManager"));
+const NewsletterManager = lazy(() => import("@/components/admin/NewsletterManager"));
+const HomeEditorManager = lazy(() => import("@/components/admin/HomeEditorManager"));
 
 const ADMIN_ACTIVE_TAB_STORAGE_KEY = "ysp:admin-active-tab:v1";
 const ADMIN_TAB_FALLBACK = "stats";
 const VALID_ADMIN_TABS = new Set([
   "stats",
+  "home-editor",
   "programs",
   "publications",
   "chapters",
@@ -40,6 +43,7 @@ const VALID_ADMIN_TABS = new Set([
   "requests",
   "inbox",
   "contact",
+  "newsletter",
 ]);
 
 function readInitialAdminTab() {
@@ -206,6 +210,7 @@ export default function Admin() {
 
   const dashboardTabs: AdaptiveDashboardTab[] = [
     { value: "stats", label: "Stats", icon: BarChart3, group: "Insights", dataTestId: "tab-stats", mobilePriority: true, desktopPriority: true },
+    { value: "home-editor", label: "Home Editor", icon: Home, group: "Content", dataTestId: "tab-home-editor", mobilePriority: true, desktopPriority: true },
     { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
     { value: "publications", label: "Publications", icon: Newspaper, group: "Content", dataTestId: "tab-publications", desktopPriority: true },
     { value: "chapters", label: "Chapters", icon: Building2, group: "People", dataTestId: "tab-chapters", desktopPriority: true },
@@ -216,6 +221,7 @@ export default function Admin() {
     { value: "requests", label: "Funding", icon: Send, group: "Operations", dataTestId: "tab-requests" },
     { value: "inbox", label: "National Inbox", icon: MessageSquare, group: "Communication", dataTestId: "tab-inbox", mobilePriority: true, desktopPriority: true },
     { value: "contact", label: "Contact", icon: Phone, group: "Communication", dataTestId: "tab-contact" },
+    { value: "newsletter", label: "Newsletter", icon: Mail, group: "Communication", dataTestId: "tab-newsletter" },
     { value: "admin-accounts-action", label: "Admin Accounts", icon: ShieldCheck, group: "Account", dataTestId: "tab-admin-accounts" },
   ];
 
@@ -280,6 +286,12 @@ export default function Admin() {
             )}
             <Suspense fallback={<DashboardTabSkeleton variant="stats" label="Loading stats..." />}>
               <StatsManager />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="home-editor">
+            <Suspense fallback={<DashboardTabSkeleton variant="stats" label="Loading home editor..." />}>
+              <HomeEditorManager />
             </Suspense>
           </TabsContent>
 
@@ -376,6 +388,12 @@ export default function Admin() {
           <TabsContent value="contact">
             <Suspense fallback={<DashboardTabSkeleton variant="contact" label="Loading contact section..." />}>
               <ContactManager />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="newsletter">
+            <Suspense fallback={<DashboardTabSkeleton variant="contact" label="Loading newsletter section..." />}>
+              <NewsletterManager />
             </Suspense>
           </TabsContent>
         </Tabs>

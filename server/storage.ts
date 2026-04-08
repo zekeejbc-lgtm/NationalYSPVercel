@@ -13,7 +13,10 @@ import {
   type InsertVolunteerOpportunity,
   type Stats,
   type InsertStats,
+  type HomeContent,
+  type InsertHomeContent,
   type ContactInfo,
+  type ContactSocialLink,
   type InsertContactInfo,
   type Publication,
   type InsertPublication,
@@ -48,6 +51,7 @@ import {
   chapters,
   volunteerOpportunities,
   stats,
+  homeContent,
   contactInfo,
   publications,
   projectReports,
@@ -70,6 +74,184 @@ import bcrypt from "bcryptjs";
 type DateScopedListOptions = {
   startDate?: Date | null;
 };
+
+const DEFAULT_CONTACT_EMAIL = "phyouthservice@gmail.com";
+const DEFAULT_CONTACT_PHONE = "09177798413";
+const DEFAULT_CONTACT_FACEBOOK = "https://www.facebook.com/YOUTHSERVICEPHILIPPINES";
+const DEFAULT_HOME_CONTENT = {
+  aboutUs:
+    "Youth Service Philippines is a youth-centered movement that mobilizes volunteers, chapter leaders, and partners to drive meaningful service in local communities.",
+  mission:
+    "To equip and inspire young Filipinos to lead sustainable, community-first programs through collaboration, service, and grassroots action.",
+  vision:
+    "A Philippines where every young person is empowered to become a catalyst of positive change in their chapter, barangay, and beyond.",
+  advocacyPillars: [
+    "Youth Leadership and Civic Participation",
+    "Community Service and Volunteerism",
+    "Inclusive Education and Skills Development",
+    "Disaster Preparedness and Environmental Stewardship",
+  ],
+} as const;
+
+function normalizeExternalUrl(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+
+  return `https://${normalized}`;
+}
+
+function isFacebookUrl(value: string) {
+  try {
+    const hostname = new URL(normalizeExternalUrl(value)).hostname.toLowerCase();
+    return hostname.includes("facebook.com") || hostname === "fb.com" || hostname.endsWith(".fb.com");
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeContactSocials(rawSocials: unknown): ContactSocialLink[] {
+  if (!Array.isArray(rawSocials)) {
+    return [];
+  }
+
+  const dedupe = new Set<string>();
+  const socials: ContactSocialLink[] = [];
+
+  for (const entry of rawSocials) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const rawUrl = typeof (entry as { url?: unknown }).url === "string" ? (entry as { url: string }).url : "";
+    const normalizedUrl = normalizeExternalUrl(rawUrl);
+
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const dedupeKey = normalizedUrl.toLowerCase();
+    if (dedupe.has(dedupeKey)) {
+      continue;
+    }
+
+    dedupe.add(dedupeKey);
+
+    const rawLabel = typeof (entry as { label?: unknown }).label === "string" ? (entry as { label: string }).label : "";
+    const normalizedLabel = rawLabel.trim();
+
+    socials.push({
+      url: normalizedUrl,
+      ...(normalizedLabel ? { label: normalizedLabel } : {}),
+    });
+  }
+
+  return socials;
+}
+
+function getMainFacebookUrl(rawFacebook: string, socials: ContactSocialLink[]) {
+  const normalizedFacebook = normalizeExternalUrl(rawFacebook || "");
+  if (normalizedFacebook && isFacebookUrl(normalizedFacebook)) {
+    return normalizedFacebook;
+  }
+
+  const firstFacebookSocial = socials.find((social) => isFacebookUrl(social.url));
+  return firstFacebookSocial?.url || DEFAULT_CONTACT_FACEBOOK;
+}
+
+function normalizeContactInfoPayload(info: InsertContactInfo): InsertContactInfo {
+  const socials = sanitizeContactSocials(info.socials);
+  const mainFacebook = getMainFacebookUrl(info.facebook, socials);
+
+  return {
+    ...info,
+    email: (info.email || "").trim() || DEFAULT_CONTACT_EMAIL,
+    phone: (info.phone || "").trim() || DEFAULT_CONTACT_PHONE,
+    facebook: mainFacebook,
+    socials,
+    hqOfficeName: info.hqOfficeName?.trim() || null,
+    hqAddress: info.hqAddress?.trim() || null,
+    hqMapUrl: info.hqMapUrl ? normalizeExternalUrl(info.hqMapUrl) : null,
+  };
+}
+
+function normalizeContactInfoRecord(record: ContactInfo): ContactInfo {
+  const socials = sanitizeContactSocials(record.socials);
+
+  return {
+    ...record,
+    email: record.email?.trim() || DEFAULT_CONTACT_EMAIL,
+    phone: record.phone?.trim() || DEFAULT_CONTACT_PHONE,
+    facebook: getMainFacebookUrl(record.facebook, socials),
+    socials,
+    hqOfficeName: record.hqOfficeName?.trim() || null,
+    hqAddress: record.hqAddress?.trim() || null,
+    hqMapUrl: record.hqMapUrl ? normalizeExternalUrl(record.hqMapUrl) : null,
+  };
+}
+
+function sanitizeAdvocacyPillars(rawPillars: unknown): string[] {
+  if (!Array.isArray(rawPillars)) {
+    return [...DEFAULT_HOME_CONTENT.advocacyPillars];
+  }
+
+  const dedupe = new Set<string>();
+  const sanitized: string[] = [];
+
+  for (const pillar of rawPillars) {
+    if (typeof pillar !== "string") {
+      continue;
+    }
+
+    const normalized = pillar.trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const dedupeKey = normalized.toLowerCase();
+    if (dedupe.has(dedupeKey)) {
+      continue;
+    }
+
+    dedupe.add(dedupeKey);
+    sanitized.push(normalized);
+  }
+
+  if (sanitized.length === 0) {
+    return [...DEFAULT_HOME_CONTENT.advocacyPillars];
+  }
+
+  return sanitized;
+}
+
+function normalizeHomeContentPayload(payload: InsertHomeContent): InsertHomeContent {
+  const aboutUs = payload.aboutUs?.trim() || DEFAULT_HOME_CONTENT.aboutUs;
+  const mission = payload.mission?.trim() || DEFAULT_HOME_CONTENT.mission;
+  const vision = payload.vision?.trim() || DEFAULT_HOME_CONTENT.vision;
+  const advocacyPillars = sanitizeAdvocacyPillars(payload.advocacyPillars);
+
+  return {
+    aboutUs,
+    mission,
+    vision,
+    advocacyPillars,
+  };
+}
+
+function normalizeHomeContentRecord(record: HomeContent): HomeContent {
+  return {
+    ...record,
+    aboutUs: record.aboutUs?.trim() || DEFAULT_HOME_CONTENT.aboutUs,
+    mission: record.mission?.trim() || DEFAULT_HOME_CONTENT.mission,
+    vision: record.vision?.trim() || DEFAULT_HOME_CONTENT.vision,
+    advocacyPillars: sanitizeAdvocacyPillars(record.advocacyPillars),
+  };
+}
 
 export type ImportantDocumentAcknowledgement = {
   documentId: string;
@@ -147,6 +329,9 @@ export interface IStorage {
 
   getStats(): Promise<Stats>;
   updateStats(stats: InsertStats): Promise<Stats>;
+
+  getHomeContent(): Promise<HomeContent>;
+  updateHomeContent(content: InsertHomeContent): Promise<HomeContent>;
 
   getContactInfo(): Promise<ContactInfo>;
   updateContactInfo(info: InsertContactInfo): Promise<ContactInfo>;
@@ -501,33 +686,74 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getHomeContent(): Promise<HomeContent> {
+    const result = await db.select().from(homeContent).limit(1);
+    if (result.length === 0) {
+      const inserted = await db.insert(homeContent).values({
+        aboutUs: DEFAULT_HOME_CONTENT.aboutUs,
+        mission: DEFAULT_HOME_CONTENT.mission,
+        vision: DEFAULT_HOME_CONTENT.vision,
+        advocacyPillars: [...DEFAULT_HOME_CONTENT.advocacyPillars],
+      }).returning();
+
+      return normalizeHomeContentRecord(inserted[0]);
+    }
+
+    return normalizeHomeContentRecord(result[0]);
+  }
+
+  async updateHomeContent(contentData: InsertHomeContent): Promise<HomeContent> {
+    const normalizedPayload = normalizeHomeContentPayload(contentData);
+    const existing = await db.select().from(homeContent).limit(1);
+    if (existing.length === 0) {
+      const inserted = await db.insert(homeContent).values({
+        ...normalizedPayload,
+        updatedAt: new Date(),
+      }).returning();
+
+      return normalizeHomeContentRecord(inserted[0]);
+    }
+
+    const updated = await db.update(homeContent).set({
+      ...normalizedPayload,
+      updatedAt: new Date(),
+    }).where(eq(homeContent.id, existing[0].id)).returning();
+
+    return normalizeHomeContentRecord(updated[0]);
+  }
+
   async getContactInfo(): Promise<ContactInfo> {
     const result = await db.select().from(contactInfo).limit(1);
     if (result.length === 0) {
       const newContact = await db.insert(contactInfo).values({
-        email: "phyouthservice@gmail.com",
-        phone: "09177798413",
-        facebook: "https://www.facebook.com/YOUTHSERVICEPHILIPPINES"
+        email: DEFAULT_CONTACT_EMAIL,
+        phone: DEFAULT_CONTACT_PHONE,
+        facebook: DEFAULT_CONTACT_FACEBOOK,
+        socials: [{ url: DEFAULT_CONTACT_FACEBOOK, label: "Facebook" }],
+        hqOfficeName: null,
+        hqAddress: null,
+        hqMapUrl: null,
       }).returning();
-      return newContact[0];
+      return normalizeContactInfoRecord(newContact[0]);
     }
-    return result[0];
+    return normalizeContactInfoRecord(result[0]);
   }
 
   async updateContactInfo(info: InsertContactInfo): Promise<ContactInfo> {
+    const normalizedPayload = normalizeContactInfoPayload(info);
     const existing = await db.select().from(contactInfo).limit(1);
     if (existing.length === 0) {
       const result = await db.insert(contactInfo).values({
-        ...info,
+        ...normalizedPayload,
         updatedAt: new Date()
       }).returning();
-      return result[0];
+      return normalizeContactInfoRecord(result[0]);
     }
     const result = await db.update(contactInfo).set({
-      ...info,
+      ...normalizedPayload,
       updatedAt: new Date()
     }).where(eq(contactInfo.id, existing[0].id)).returning();
-    return result[0];
+    return normalizeContactInfoRecord(result[0]);
   }
 
   async getPublications(): Promise<Publication[]> {
@@ -1365,6 +1591,7 @@ export class DbStorage implements IStorage {
       });
     }
     await this.getStats();
+    await this.getHomeContent();
     await this.getContactInfo();
     
     const existingDocs = await this.getImportantDocuments();

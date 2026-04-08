@@ -328,8 +328,201 @@ function getRelayedImageUrl(imageUrl: string): string {
   relayUrl.searchParams.set("url", imageUrl);
   return relayUrl.toString();
 }
+const LINKED_IMAGE_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+]);
+const DEFAULT_LINKED_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+const LINKED_IMAGE_FETCH_HEADERS = {
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+  accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8,text/html;q=0.7",
+  referer: "https://www.facebook.com/",
+};
+
+function getLinkedImageMaxBytes() {
+  const parsed = Number.parseInt(process.env.LINKED_IMAGE_MAX_BYTES || `${DEFAULT_LINKED_IMAGE_MAX_BYTES}`, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    return DEFAULT_LINKED_IMAGE_MAX_BYTES;
+  }
+
+  return parsed;
+}
+
+function extractLinkCandidates(rawText: string): string[] {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const matches = trimmed.match(/https?:\/\/[^\s]+/gi);
+  const candidates = (matches && matches.length > 0 ? matches : [trimmed])
+    .map((candidate) => candidate.trim().replace(/[),.;]+$/g, ""))
+    .filter(Boolean);
+
+  return Array.from(new Set(candidates));
+}
+
+function isPrivateIpv4Host(hostname: string) {
+  const segments = hostname.split(".").map((segment) => Number.parseInt(segment, 10));
+  if (segments.length !== 4 || segments.some((segment) => Number.isNaN(segment) || segment < 0 || segment > 255)) {
+    return false;
+  }
+
+  const [first, second] = segments;
+
+  return (
+    first === 10 ||
+    first === 127 ||
+    first === 0 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+function isBlockedLinkedImageHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")) {
+    return true;
+  }
+
+  if (normalized === "::1") {
+    return true;
+  }
+
+  if (normalized.includes(":")) {
+    return normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd");
+  }
+
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(normalized)) {
+    return isPrivateIpv4Host(normalized);
+  }
+
+  return false;
+}
+
+function canFetchLinkedImageUrl(rawUrl: string) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+
+    return !isBlockedLinkedImageHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function downloadLinkedImageToUploads(rawLink: string): Promise<string | null> {
+  const candidates = extractLinkCandidates(rawLink);
+  const maxBytes = getLinkedImageMaxBytes();
+
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeDriveUrl(candidate);
+    if (normalizedCandidate.startsWith("/uploads/")) {
+      return normalizedCandidate;
+    }
+
+    if (!canFetchLinkedImageUrl(normalizedCandidate)) {
+      continue;
+    }
+
+    try {
+      const response = await fetchWithImageProxyTimeout(normalizedCandidate, {
+        redirect: "follow",
+        headers: LINKED_IMAGE_FETCH_HEADERS,
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const responseContentType = (response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      let imageBuffer: Buffer | null = null;
+      let imageContentType = responseContentType;
+      let resolvedImageUrl = response.url || normalizedCandidate;
+
+      if (responseContentType.startsWith("image/")) {
+        imageBuffer = Buffer.from(await response.arrayBuffer());
+      } else if (responseContentType.includes("text/html")) {
+        const html = await response.text();
+        const ogImage = extractOgImageFromHtml(html);
+        if (!ogImage || !canFetchLinkedImageUrl(ogImage)) {
+          continue;
+        }
+
+        const imageResponse = await fetchWithImageProxyTimeout(ogImage, {
+          redirect: "follow",
+          headers: LINKED_IMAGE_FETCH_HEADERS,
+        });
+        if (!imageResponse.ok) {
+          continue;
+        }
+
+        imageContentType = (imageResponse.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+        if (!imageContentType.startsWith("image/")) {
+          continue;
+        }
+
+        resolvedImageUrl = imageResponse.url || ogImage;
+        imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+      } else {
+        continue;
+      }
+
+      if (!imageBuffer || imageBuffer.length === 0 || imageBuffer.length > maxBytes) {
+        continue;
+      }
+
+      if (!LINKED_IMAGE_ALLOWED_MIME_TYPES.has(imageContentType)) {
+        continue;
+      }
+
+      const parsedResolvedImageUrl = new URL(resolvedImageUrl);
+      const originalFileName = path.basename(parsedResolvedImageUrl.pathname) || "linked-image";
+      const persistedUrl = await persistLinkedImageBinary(imageBuffer, imageContentType, originalFileName);
+      if (persistedUrl) {
+        return persistedUrl;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+async function normalizeAndPersistLinkedImage(rawValue: string): Promise<string | null> {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalized = normalizeDriveUrl(trimmed);
+  if (normalized.startsWith("/uploads/")) {
+    return normalized;
+  }
+
+  const persisted = await downloadLinkedImageToUploads(normalized);
+  if (persisted) {
+    return persisted;
+  }
+
+  return normalized;
+}
 
 const CHAPTER_LOGO_BUCKET = process.env.SUPABASE_CHAPTER_LOGO_BUCKET || "chapter-logos";
+const PUBLICATION_IMAGE_BUCKET = process.env.SUPABASE_PUBLICATION_BUCKET || "publication-images";
 const CHAPTER_LOGO_MAX_BYTES = 5 * 1024 * 1024;
 const CHAPTER_LOGO_ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -340,6 +533,7 @@ const CHAPTER_LOGO_ALLOWED_MIME_TYPES = new Set([
 
 let supabaseStorageClient: ReturnType<typeof createClient> | null = null;
 let chapterLogoBucketEnsured = false;
+let publicationImageBucketEnsured = false;
 
 function getSupabaseStorageClient() {
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -400,6 +594,88 @@ async function ensureChapterLogoBucket(client: ReturnType<typeof createClient>) 
   }
 
   chapterLogoBucketEnsured = true;
+}
+
+async function ensurePublicationImageBucket(client: ReturnType<typeof createClient>) {
+  if (publicationImageBucketEnsured) {
+    return;
+  }
+
+  const bucketOptions = {
+    public: true,
+    fileSizeLimit: getLinkedImageMaxBytes(),
+    allowedMimeTypes: Array.from(LINKED_IMAGE_ALLOWED_MIME_TYPES),
+  };
+
+  const { error: createBucketError } = await client.storage.createBucket(PUBLICATION_IMAGE_BUCKET, bucketOptions);
+  if (createBucketError && !isStorageAlreadyExistsError(createBucketError)) {
+    throw createBucketError;
+  }
+
+  if (createBucketError && isStorageAlreadyExistsError(createBucketError)) {
+    const { data: existingBucket, error: getBucketError } = await client.storage.getBucket(PUBLICATION_IMAGE_BUCKET);
+    if (getBucketError) {
+      throw getBucketError;
+    }
+
+    if (existingBucket && !existingBucket.public) {
+      const { error: updateBucketError } = await client.storage.updateBucket(PUBLICATION_IMAGE_BUCKET, bucketOptions);
+      if (updateBucketError) {
+        throw updateBucketError;
+      }
+    }
+  }
+
+  publicationImageBucketEnsured = true;
+}
+
+async function persistLinkedImageBinary(
+  imageBuffer: Buffer,
+  imageContentType: string,
+  originalFileName: string,
+): Promise<string | null> {
+  const fileExtension = resolveImageExtension(originalFileName, imageContentType);
+  const baseFileName = `linked-${Date.now()}-${Math.round(Math.random() * 1e9)}${fileExtension}`;
+  const storageObjectPath = ["publications", "linked", baseFileName].join("/");
+
+  const supabaseClient = getSupabaseStorageClient();
+  if (supabaseClient) {
+    try {
+      await ensurePublicationImageBucket(supabaseClient);
+
+      const { error: uploadError } = await supabaseClient.storage
+        .from(PUBLICATION_IMAGE_BUCKET)
+        .upload(storageObjectPath, imageBuffer, {
+          contentType: imageContentType,
+          cacheControl: "31536000",
+          upsert: false,
+        });
+
+      if (!uploadError) {
+        const { data: publicUrlData } = supabaseClient.storage
+          .from(PUBLICATION_IMAGE_BUCKET)
+          .getPublicUrl(storageObjectPath);
+        if (publicUrlData?.publicUrl) {
+          return publicUrlData.publicUrl;
+        }
+      } else {
+        console.error("[linked-image] supabase upload failed", {
+          message: uploadError.message,
+          bucket: PUBLICATION_IMAGE_BUCKET,
+        });
+      }
+    } catch (error: any) {
+      console.error("[linked-image] supabase persistence error", {
+        message: error?.message,
+        bucket: PUBLICATION_IMAGE_BUCKET,
+      });
+    }
+  }
+
+  const uploadDir = ensureUploadsDir();
+  const targetPath = path.join(uploadDir, baseFileName);
+  await fs.promises.writeFile(targetPath, imageBuffer);
+  return `/uploads/${baseFileName}`;
 }
 
 function sanitizePathSegment(value: string) {
@@ -4929,8 +5205,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : undefined;
 
       if (incomingPhotoUrl !== undefined) {
-        const trimmed = incomingPhotoUrl.trim();
-        payload.photoUrl = trimmed ? normalizeDriveUrl(trimmed) : null;
+        payload.photoUrl = await normalizeAndPersistLinkedImage(incomingPhotoUrl);
+      } else if (typeof payload.facebookLink === "string") {
+        const derivedPhotoUrl = await downloadLinkedImageToUploads(payload.facebookLink);
+        if (derivedPhotoUrl) {
+          payload.photoUrl = derivedPhotoUrl;
+        }
       }
 
       delete payload.imageUrl;
@@ -4977,8 +5257,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : undefined;
 
       if (incomingPhotoUrl !== undefined) {
-        const trimmed = incomingPhotoUrl.trim();
-        payload.photoUrl = trimmed ? normalizeDriveUrl(trimmed) : null;
+        payload.photoUrl = await normalizeAndPersistLinkedImage(incomingPhotoUrl);
+      } else if (typeof payload.facebookLink === "string") {
+        const derivedPhotoUrl = await downloadLinkedImageToUploads(payload.facebookLink);
+        if (derivedPhotoUrl) {
+          payload.photoUrl = derivedPhotoUrl;
+        }
       }
 
       delete payload.imageUrl;
@@ -5202,10 +5486,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/project-reports", requireChapterAuth, async (req, res) => {
     try {
       const chapterId = req.session.chapterId!;
-      const validated = insertProjectReportSchema.parse({
+      const payload: Record<string, unknown> = {
         ...req.body,
-        chapterId
-      });
+        chapterId,
+      };
+
+      const hasIncomingPhotoUrl = typeof payload.photoUrl === "string";
+      if (hasIncomingPhotoUrl) {
+        payload.photoUrl = await normalizeAndPersistLinkedImage(payload.photoUrl as string);
+      }
+
+      if (!hasIncomingPhotoUrl && typeof payload.facebookPostLink === "string") {
+        const derivedPhotoUrl = await downloadLinkedImageToUploads(payload.facebookPostLink);
+        if (derivedPhotoUrl) {
+          payload.photoUrl = derivedPhotoUrl;
+        }
+      }
+
+      const validated = insertProjectReportSchema.parse(payload);
       
       const report = await storage.createProjectReport(validated);
 
@@ -5251,7 +5549,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     try {
-      const validated = insertProjectReportSchema.partial().parse(req.body) as Record<string, unknown>;
+      const payload: Record<string, unknown> = { ...req.body };
+
+      const hasIncomingPhotoUrl = typeof payload.photoUrl === "string";
+      if (hasIncomingPhotoUrl) {
+        payload.photoUrl = await normalizeAndPersistLinkedImage(payload.photoUrl as string);
+      }
+
+      if (!hasIncomingPhotoUrl && typeof payload.facebookPostLink === "string") {
+        const derivedPhotoUrl = await downloadLinkedImageToUploads(payload.facebookPostLink);
+        if (derivedPhotoUrl) {
+          payload.photoUrl = derivedPhotoUrl;
+        }
+      }
+
+      const validated = insertProjectReportSchema.partial().parse(payload) as Record<string, unknown>;
 
       if (req.session.role !== "admin") {
         delete validated.chapterId;
@@ -5495,7 +5807,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const canSessionManageMember = (
     req: Request,
-    member: { chapterId: string | null; barangayId: string | null },
+    member: {
+      chapterId?: string | null;
+      barangayId?: string | null;
+    },
   ) => {
     if (req.session.role === "admin") {
       return true;

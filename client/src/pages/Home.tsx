@@ -7,14 +7,29 @@ import ProgramDetailsDialog from "@/components/ProgramDetailsDialog";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import type { Program, Chapter, Stats } from "@shared/schema";
+import type { Program, Chapter, HomeContent, Stats } from "@shared/schema";
 import { Link } from "wouter";
 import { createClient } from "@/lib/client";
 import { queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
-import { Facebook, Globe, Instagram, Mail, MapPin, Phone, User, X } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Eye, Facebook, Globe, Instagram, Mail, MapPin, Megaphone, Phone, Target, User, X } from "lucide-react";
 
 const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
+const DEFAULT_HOME_CONTENT = {
+  aboutUs:
+    "Youth Service Philippines is a youth-centered movement that mobilizes volunteers, chapter leaders, and partners to drive meaningful service in local communities.",
+  mission:
+    "To equip and inspire young Filipinos to lead sustainable, community-first programs through collaboration, service, and grassroots action.",
+  vision:
+    "A Philippines where every young person is empowered to become a catalyst of positive change in their chapter, barangay, and beyond.",
+  advocacyPillars: [
+    "Youth Leadership and Civic Participation",
+    "Community Service and Volunteerism",
+    "Inclusive Education and Skills Development",
+    "Disaster Preparedness and Environmental Stewardship",
+  ],
+} as const;
 
 interface RankedShowcaseChapter extends Chapter {
   rank: number;
@@ -114,6 +129,7 @@ export default function Home() {
 
     const invalidateHomeQueries = () => {
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/home-content"] });
       queryClient.invalidateQueries({ queryKey: ["/api/programs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/chapters/showcase-ranking"] });
     };
@@ -124,6 +140,7 @@ export default function Home() {
       const channel = supabase
         .channel(`home-hybrid-${Date.now()}-${Math.random().toString(36).slice(2)}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "stats" }, invalidateHomeQueries)
+        .on("postgres_changes", { event: "*", schema: "public", table: "home_content" }, invalidateHomeQueries)
         .on("postgres_changes", { event: "*", schema: "public", table: "programs" }, invalidateHomeQueries)
         .on("postgres_changes", { event: "*", schema: "public", table: "chapters" }, invalidateHomeQueries)
         .on("postgres_changes", { event: "*", schema: "public", table: "members" }, invalidateHomeQueries)
@@ -174,6 +191,12 @@ export default function Home() {
     isFetched: programsFetched,
   } = useQuery<Program[]>({
     queryKey: ["/api/programs"],
+    refetchInterval: usePollingFallback ? 15000 : false,
+    refetchIntervalInBackground: usePollingFallback,
+  });
+
+  const { data: homeContent } = useQuery<HomeContent>({
+    queryKey: ["/api/home-content"],
     refetchInterval: usePollingFallback ? 15000 : false,
     refetchIntervalInBackground: usePollingFallback,
   });
@@ -259,6 +282,20 @@ export default function Home() {
     chapterShowcaseLoading ||
     !chapterShowcaseFetched;
 
+  const aboutUsCopy = homeContent?.aboutUs?.trim() || DEFAULT_HOME_CONTENT.aboutUs;
+  const missionCopy = homeContent?.mission?.trim() || DEFAULT_HOME_CONTENT.mission;
+  const visionCopy = homeContent?.vision?.trim() || DEFAULT_HOME_CONTENT.vision;
+  const advocacyPillars =
+    Array.isArray(homeContent?.advocacyPillars) && homeContent.advocacyPillars.length > 0
+      ? homeContent.advocacyPillars
+      : DEFAULT_HOME_CONTENT.advocacyPillars;
+
+  const homeInformationCards = [
+    { title: "About Us", icon: User, description: aboutUsCopy, testId: "card-home-about-us" },
+    { title: "Our Mission", icon: Target, description: missionCopy, testId: "card-home-our-mission" },
+    { title: "Our Vision", icon: Eye, description: visionCopy, testId: "card-home-our-vision" },
+  ] as const;
+
   return (
     <div className="min-h-screen flex flex-col">
       <HeroSection />
@@ -284,6 +321,51 @@ export default function Home() {
           members={stats?.members || 5000}
         />
       )}
+
+      <section className="py-16 md:py-20">
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">Who We Are</h2>
+            <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
+              Learn what guides Youth Service Philippines through our identity, purpose, and long-term direction.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+            {homeInformationCards.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <Card
+                  key={item.title}
+                  className="h-full border-primary/15 bg-gradient-to-b from-background to-muted/20 p-6"
+                  data-testid={item.testId}
+                >
+                  <Icon className="h-8 w-8 text-primary mb-4" aria-hidden="true" />
+                  <h3 className="text-xl font-semibold mb-3">{item.title}</h3>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+                </Card>
+              );
+            })}
+
+            <Card
+              className="h-full border-primary/15 bg-gradient-to-b from-background to-muted/20 p-6"
+              data-testid="card-home-our-advocacy-pillars"
+            >
+              <Megaphone className="h-8 w-8 text-primary mb-4" aria-hidden="true" />
+              <h3 className="text-xl font-semibold mb-3">Our Advocacy Pillars</h3>
+              <ul className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+                {advocacyPillars.map((pillar) => (
+                  <li key={pillar} className="flex items-start gap-2">
+                    <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary/80" aria-hidden="true" />
+                    <span>{pillar}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </div>
+        </div>
+      </section>
 
       <section className="py-16 md:py-20">
         <div className="max-w-7xl mx-auto px-4 md:px-8">

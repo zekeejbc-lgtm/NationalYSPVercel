@@ -3,6 +3,13 @@ import { pgTable, text, varchar, integer, timestamp, boolean, jsonb } from "driz
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const contactSocialLinkSchema = z.object({
+  url: z.string().trim().min(1).max(2048),
+  label: z.string().trim().min(1).max(80).optional(),
+});
+
+export type ContactSocialLink = z.infer<typeof contactSocialLinkSchema>;
+
 export const adminUsers = pgTable("admin_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -226,11 +233,24 @@ export const stats = pgTable("stats", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const homeContent = pgTable("home_content", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  aboutUs: text("about_us").notNull(),
+  mission: text("mission").notNull(),
+  vision: text("vision").notNull(),
+  advocacyPillars: jsonb("advocacy_pillars").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const contactInfo = pgTable("contact_info", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull(),
   phone: text("phone").notNull(),
   facebook: text("facebook").notNull(),
+  socials: jsonb("socials").$type<ContactSocialLink[]>().notNull().default(sql`'[]'::jsonb`),
+  hqOfficeName: text("hq_office_name"),
+  hqAddress: text("hq_address"),
+  hqMapUrl: text("hq_map_url"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
@@ -352,9 +372,44 @@ export const insertStatsSchema = createInsertSchema(stats).omit({
   updatedAt: true,
 });
 
+export const insertHomeContentSchema = createInsertSchema(homeContent).omit({
+  id: true,
+  updatedAt: true,
+}).extend({
+  aboutUs: z.string().trim().min(1, "About Us is required").max(5000),
+  mission: z.string().trim().min(1, "Mission is required").max(5000),
+  vision: z.string().trim().min(1, "Vision is required").max(5000),
+  advocacyPillars: z
+    .array(z.string().trim().min(1, "Pillar text is required").max(200))
+    .min(1, "At least one advocacy pillar is required")
+    .max(12),
+});
+
+function toNullableTrimmedText(maxLength: number) {
+  return z.preprocess(
+    (val) => {
+      if (typeof val !== "string") {
+        return val;
+      }
+
+      const trimmed = val.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    },
+    z.string().max(maxLength).nullable().optional(),
+  );
+}
+
 export const insertContactInfoSchema = createInsertSchema(contactInfo).omit({
   id: true,
   updatedAt: true,
+}).extend({
+  email: z.string().trim().min(1, "Email is required").email("Please provide a valid email address"),
+  phone: z.string().trim().min(1, "Phone number is required").max(80),
+  facebook: z.string().trim().min(1, "Main Facebook URL is required").max(2048),
+  socials: z.array(contactSocialLinkSchema).max(20).default([]),
+  hqOfficeName: toNullableTrimmedText(120),
+  hqAddress: toNullableTrimmedText(240),
+  hqMapUrl: toNullableTrimmedText(2048),
 });
 
 export const insertMemberSchema = createInsertSchema(members).omit({
@@ -517,6 +572,9 @@ export type InsertVolunteerOpportunity = z.infer<typeof insertVolunteerOpportuni
 
 export type Stats = typeof stats.$inferSelect;
 export type InsertStats = z.infer<typeof insertStatsSchema>;
+
+export type HomeContent = typeof homeContent.$inferSelect;
+export type InsertHomeContent = z.infer<typeof insertHomeContentSchema>;
 
 export type ContactInfo = typeof contactInfo.$inferSelect;
 export type InsertContactInfo = z.infer<typeof insertContactInfoSchema>;

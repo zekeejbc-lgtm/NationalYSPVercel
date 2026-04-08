@@ -1,16 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
-import { useToast } from "@/hooks/use-toast";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
 import { Cell, Pie, PieChart } from "recharts";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import type { BarangayUser, Chapter, ChapterRequest, Member, NationalRequest, Program, Stats, VolunteerOpportunity } from "@shared/schema";
+import type { BarangayUser, Chapter, ChapterRequest, Member, NationalRequest, Program, VolunteerOpportunity } from "@shared/schema";
 
 type PublicationAnalyticsResponse = {
   summary?: {
@@ -48,18 +42,6 @@ const OPERATIONS_STRUCTURE_COLORS = ["#6366f1", "#14b8a6", "#f59e0b", "#22c55e"]
 const OPERATIONS_QUEUE_COLORS = ["#3b82f6", "#f97316"];
 
 export default function StatsManager() {
-  const { toast } = useToast();
-  const [isHomepageStatsModalOpen, setIsHomepageStatsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({
-    projects: 0,
-    chapters: 0,
-    members: 0,
-  });
-
-  const { data: stats, isLoading: isHomepageStatsLoading } = useQuery<Stats>({
-    queryKey: ["/api/stats"]
-  });
-
   const {
     data: publicationsAnalytics,
     isFetched: publicationsAnalyticsFetched,
@@ -123,40 +105,6 @@ export default function StatsManager() {
   } = useQuery<VolunteerOpportunity[]>({
     queryKey: ["/api/volunteer-opportunities"],
   });
-
-  useEffect(() => {
-    if (stats) {
-      setFormData({
-        projects: stats.projects,
-        chapters: stats.chapters,
-        members: stats.members,
-      });
-    }
-  }, [stats]);
-
-  const updateMutation = useMutation({
-    mutationFn: (data: typeof formData) => apiRequest("PUT", "/api/stats", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-      setIsHomepageStatsModalOpen(false);
-      toast({
-        title: "Success",
-        description: "Stats updated successfully",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to update stats",
-        variant: "destructive",
-      });
-    }
-  });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    updateMutation.mutate(formData);
-  };
 
   const resolveMemberStatus = (member: MemberWithLifecycle): "approved" | "pending" | "rejected" => {
     const normalizedLifecycle = (member.memberLifecycleState || "").toLowerCase();
@@ -480,72 +428,6 @@ export default function StatsManager() {
           )}
         </CardContent>
       </Card>
-
-      <div className="flex justify-end">
-        <Dialog open={isHomepageStatsModalOpen} onOpenChange={setIsHomepageStatsModalOpen}>
-          <DialogTrigger asChild>
-            <Button variant="outline" data-testid="button-open-homepage-stats-modal">
-              Update Homepage Statistics
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Statistics</DialogTitle>
-              <DialogDescription>
-                Update the homepage statistics displayed to visitors
-              </DialogDescription>
-            </DialogHeader>
-
-            {isHomepageStatsLoading ? (
-              <LoadingState label="Loading statistics..." rows={1} />
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="projects">Projects Completed</Label>
-                    <Input
-                      id="projects"
-                      type="number"
-                      value={formData.projects}
-                      onChange={(e) => setFormData({ ...formData, projects: parseInt(e.target.value, 10) || 0 })}
-                      required
-                      data-testid="input-projects"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="chapters">Active Chapters</Label>
-                    <Input
-                      id="chapters"
-                      type="number"
-                      value={formData.chapters}
-                      onChange={(e) => setFormData({ ...formData, chapters: parseInt(e.target.value, 10) || 0 })}
-                      required
-                      data-testid="input-chapters-count"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="members">Youth Members</Label>
-                    <Input
-                      id="members"
-                      type="number"
-                      value={formData.members}
-                      onChange={(e) => setFormData({ ...formData, members: parseInt(e.target.value, 10) || 0 })}
-                      required
-                      data-testid="input-members"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button type="submit" disabled={updateMutation.isPending} data-testid="button-save-stats">
-                    {updateMutation.isPending ? "Saving..." : "Save Changes"}
-                  </Button>
-                </div>
-              </form>
-            )}
-          </DialogContent>
-        </Dialog>
-      </div>
     </div>
   );
 }
