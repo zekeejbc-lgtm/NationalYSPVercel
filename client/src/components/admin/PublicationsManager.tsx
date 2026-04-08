@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Edit, Plus, Calendar, Facebook, Image, CheckCircle2, X, Search, FilterX, Eye, EyeOff, ArrowUp, ArrowDown, XCircle, GripVertical, RotateCcw } from "lucide-react";
-import { Dialog, DialogClose, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PublicationsAnalyticsPanel from "@/components/admin/PublicationsAnalyticsPanel";
@@ -1443,13 +1443,16 @@ export default function PublicationsManager() {
           setIsDialogOpen(open);
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] overflow-x-hidden overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingPublication ? "Edit Publication" : "Add New Publication"}
             </DialogTitle>
+            <DialogDescription>
+              Create or edit publication details, media, and optional Facebook link.
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4 overflow-x-hidden">
             <div className="space-y-2">
               <Label htmlFor="title">Title</Label>
               <Input
@@ -1475,8 +1478,8 @@ export default function PublicationsManager() {
             </div>
             <div className="space-y-2">
               <Label>Photo</Label>
-              <div className="flex gap-2 items-end flex-wrap">
-                <div className="flex-1 min-w-[200px]">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="w-full sm:flex-1">
                   <Input
                     type="file"
                     accept="image/*"
@@ -1485,8 +1488,8 @@ export default function PublicationsManager() {
                     data-testid="input-publication-image-upload"
                   />
                 </div>
-                <span className="text-sm text-muted-foreground">or</span>
-                <div className="flex-1 min-w-[200px]">
+                <span className="self-start text-xs text-muted-foreground sm:self-auto sm:text-sm">or</span>
+                <div className="w-full sm:flex-1">
                   <Input
                     type="text"
                     value={formData.photoUrl}
@@ -1505,7 +1508,7 @@ export default function PublicationsManager() {
                   <img 
                     src={previewUrl}
                     alt="Preview" 
-                    className="max-w-xs h-32 object-cover rounded-md"
+                    className="h-32 w-full max-w-full rounded-md object-cover sm:max-w-xs"
                     onLoad={(event) => {
                       resetImageFallback(event.currentTarget);
                     }}
@@ -1532,9 +1535,10 @@ export default function PublicationsManager() {
                 Link to the related Facebook post if available
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-1 gap-2 border-t pt-3 sm:flex sm:flex-wrap sm:justify-end">
               <Button 
                 type="submit" 
+                className="w-full sm:w-auto"
                 disabled={
                   createMutation.isPending ||
                   updateMutation.isPending ||
@@ -1550,6 +1554,7 @@ export default function PublicationsManager() {
                 <Button
                   type="button"
                   variant="outline"
+                  className="w-full sm:w-auto"
                   onClick={() => handleToggleVisibility(editingPublication)}
                   disabled={
                     visibilityMutation.isPending ||
@@ -1579,6 +1584,7 @@ export default function PublicationsManager() {
                 <Button
                   type="button"
                   variant="destructive"
+                  className="w-full sm:w-auto"
                   onClick={() => handleDelete(editingPublication.id)}
                   disabled={
                     deleteMutation.isPending ||
@@ -1595,6 +1601,7 @@ export default function PublicationsManager() {
               <Button 
                 type="button" 
                 variant="outline" 
+                className="w-full sm:w-auto"
                 onClick={() => setIsDialogOpen(false)}
                 disabled={deleteMutation.isPending || visibilityMutation.isPending}
                 data-testid="button-cancel-publication"
@@ -1618,6 +1625,9 @@ export default function PublicationsManager() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Reject Publication</DialogTitle>
+            <DialogDescription>
+              Add a clear rejection reason so the chapter can correct and resubmit.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
@@ -1630,10 +1640,11 @@ export default function PublicationsManager() {
               placeholder="State the reason for rejection"
               data-testid="textarea-publication-reject-reason"
             />
-            <div className="flex justify-end gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:flex sm:justify-end">
               <Button
                 type="button"
                 variant="outline"
+                className="w-full sm:w-auto"
                 onClick={() => {
                   setRejectingPublication(null);
                   setRejectReason("");
@@ -1644,6 +1655,7 @@ export default function PublicationsManager() {
               <Button
                 type="button"
                 variant="destructive"
+                className="w-full sm:w-auto"
                 onClick={handleReject}
                 disabled={rejectMutation.isPending}
                 data-testid="button-confirm-publication-reject"
@@ -1656,12 +1668,15 @@ export default function PublicationsManager() {
       </Dialog>
 
       <Dialog open={!!selectedPublication} onOpenChange={(open) => !open && setSelectedPublication(null)}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden p-0 gap-0" hideClose>
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] overflow-hidden p-0 gap-0 sm:max-w-3xl" hideClose>
           {selectedPublication && (
             <div className="flex max-h-[85vh] flex-col">
               <DialogHeader className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 md:px-6">
                 <div className="flex items-start justify-between gap-3 pr-2">
                   <DialogTitle className="text-left break-words">{selectedPublication.title}</DialogTitle>
+                  <DialogDescription className="sr-only">
+                    Review publication details, moderation state, and available actions.
+                  </DialogDescription>
                   <DialogClose asChild>
                     <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Close dialog">
                       <X className="h-4 w-4" />
@@ -1781,7 +1796,7 @@ export default function PublicationsManager() {
                     href={selectedPublication.facebookLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                    className="flex items-center gap-1 break-all text-xs text-primary hover:underline"
                   >
                     <Facebook className="h-3 w-3" />
                     View on Facebook
