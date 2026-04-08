@@ -12,6 +12,7 @@ import {
   insertChapterSchema,
   insertVolunteerOpportunitySchema,
   insertStatsSchema,
+  insertHomeContentSchema,
   insertContactInfoSchema,
   insertPublicationSchema,
   insertProjectReportSchema,
@@ -4530,6 +4531,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validated = insertStatsSchema.parse(req.body);
       const stats = await storage.updateStats(validated);
       res.json(stats);
+    } catch (error: any) {
+      const validationError = fromError(error);
+      res.status(400).json({ error: validationError.message });
+    }
+  });
+
+  app.get("/api/home-content", async (_req, res) => {
+    const content = await storage.getHomeContent();
+    res.json(content);
+  });
+
+  app.put("/api/home-content", requireAdminAuth, async (req, res) => {
+    try {
+      const validated = insertHomeContentSchema.parse(req.body);
+      const content = await storage.updateHomeContent(validated);
+      res.json(content);
     } catch (error: any) {
       const validationError = fromError(error);
       res.status(400).json({ error: validationError.message });
