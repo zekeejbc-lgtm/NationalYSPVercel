@@ -162,6 +162,59 @@ export default function Publications() {
     setVisibleCount((current) => Math.max(PUBLICATIONS_BATCH_SIZE, current - PUBLICATIONS_BATCH_SIZE));
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const publicationIdFromQuery = params.get("publicationId")?.trim() || "";
+
+    if (!publicationIdFromQuery) {
+      return;
+    }
+
+    const matchedPublication = publications.find((publication) => publication.id === publicationIdFromQuery) || null;
+    if (!matchedPublication) {
+      return;
+    }
+
+    setSelectedPublication((current) => {
+      if (current?.id === matchedPublication.id) {
+        return current;
+      }
+
+      return matchedPublication;
+    });
+  }, [publications]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    const currentQueryPublicationId = url.searchParams.get("publicationId")?.trim() || "";
+    const selectedPublicationId = selectedPublication?.id || "";
+
+    if (selectedPublicationId) {
+      if (currentQueryPublicationId === selectedPublicationId) {
+        return;
+      }
+
+      url.searchParams.set("publicationId", selectedPublicationId);
+    } else {
+      if (!currentQueryPublicationId) {
+        return;
+      }
+
+      url.searchParams.delete("publicationId");
+    }
+
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, [selectedPublication]);
+
   return (
     <div className="min-h-screen flex flex-col">
       <section className="relative py-16 md:py-24 bg-gradient-to-br from-primary/10 via-background to-background">

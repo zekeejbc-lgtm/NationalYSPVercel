@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -7,10 +7,14 @@ import type { Publication } from "@shared/schema";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
 import heroImage from "@assets/generated_images/hero_image_volunteers_building.png";
 
-const AUTOPLAY_DELAY_MS = 5000;
+const AUTOPLAY_DELAY_MS = 10000;
 const DRAG_THRESHOLD_PX = 64;
 const SLIDE_TRANSITION = "transform 950ms cubic-bezier(0.16, 1, 0.3, 1)";
 const MAX_VISIBLE_DOTS = 5;
+const MOBILE_PAN_DURATION_MS = 18000;
+const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+const REDUCED_MOTION_MEDIA_QUERY = "(prefers-reduced-motion: reduce)";
+const CROP_DETECTION_EPSILON = 0.015;
 
 type HeroSlide = {
   id: string;
@@ -20,18 +24,48 @@ type HeroSlide = {
   linkHref: string | null;
 };
 
+type SlideImageDimensions = {
+  width: number;
+  height: number;
+};
+
 export default function HeroSection() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [dragOffset, setDragOffset] = useState(0);
   const [isInteractionPaused, setIsInteractionPaused] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [slideDimensions, setSlideDimensions] = useState<Record<string, SlideImageDimensions>>({});
+  const [heroViewportAspectRatio, setHeroViewportAspectRatio] = useState<number | null>(null);
   const [loadedSlideIds, setLoadedSlideIds] = useState<Record<string, boolean>>({
     "landing-default": true,
   });
+  const heroViewportRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ active: boolean; startX: number; pointerId: number | null }>({
     active: false,
     startX: 0,
     pointerId: null,
   });
+
+  const upsertSlideDimensions = (slideId: string, imageElement: HTMLImageElement) => {
+    const width = imageElement.naturalWidth;
+    const height = imageElement.naturalHeight;
+    if (!width || !height) {
+      return;
+    }
+
+    setSlideDimensions((previous) => {
+      const existing = previous[slideId];
+      if (existing && existing.width === width && existing.height === height) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        [slideId]: { width, height },
+      };
+    });
+  };
 
   const { data: publications = [] } = useQuery<Publication[]>({
     queryKey: ["/api/publications"],
@@ -139,6 +173,63 @@ export default function HeroSection() {
       return;
     }
 
+    const mobileMediaQueryList = window.matchMedia(MOBILE_MEDIA_QUERY);
+    const reducedMotionMediaQueryList = window.matchMedia(REDUCED_MOTION_MEDIA_QUERY);
+
+    const updateViewportFlags = () => {
+      setIsMobileViewport(mobileMediaQueryList.matches);
+      setPrefersReducedMotion(reducedMotionMediaQueryList.matches);
+    };
+
+    updateViewportFlags();
+    mobileMediaQueryList.addEventListener("change", updateViewportFlags);
+    reducedMotionMediaQueryList.addEventListener("change", updateViewportFlags);
+
+    return () => {
+      mobileMediaQueryList.removeEventListener("change", updateViewportFlags);
+      reducedMotionMediaQueryList.removeEventListener("change", updateViewportFlags);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const viewportElement = heroViewportRef.current;
+    if (!viewportElement) {
+      return;
+    }
+
+    const updateHeroViewportAspectRatio = () => {
+      const width = viewportElement.clientWidth;
+      const height = viewportElement.clientHeight;
+
+      if (!width || !height) {
+        return;
+      }
+
+      setHeroViewportAspectRatio(width / height);
+    };
+
+    updateHeroViewportAspectRatio();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateHeroViewportAspectRatio();
+    });
+
+    resizeObserver.observe(viewportElement);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     const publicationSlidesOnly = slides.filter((slide) => slide.id !== "landing-default");
     if (publicationSlidesOnly.length === 0) {
       return;
@@ -157,6 +248,8 @@ export default function HeroSection() {
         if (isCancelled) {
           return;
         }
+
+        upsertSlideDimensions(slide.id, image);
 
         setLoadedSlideIds((previous) => {
           if (previous[slide.id]) {
@@ -243,6 +336,7 @@ export default function HeroSection() {
       onMouseLeave={() => setIsInteractionPaused(false)}
     >
       <div
+        ref={heroViewportRef}
         className="absolute inset-0 touch-pan-y"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -260,6 +354,33 @@ export default function HeroSection() {
             const isLoaded = slide.id === "landing-default" || Boolean(loadedSlideIds[slide.id]);
             const nextIndex = (currentIndex + 1) % slides.length;
             const shouldPrioritizeImage = index === currentIndex || index === nextIndex;
+            const dimensions = slideDimensions[slide.id];
+            const imageAspectRatio = dimensions ? dimensions.width / dimensions.height : null;
+            const isImageCroppedInViewport =
+              isMobileViewport &&
+              typeof heroViewportAspectRatio === "number" &&
+              typeof imageAspectRatio === "number" &&
+              Math.abs(imageAspectRatio - heroViewportAspectRatio) > CROP_DETECTION_EPSILON;
+            const shouldAnimateCroppedImage =
+              isImageCroppedInViewport &&
+              !prefersReducedMotion &&
+              !dragStateRef.current.active &&
+              index === currentIndex;
+            const panDirection =
+              imageAspectRatio && typeof heroViewportAspectRatio === "number" && imageAspectRatio > heroViewportAspectRatio
+                ? "horizontal"
+                : "vertical";
+            const panStyle: CSSProperties | undefined = shouldAnimateCroppedImage
+              ? panDirection === "horizontal"
+                ? {
+                    objectPosition: "left center",
+                    animation: `hero-mobile-pan-horizontal ${MOBILE_PAN_DURATION_MS}ms ease-in-out forwards`,
+                  }
+                : {
+                    objectPosition: "center top",
+                    animation: `hero-mobile-pan-vertical ${MOBILE_PAN_DURATION_MS}ms ease-in-out forwards`,
+                  }
+              : undefined;
 
             return (
               <div key={slide.id} className="relative h-full w-full shrink-0">
@@ -267,10 +388,12 @@ export default function HeroSection() {
                   src={isLoaded ? slide.imageUrl : heroImage}
                   alt={slide.title || "Youth Service Philippines hero background"}
                   className="h-full w-full object-cover"
+                  style={panStyle}
                   draggable={false}
                   loading={shouldPrioritizeImage ? "eager" : "lazy"}
                   decoding="async"
                   onLoad={(event) => {
+                    upsertSlideDimensions(slide.id, event.currentTarget);
                     delete event.currentTarget.dataset.heroFallbackApplied;
                   }}
                   onError={(event) => {
@@ -377,6 +500,26 @@ export default function HeroSection() {
           </div>
         </div>
       </div>
+
+      <style>{`
+        @keyframes hero-mobile-pan-horizontal {
+          from {
+            object-position: left center;
+          }
+          to {
+            object-position: right center;
+          }
+        }
+
+        @keyframes hero-mobile-pan-vertical {
+          from {
+            object-position: center top;
+          }
+          to {
+            object-position: center bottom;
+          }
+        }
+      `}</style>
     </section>
   );
 }
