@@ -358,7 +358,12 @@ export default function Home() {
                 {advocacyPillars.map((pillar) => (
                   <li key={pillar} className="flex items-start gap-2">
                     <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary/80" aria-hidden="true" />
-                    <span>{pillar}</span>
+                    <span
+                      lang="en"
+                      className="flex-1 text-justify [text-align-last:left] [hyphens:auto] [word-spacing:-0.04em]"
+                    >
+                      {pillar}
+                    </span>
                   </li>
                 ))}
               </ul>

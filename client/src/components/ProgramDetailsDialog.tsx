@@ -61,7 +61,7 @@ export default function ProgramDetailsDialog({ program, open, onOpenChange }: Pr
               </div>
             )}
 
-            <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+            <p className="text-justify text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
               {program.fullDescription || program.description}
             </p>
           </div>

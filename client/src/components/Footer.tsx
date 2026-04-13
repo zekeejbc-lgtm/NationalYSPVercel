@@ -213,7 +213,9 @@ export default function Footer() {
 
         <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground">
           <p>&copy; 2026 Youth Service Philippines. All rights reserved.</p>
-          <p className="mt-1">Youth Service to the Filipino Youth, Inc. | SEC Reg. No. 2023010080782-00</p>
+          <p className="mt-1">
+            Youth Service to the Filipino Youth, Inc. is the official owner and operator of youthserviceph.org. SEC Registration No. 2023010080782-00.
+          </p>
         </div>
       </div>
     </footer>

@@ -12,6 +12,7 @@ import Publications from "@/pages/Publications";
 import Membership from "@/pages/Membership";
 import Volunteer from "@/pages/Volunteer";
 import Contact from "@/pages/Contact";
+import GoogleNonprofitVerification from "@/pages/GoogleNonprofitVerification";
 import Admin from "@/pages/Admin";
 import AdminAccounts from "@/pages/AdminAccounts";
 import AdminLogin from "@/pages/AdminLogin";
@@ -124,6 +125,32 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
       "contact youth service philippines",
       "youthserviceph partnership",
       "youth organization philippines contact",
+    ],
+  },
+  "/verification": {
+    title: "Domain Verification | Youth Service Philippines National",
+    description:
+      "Domain verification statement confirming Youth Service to the Filipino Youth, Inc. as the official owner and operator of youthserviceph.org.",
+    path: "/verification",
+    indexable: true,
+    keywords: [
+      "Youth Service to the Filipino Youth, Inc.",
+      "youthserviceph.org official domain",
+      "domain verification",
+      "google nonprofit verification",
+    ],
+  },
+  "/google-nonprofit": {
+    title: "Google Nonprofit Domain Verification | Youth Service Philippines National",
+    description:
+      "Domain verification statement confirming Youth Service to the Filipino Youth, Inc. as the official owner and operator of youthserviceph.org.",
+    path: "/google-nonprofit",
+    indexable: true,
+    keywords: [
+      "Youth Service to the Filipino Youth, Inc.",
+      "youthserviceph.org official domain",
+      "google for nonprofits domain verification",
+      "domain ownership verification",
     ],
   },
   "/login": {
@@ -284,6 +311,8 @@ function Router() {
       <Route path="/membership" component={Membership} />
       <Route path="/volunteer" component={Volunteer} />
       <Route path="/contact" component={Contact} />
+      <Route path="/verification" component={GoogleNonprofitVerification} />
+      <Route path="/google-nonprofit" component={GoogleNonprofitVerification} />
       <Route path="/login" component={Login} />
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin" component={Admin} />

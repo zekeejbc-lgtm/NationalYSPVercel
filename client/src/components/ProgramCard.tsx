@@ -71,7 +71,7 @@ export default function ProgramCard({ id, title, description, image, onClick }: 
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden pt-0">
         <p
-          className="text-muted-foreground leading-relaxed overflow-hidden"
+          className="text-justify text-muted-foreground leading-relaxed overflow-hidden"
           style={{
             display: "-webkit-box",
             WebkitLineClamp: 3,
