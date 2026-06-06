@@ -4546,10 +4546,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/upload/member-photo", upload.single("image"), async (req, res) => {
+app.post("/api/upload/member-photo", upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     try {
-      const result = await handleSupabaseUpload(req.file, "member-photos");
+      const result = await handleGoogleDriveUpload(req.file, "member-photos");
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -4559,43 +4559,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/upload", requireAuth, upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     try {
-      const result = await handleSupabaseUpload(req.file, "general-uploads");
+      const result = await handleGoogleDriveUpload(req.file, "general-uploads");
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  async function handleSupabaseUpload(file: Express.Multer.File, folderName: string) {
-    const supabaseClient = getSupabaseStorageClient();
-    const fileExtension = resolveImageExtension(file.originalname, file.mimetype);
-    const baseFileName = `${folderName}-${Date.now()}-${Math.round(Math.random() * 1e9)}${fileExtension}`;
-
-    if (!supabaseClient) {
+  async function handleGoogleDriveUpload(file: Express.Multer.File, folderPrefix: string) {
+    const gasUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
+    
+    if (!gasUrl) {
+      console.warn("No GOOGLE_APPS_SCRIPT_URL found. Falling back to local storage.");
       const uploadsDir = ensureUploadsDir();
+      const fileExtension = resolveImageExtension(file.originalname, file.mimetype);
+      const baseFileName = `${folderPrefix}-${Date.now()}${fileExtension}`;
       const localFilePath = path.join(uploadsDir, baseFileName);
       await fs.promises.writeFile(localFilePath, file.buffer);
       return { url: `/uploads/${baseFileName}` };
     }
 
-    await ensurePublicationImageBucket(supabaseClient);
-    const storageObjectPath = `${folderName}/${baseFileName}`;
+    try {
+      const fileExtension = resolveImageExtension(file.originalname, file.mimetype);
+      const fileName = `${folderPrefix}-${Date.now()}${fileExtension}`;
+      const base64Data = file.buffer.toString("base64");
 
-    const { error: uploadError } = await supabaseClient.storage
-      .from(PUBLICATION_IMAGE_BUCKET)
-      .upload(storageObjectPath, file.buffer, {
-        contentType: file.mimetype,
-        cacheControl: "31536000",
-        upsert: false,
+      const response = await fetch(gasUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64: base64Data,
+          fileName: fileName,
+          mimeType: file.mimetype
+        }),
       });
 
-    if (uploadError) throw uploadError;
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || "Google Drive upload failed");
+      }
 
-    const { data: publicUrlData } = supabaseClient.storage
-      .from(PUBLICATION_IMAGE_BUCKET)
-      .getPublicUrl(storageObjectPath);
-
-    return { url: publicUrlData.publicUrl };
+      return { url: data.url };
+    } catch (error: any) {
+      console.error("[gdrive-upload] Upload failed", error);
+      throw new Error("Failed to upload image to Google Drive.");
+    }
   }
 
   type PublicationAnalyticsRecord = Publication & { chapterName: string };
