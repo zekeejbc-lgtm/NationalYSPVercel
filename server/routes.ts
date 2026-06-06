@@ -750,36 +750,13 @@ const chapterLogoUpload = multer({
 });
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = ensureUploadsDir();
-      cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    
-    if (mimetype && extname) {
-      console.error("[image-upload] accepted file", {
-        route: req.originalUrl,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-      });
+    if (file.mimetype.startsWith('image/')) {
       return cb(null, true);
     } else {
-      console.error("[image-upload] rejected file", {
-        route: req.originalUrl,
-        originalName: file.originalname,
-        mimeType: file.mimetype,
-      });
-      cb(new Error("Only image files are allowed"));
+      cb(new Error("Only standard image files (JPG, PNG, GIF, WEBP) are allowed"));
     }
   },
 });
@@ -4569,40 +4546,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/upload/member-photo", upload.single("image"), (req, res) => {
-    if (!req.file) {
-      console.error("[member-photo-upload] no file received", { route: req.originalUrl });
-      return res.status(400).json({ error: "No file uploaded" });
+  app.post("/api/upload/member-photo", upload.single("image"), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    try {
+      const result = await handleSupabaseUpload(req.file, "member-photos");
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
-
-    const imageUrl = `/uploads/${req.file.filename}`;
-    console.error("[member-photo-upload] upload success", {
-      route: req.originalUrl,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      imageUrl,
-    });
-
-    res.json({ url: imageUrl });
   });
 
-  app.post("/api/upload", requireAuth, upload.single("image"), (req, res) => {
-    if (!req.file) {
-      console.error("[image-upload] no file received", { route: req.originalUrl });
-      return res.status(400).json({ error: "No file uploaded" });
+  app.post("/api/upload", requireAuth, upload.single("image"), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    try {
+      const result = await handleSupabaseUpload(req.file, "general-uploads");
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
-    
-    const imageUrl = `/uploads/${req.file.filename}`;
-    console.error("[image-upload] upload success", {
-      route: req.originalUrl,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-      imageUrl,
-    });
-    res.json({ url: imageUrl });
   });
+
+  async function handleSupabaseUpload(file: Express.Multer.File, folderName: string) {
+    const supabaseClient = getSupabaseStorageClient();
+    const fileExtension = resolveImageExtension(file.originalname, file.mimetype);
+    const baseFileName = `${folderName}-${Date.now()}-${Math.round(Math.random() * 1e9)}${fileExtension}`;
+
+    if (!supabaseClient) {
+      const uploadsDir = ensureUploadsDir();
+      const localFilePath = path.join(uploadsDir, baseFileName);
+      await fs.promises.writeFile(localFilePath, file.buffer);
+      return { url: `/uploads/${baseFileName}` };
+    }
+
+    await ensurePublicationImageBucket(supabaseClient);
+    const storageObjectPath = `${folderName}/${baseFileName}`;
+
+    const { error: uploadError } = await supabaseClient.storage
+      .from(PUBLICATION_IMAGE_BUCKET)
+      .upload(storageObjectPath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: "31536000",
+        upsert: false,
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabaseClient.storage
+      .from(PUBLICATION_IMAGE_BUCKET)
+      .getPublicUrl(storageObjectPath);
+
+    return { url: publicUrlData.publicUrl };
+  }
 
   type PublicationAnalyticsRecord = Publication & { chapterName: string };
 
