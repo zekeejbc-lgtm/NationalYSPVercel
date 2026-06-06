@@ -4556,6 +4556,20 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
     }
   });
 
+  // GET endpoint to securely hand off the GAS URL to the frontend
+  app.get("/api/upload-url", requireAuth, (req, res) => {
+    const gasUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
+    
+    if (!gasUrl) {
+      return res.status(500).json({ 
+        success: false, 
+        error: "Google Apps Script URL is not configured on the server." 
+      });
+    }
+
+    res.json({ success: true, url: gasUrl });
+  });
+
   app.post("/api/upload", requireAuth, upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     try {

@@ -165,24 +165,53 @@ export default function ProgramsManager() {
     setIsUploading(true);
 
     try {
-      const uploadFormData = new FormData();
-      uploadFormData.append("image", selectedPhotoFile);
+      // 1. Fetch the secure Google Apps Script URL from the backend
+      const urlResponse = await fetch("/api/upload-url");
+      const urlData = await urlResponse.json();
 
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: uploadFormData,
-        credentials: "include",
+      if (!urlData.success || !urlData.url) {
+        throw new Error(urlData.error || "Failed to retrieve upload configuration.");
+      }
+
+      const gasUrl = urlData.url;
+
+      // 2. Convert the uncompressed file to Base64 directly in the browser
+      const uploadedUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(selectedPhotoFile);
+        
+        reader.onload = async () => {
+          try {
+            const base64String = (reader.result as string).split(',')[1];
+
+            // 3. Send the payload directly to Google Drive via GAS Web App
+            const uploadResponse = await fetch(gasUrl, {
+              method: 'POST',
+              credentials: 'omit',
+              headers: {
+                'Content-Type': 'text/plain;charset=utf-8',
+              },
+              body: JSON.stringify({
+                base64: base64String,
+                fileName: selectedPhotoFile.name,
+                mimeType: selectedPhotoFile.type
+              })
+            });
+
+            const uploadData = await uploadResponse.json();
+
+            if (uploadData.success && uploadData.url) {
+              resolve(uploadData.url); // Returns the Drive thumbnail URL
+            } else {
+              reject(new Error(uploadData.error || "Google Drive upload rejected the file."));
+            }
+          } catch (err) {
+            reject(err);
+          }
+        };
+
+        reader.onerror = () => reject(new Error("Failed to read file."));
       });
-
-      if (!response.ok) {
-        throw new Error("Upload failed");
-      }
-
-      const data = await response.json();
-      const uploadedUrl = typeof data?.url === "string" ? data.url.trim() : "";
-      if (!uploadedUrl) {
-        throw new Error("Upload URL missing");
-      }
 
       return uploadedUrl;
     } finally {
