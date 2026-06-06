@@ -540,24 +540,58 @@ export default function ChapterDashboard() {
     setLocation("/");
   };
 
+  // Helper function to extract base64 cleanly
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
     setUploading(true);
-    const formData = new FormData();
-    formData.append("image", file);
     
     try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-        credentials: "include"
+      // 1. Fetch the secure Google Apps Script URL from the backend
+      const urlResponse = await fetch("/api/upload-url");
+      const urlData = await urlResponse.json();
+
+      if (!urlData.success || !urlData.url) {
+        throw new Error(urlData.error || "Failed to retrieve upload configuration.");
+      }
+
+      const gasUrl = urlData.url;
+
+      // 2. Convert file to Base64
+      const base64String = await fileToBase64(file);
+
+      // 3. Send directly to Google Drive via GAS Web App
+      const uploadResponse = await fetch(gasUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({
+          base64: base64String,
+          fileName: file.name,
+          mimeType: file.type
+        })
       });
-      const data = await res.json();
-      setPhotoUrl(data.url);
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to upload image", variant: "destructive" });
+
+      const uploadData = await uploadResponse.json();
+
+      if (uploadData.success && uploadData.url) {
+        setPhotoUrl(uploadData.url); 
+      } else {
+        throw new Error(uploadData.error || "Google Drive upload rejected the file.");
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to upload image", variant: "destructive" });
     } finally {
       setUploading(false);
     }
@@ -609,19 +643,43 @@ export default function ChapterDashboard() {
     if (!file) return;
 
     setEditUploading(true);
-    const formData = new FormData();
-    formData.append("image", file);
 
     try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-        credentials: "include"
+      // 1. Fetch the secure Google Apps Script URL from the backend
+      const urlResponse = await fetch("/api/upload-url");
+      const urlData = await urlResponse.json();
+
+      if (!urlData.success || !urlData.url) {
+        throw new Error(urlData.error || "Failed to retrieve upload configuration.");
+      }
+
+      const gasUrl = urlData.url;
+
+      // 2. Convert file to Base64
+      const base64String = await fileToBase64(file);
+
+      // 3. Send directly to Google Drive via GAS Web App
+      const uploadResponse = await fetch(gasUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({
+          base64: base64String,
+          fileName: file.name,
+          mimeType: file.type
+        })
       });
-      const data = await res.json();
-      setEditPhotoUrl(data.url);
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to upload image", variant: "destructive" });
+
+      const uploadData = await uploadResponse.json();
+
+      if (uploadData.success && uploadData.url) {
+        setEditPhotoUrl(uploadData.url); 
+      } else {
+        throw new Error(uploadData.error || "Google Drive upload rejected the file.");
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message || "Failed to upload image", variant: "destructive" });
     } finally {
       setEditUploading(false);
     }

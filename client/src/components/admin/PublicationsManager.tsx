@@ -266,13 +266,19 @@ export default function PublicationsManager() {
     setUploadedPhotoPreviewUrl("");
   };
 
-  const uploadSelectedImage = async () => {
-    if (selectedImageSource !== "upload") {
-      return formData.photoUrl.trim();
-    }
+  // Helper function to extract base64 cleanly outside the fetch execution
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
 
-    if (!selectedPhotoFile) {
-      return "";
+  const uploadSelectedImage = async () => {
+    if (selectedImageSource !== "upload" || !selectedPhotoFile) {
+      return formData.photoUrl.trim();
     }
 
     setIsUploading(true);
@@ -288,45 +294,31 @@ export default function PublicationsManager() {
 
       const gasUrl = urlData.url;
 
-      // 2. Convert the uncompressed file to Base64 directly in the browser
-      const uploadedUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(selectedPhotoFile);
-        
-        reader.onload = async () => {
-          try {
-            const base64String = (reader.result as string).split(',')[1];
+      // 2. Convert file to Base64 using the clean helper
+      const base64String = await fileToBase64(selectedPhotoFile);
 
-            // 3. Send the payload directly to Google Drive via GAS Web App
-            const uploadResponse = await fetch(gasUrl, {
-              method: 'POST',
-              credentials: 'omit',
-              headers: {
-                'Content-Type': 'text/plain;charset=utf-8',
-              },
-              body: JSON.stringify({
-                base64: base64String,
-                fileName: selectedPhotoFile.name,
-                mimeType: selectedPhotoFile.type
-              })
-            });
-
-            const uploadData = await uploadResponse.json();
-
-            if (uploadData.success && uploadData.url) {
-              resolve(uploadData.url); // Returns the Drive thumbnail URL
-            } else {
-              reject(new Error(uploadData.error || "Google Drive upload rejected the file."));
-            }
-          } catch (err) {
-            reject(err);
-          }
-        };
-
-        reader.onerror = () => reject(new Error("Failed to read file."));
+      // 3. Send directly to Google Drive via GAS Web App (Bypasses Vercel Limit)
+      const uploadResponse = await fetch(gasUrl, {
+        method: 'POST',
+        // 'Content-Type': 'text/plain' is the secret that prevents the CORS preflight crash
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify({
+          base64: base64String,
+          fileName: selectedPhotoFile.name,
+          mimeType: selectedPhotoFile.type
+        })
       });
 
-      return uploadedUrl;
+      // 4. Parse the Drive URL returned from the GAS script
+      const uploadData = await uploadResponse.json();
+
+      if (uploadData.success && uploadData.url) {
+        return uploadData.url; 
+      } else {
+        throw new Error(uploadData.error || "Google Drive upload rejected the file.");
+      }
     } finally {
       setIsUploading(false);
     }
