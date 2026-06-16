@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import LoadingState from "@/components/ui/loading-state";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
 import SessionRecoveryPanel from "@/components/ui/session-recovery-panel";
@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { checkAuthSession } from "@/lib/authSession";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
-import { ArrowLeft, Edit, LogOut, Plus, ShieldAlert, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Edit, LogOut, Plus, RefreshCw, ShieldAlert, Trash2, UserRound } from "lucide-react";
 
 type AdminAccount = {
   id: string;
@@ -49,6 +49,7 @@ export default function AdminAccounts() {
   const [searchTerm, setSearchTerm] = useState("");
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showRefreshDialog, setShowRefreshDialog] = useState(false);
   const [createForm, setCreateForm] = useState<AccountFormState>(defaultFormState);
 
   const [editingAccount, setEditingAccount] = useState<AdminAccount | null>(null);
@@ -158,6 +159,26 @@ export default function AdminAccounts() {
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const forceRefreshMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/admin/force-refresh");
+    },
+    onSuccess: () => {
+      toast({
+        title: "Refresh queued",
+        description: "Active devices will clear cache and reload on their next status check.",
+      });
+      setShowRefreshDialog(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Refresh failed",
+        description: error.message || "Unable to queue the universal refresh right now.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -318,6 +339,38 @@ export default function AdminAccounts() {
           </Button>
         </div>
 
+        <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/20">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex gap-3">
+                <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+                  <RefreshCw className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">App Refresh Control</CardTitle>
+                  <CardDescription className="mt-1 max-w-3xl">
+                    Use this only after publishing code changes or when users are stuck on stale cached data.
+                  </CardDescription>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setShowRefreshDialog(true)}
+                data-testid="button-open-force-refresh"
+                className="w-full border-amber-300 bg-background hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-950 lg:w-auto"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh App
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="rounded-md border border-amber-200 bg-background/70 p-3 text-sm text-muted-foreground dark:border-amber-900/60">
+              Disclaimer: this does not edit accounts or database records. It tells active browsers to clear app caches, reload the latest code, and refetch updated data groups on their next status check.
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>Admin Users</CardTitle>
@@ -448,6 +501,55 @@ export default function AdminAccounts() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showRefreshDialog} onOpenChange={setShowRefreshDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+              <AlertTriangle className="h-6 w-6" />
+            </div>
+            <DialogTitle>Force App Refresh</DialogTitle>
+            <DialogDescription>
+              This queues a cache reset and reload for all active devices using the portal.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <p className="font-medium">What will happen</p>
+              <p className="mt-1 text-muted-foreground">
+                Open browsers will detect the refresh within about 45 seconds, clear local app cache, reload the page, and fetch fresh data.
+              </p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-medium">Disclaimer</p>
+              <p className="mt-1">
+                Users may briefly lose unsaved form input during reload. Offline or closed devices will update when they reconnect or open the app again.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowRefreshDialog(false)}
+              disabled={forceRefreshMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => forceRefreshMutation.mutate()}
+              disabled={forceRefreshMutation.isPending}
+              data-testid="button-confirm-force-refresh"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${forceRefreshMutation.isPending ? "animate-spin" : ""}`} />
+              {forceRefreshMutation.isPending ? "Queuing..." : "Confirm Refresh"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

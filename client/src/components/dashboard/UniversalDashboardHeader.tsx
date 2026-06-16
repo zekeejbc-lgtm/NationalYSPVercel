@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Monitor, Moon, RefreshCw, Sun, UserRound, X } from "lucide-react";
+import { Monitor, Moon, Sun, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "@/hooks/use-theme";
@@ -9,13 +9,11 @@ interface UniversalDashboardHeaderProps {
   title: string;
   subtitle?: string;
   onLogout: () => void | Promise<void>;
-  onForceRefresh?: () => void | Promise<void>;
 }
 
-export default function UniversalDashboardHeader({ title, subtitle, onLogout, onForceRefresh }: UniversalDashboardHeaderProps) {
+export default function UniversalDashboardHeader({ title, subtitle, onLogout }: UniversalDashboardHeaderProps) {
   const { themeMode, resolvedTheme, cycleThemeMode } = useTheme();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [forceRefreshPending, setForceRefreshPending] = useState(false);
 
   const themeActionIcon = themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor;
   const ThemeActionIcon = themeActionIcon;
@@ -25,24 +23,6 @@ export default function UniversalDashboardHeader({ title, subtitle, onLogout, on
       : themeMode === "dark"
         ? "Dark"
         : "Light";
-
-  const handleForceRefresh = async () => {
-    if (!onForceRefresh || forceRefreshPending) {
-      return;
-    }
-
-    const confirmed = window.confirm("Force all active devices to clear cache and reload on their next status check?");
-    if (!confirmed) {
-      return;
-    }
-
-    setForceRefreshPending(true);
-    try {
-      await onForceRefresh();
-    } finally {
-      setForceRefreshPending(false);
-    }
-  };
 
   return (
     <>
@@ -79,18 +59,6 @@ export default function UniversalDashboardHeader({ title, subtitle, onLogout, on
                 <UserRound className="h-4 w-4 mr-2" />
                 My Profile
               </Button>
-              {onForceRefresh ? (
-                <Button
-                  variant="outline"
-                  onClick={handleForceRefresh}
-                  disabled={forceRefreshPending}
-                  data-testid="button-force-refresh"
-                  title="Force all active devices to clear cache and reload"
-                >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${forceRefreshPending ? "animate-spin" : ""}`} />
-                  Refresh App
-                </Button>
-              ) : null}
             </div>
             <div className="sm:hidden flex items-center gap-2">
               <Button
@@ -115,18 +83,6 @@ export default function UniversalDashboardHeader({ title, subtitle, onLogout, on
               <UserRound className="h-4 w-4 mr-2" />
               My Profile
             </Button>
-            {onForceRefresh ? (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={handleForceRefresh}
-                disabled={forceRefreshPending}
-                data-testid="button-force-refresh-mobile"
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${forceRefreshPending ? "animate-spin" : ""}`} />
-                Refresh App
-              </Button>
-            ) : null}
           </div>
         </div>
       </div>
