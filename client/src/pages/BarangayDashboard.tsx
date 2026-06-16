@@ -80,7 +80,6 @@ export default function BarangayDashboard() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      console.error("[Barangay] DASHBOARD_MOUNTED, checking auth...");
       setLoading(true);
       setAuthError(null);
 
@@ -95,7 +94,6 @@ export default function BarangayDashboard() {
         }
 
         if (authResult.status === "unauthenticated") {
-          console.error("[Barangay] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -104,25 +102,17 @@ export default function BarangayDashboard() {
           return;
         }
 
-        console.error("[Barangay] Auth check result:", {
-          authenticated: true,
-          role: authResult.user.role,
-        });
-        
         if (authResult.user.role === "admin") {
-          console.error("[Barangay] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
 
         if (authResult.user.role === "chapter") {
-          console.error("[Barangay] User is chapter, redirecting to /chapter-dashboard");
           setLocation("/chapter-dashboard");
           return;
         }
         
         if (authResult.user.role !== "barangay") {
-          console.error("[Barangay] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -131,7 +121,6 @@ export default function BarangayDashboard() {
           return;
         }
         
-        console.error("[Barangay] AUTH_STATE: authenticated=true, role=BARANGAY, barangayName:", authResult.user.barangayName);
         const barangayUser: AuthUser = {
           id: authResult.user.id,
           username: authResult.user.username,
@@ -148,8 +137,7 @@ export default function BarangayDashboard() {
         if (barangayUser.mustChangePassword) {
           setShowPasswordDialog(true);
         }
-      } catch (error) {
-        console.error("[Barangay] Auth check error:", error);
+      } catch {
         setAuthenticated(false);
         setAuthUser(null);
         setAuthError("Unable to verify your session right now. Please retry.");
@@ -200,10 +188,8 @@ export default function BarangayDashboard() {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       queryClient.clear();
       clearSessionQueryPersistence();
-      console.error("[Barangay] Logged out successfully");
       setLocation("/");
-    } catch (error) {
-      console.error("[Barangay] Logout error:", error);
+    } catch {
     }
   };
 

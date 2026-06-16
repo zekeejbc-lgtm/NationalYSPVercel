@@ -13,8 +13,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import type { Program } from "@shared/schema";
 import {
   applyImageFallback,
+  buildGoogleDriveUploadFileName,
   DEFAULT_IMAGE_FALLBACK_SRC,
   getDisplayImageUrl,
+  getGoogleDriveUploadErrorMessage,
+  getGoogleDriveUploadUrl,
   resetImageFallback,
 } from "@/lib/driveUtils";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
@@ -187,6 +190,12 @@ export default function ProgramsManager() {
 
       // 2. Convert file to Base64 using the clean helper
       const base64String = await fileToBase64(selectedPhotoFile);
+      const uploadFileName = buildGoogleDriveUploadFileName({
+        originalFileName: selectedPhotoFile.name,
+        uploaderUsername: "admin",
+        uploadLocation: "admin-programs-manager",
+        purpose: editingProgram ? "edit-program-image" : "create-program-image",
+      });
 
       // 3. Send directly to Google Drive via GAS Web App (Bypasses Vercel Limit)
       const uploadResponse = await fetch(gasUrl, {
@@ -197,7 +206,7 @@ export default function ProgramsManager() {
         },
         body: JSON.stringify({
           base64: base64String,
-          fileName: selectedPhotoFile.name,
+          fileName: uploadFileName,
           mimeType: selectedPhotoFile.type
         })
       });
@@ -205,8 +214,10 @@ export default function ProgramsManager() {
       // 4. Parse the Drive URL returned from the GAS script
       const uploadData = await uploadResponse.json();
 
-      if (uploadData.success && uploadData.url) {
-        return uploadData.url; 
+      const uploadedUrl = getGoogleDriveUploadUrl(uploadData);
+
+      if (uploadData.success && uploadedUrl) {
+        return uploadedUrl;
       } else {
         throw new Error(uploadData.error || "Google Drive upload rejected the file.");
       }
@@ -300,10 +311,10 @@ export default function ProgramsManager() {
       } else {
         createMutation.mutate(payload);
       }
-    } catch {
+    } catch (error) {
       toast({
         title: "Image upload failed",
-        description: "Could not upload the selected image. Please try again.",
+        description: getGoogleDriveUploadErrorMessage(error),
         variant: "destructive",
       });
     }

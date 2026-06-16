@@ -112,7 +112,6 @@ export default function Admin() {
   }, [activeTab]);
 
   const checkAuth = async () => {
-    console.error("[Admin] DASHBOARD_MOUNTED, checking auth...");
     setLoading(true);
     setAuthError(null);
 
@@ -133,20 +132,12 @@ export default function Admin() {
         return;
       }
 
-      console.error("[Admin] Auth check result:", {
-        authenticated: true,
-        role: authResult.user.role,
-      });
-
       if (authResult.user.role === "admin") {
-        console.error("[Admin] AUTH_STATE: authenticated=true, role=ADMIN");
         setAuthenticated(true);
       } else if (authResult.user.role === "chapter") {
-        console.error("[Admin] User is chapter, redirecting to /chapter-dashboard");
         setLocation("/chapter-dashboard");
         return;
       } else if (authResult.user.role === "barangay") {
-        console.error("[Admin] User is barangay, redirecting to /barangay-dashboard");
         setLocation("/barangay-dashboard");
         return;
       } else {
@@ -156,8 +147,7 @@ export default function Admin() {
         setLocation("/login");
         return;
       }
-    } catch (error) {
-      console.error("[Admin] Auth check error:", error);
+    } catch {
       setAuthenticated(false);
       setAuthError("Unable to verify your session right now. Please retry.");
       return;
@@ -169,15 +159,13 @@ export default function Admin() {
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/auth/logout");
-      console.error("[Admin] Logged out successfully");
       toast({
         title: "Logged out",
         description: "You have been logged out successfully",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/auth/check"] });
       setLocation("/");
-    } catch (error) {
-      console.error("[Admin] Logout error:", error);
+    } catch {
       toast({
         title: "Error",
         description: "Failed to logout",

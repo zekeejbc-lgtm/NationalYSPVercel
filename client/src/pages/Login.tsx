@@ -117,7 +117,6 @@ export default function Login() {
     hasRedirected.current = false;
     
     const checkExistingAuth = async () => {
-      console.error("[Login] Checking existing auth...");
       try {
         const response = await fetch("/api/auth/check", { credentials: "include" });
         const payload = await readResponsePayload<AuthResponse>(response);
@@ -133,8 +132,6 @@ export default function Login() {
           throw new Error("Auth check returned invalid response format");
         }
 
-        console.error("[Login] Auth check result:", data);
-        
         if (showDebug) {
           setDebugInfo({
             hasSession: data.authenticated,
@@ -145,15 +142,12 @@ export default function Login() {
         
         if (data.authenticated && data.user) {
           const userRole = data.user.role;
-          console.error("[Login] Already authenticated, role:", userRole);
           if (userRole === "admin" || userRole === "chapter" || userRole === "barangay") {
             const targetRoute = resolveTargetRoute(userRole, data.user.mustChangePassword);
-            console.error("[Login] Redirecting to:", targetRoute);
             hasRedirected.current = true;
             setLocation(targetRoute);
             return;
           } else {
-            console.error("[Login] Unknown role:", userRole);
             toast({
               title: "Error",
               description: "Role not found. Please contact admin.",
@@ -161,12 +155,10 @@ export default function Login() {
             });
           }
         } else {
-          console.error("[Login] Not authenticated, showing login form");
           queryClient.clear();
           clearSessionQueryPersistence();
         }
-      } catch (error) {
-        console.error("[Login] Auth check error:", error);
+      } catch {
       } finally {
         setCheckingAuth(false);
       }
@@ -178,11 +170,9 @@ export default function Login() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    console.error("[Login] LOGIN_STARTED");
 
     try {
       const endpoint = "/api/auth/login";
-      console.error("[Login] Attempting unified login");
       
       const response = await fetch(endpoint, {
         method: "POST",
@@ -207,24 +197,17 @@ export default function Login() {
         throw new Error("Login returned invalid response format");
       }
 
-      console.error("[Login] LOGIN_SUCCESS, payload keys:", Object.keys(data));
-      console.error("[Login] Login response:", data);
-      
       if (!data?.success) {
         throw new Error("Login failed");
       }
       
-      console.error("[Login] TOKEN_SAVED: true");
-      console.error("[Login] ROLE_RESOLVED:", data.user?.role?.toUpperCase() || "UNKNOWN");
-
       const userRole = data?.user?.role;
       if (!userRole) {
         throw new Error("Role not found. Please contact admin.");
       }
 
       const targetPath = resolveTargetRoute(userRole, data.user?.mustChangePassword);
-      console.error("[Login] REDIRECT_TO:", targetPath);
-      
+
       toast({
         title: "Success",
         description: "Logged in successfully",
@@ -235,7 +218,6 @@ export default function Login() {
       hasRedirected.current = true;
       setLocation(targetPath);
     } catch (error: any) {
-      console.error("[Login] Login failed:", error.message);
       toast({
         title: "Error",
         description: error.message || "Invalid credentials",

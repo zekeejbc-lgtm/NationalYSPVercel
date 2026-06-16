@@ -17,7 +17,13 @@ import { useToast } from "@/hooks/use-toast";
 import { usePagination } from "@/hooks/use-pagination";
 import { checkAuthSession } from "@/lib/authSession";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
-import { getDisplayImageUrl, IMAGE_DEBUG_ENABLED } from "@/lib/driveUtils";
+import {
+  buildGoogleDriveUploadFileName,
+  getDisplayImageUrl,
+  getGoogleDriveUploadErrorMessage,
+  getGoogleDriveUploadUrl,
+  IMAGE_DEBUG_ENABLED,
+} from "@/lib/driveUtils";
 import AdaptiveDashboardNav, { type AdaptiveDashboardTab } from "@/components/dashboard/AdaptiveDashboardNav";
 import UniversalDashboardHeader from "@/components/dashboard/UniversalDashboardHeader";
 import DashboardTabSkeleton from "@/components/dashboard/DashboardTabSkeleton";
@@ -154,6 +160,9 @@ export default function ChapterDashboard() {
   const [projectName, setProjectName] = useState("");
   const [projectWriteup, setProjectWriteup] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState("");
+  const [photoInputKey, setPhotoInputKey] = useState(0);
   const [facebookLink, setFacebookLink] = useState("");
   const [uploading, setUploading] = useState(false);
   const [collaborationType, setCollaborationType] = useState<"NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL">("NONE");
@@ -172,6 +181,9 @@ export default function ChapterDashboard() {
   const [editProjectName, setEditProjectName] = useState("");
   const [editProjectWriteup, setEditProjectWriteup] = useState("");
   const [editPhotoUrl, setEditPhotoUrl] = useState("");
+  const [editSelectedPhotoFile, setEditSelectedPhotoFile] = useState<File | null>(null);
+  const [editPhotoPreviewUrl, setEditPhotoPreviewUrl] = useState("");
+  const [editPhotoInputKey, setEditPhotoInputKey] = useState(0);
   const [editFacebookPostLink, setEditFacebookPostLink] = useState("");
   const [editCollaborationType, setEditCollaborationType] = useState<"NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL">("NONE");
   const [editCollaboratingChapterId, setEditCollaboratingChapterId] = useState<string | null>(null);
@@ -363,7 +375,6 @@ export default function ChapterDashboard() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      console.error("[Chapter] DASHBOARD_MOUNTED, checking auth...");
       setLoading(true);
       setAuthError(null);
 
@@ -378,7 +389,6 @@ export default function ChapterDashboard() {
         }
 
         if (authResult.status === "unauthenticated") {
-          console.error("[Chapter] Not authenticated, redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -387,19 +397,12 @@ export default function ChapterDashboard() {
           return;
         }
 
-        console.error("[Chapter] Auth check result:", {
-          authenticated: true,
-          role: authResult.user.role,
-        });
-
         if (authResult.user.role === "admin") {
-          console.error("[Chapter] User is admin, redirecting to /admin");
           setLocation("/admin");
           return;
         }
 
         if (authResult.user.role !== "chapter") {
-          console.error("[Chapter] Unknown role:", authResult.user.role, "redirecting to /login");
           queryClient.clear();
           clearSessionQueryPersistence();
           setAuthenticated(false);
@@ -408,10 +411,6 @@ export default function ChapterDashboard() {
           return;
         }
 
-        console.error(
-          "[Chapter] AUTH_STATE: authenticated=true, role=CHAPTER, chapterName:",
-          authResult.user.chapterName,
-        );
         const chapterUser: AuthUser = {
           id: authResult.user.id,
           username: authResult.user.username,
@@ -426,8 +425,7 @@ export default function ChapterDashboard() {
         if (chapterUser.mustChangePassword) {
           setShowPasswordDialog(true);
         }
-      } catch (error) {
-        console.error("[Chapter] Auth check error:", error);
+      } catch {
         setAuthenticated(false);
         setAuthUser(null);
         setAuthError("Unable to verify your session right now. Please retry.");
@@ -456,6 +454,7 @@ export default function ChapterDashboard() {
       setProjectName("");
       setProjectWriteup("");
       setPhotoUrl("");
+      clearSelectedReportPhoto();
       setFacebookLink("");
       setCollaborationType("NONE");
       setCollaboratingChapterId(null);
@@ -534,11 +533,37 @@ export default function ChapterDashboard() {
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout", {});
-    console.error("[Chapter] Logged out successfully");
     queryClient.clear();
     clearSessionQueryPersistence();
     setLocation("/");
   };
+
+  const revokeObjectUrl = (url: string) => {
+    if (url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const clearSelectedReportPhoto = () => {
+    revokeObjectUrl(photoPreviewUrl);
+    setSelectedPhotoFile(null);
+    setPhotoPreviewUrl("");
+    setPhotoInputKey((current) => current + 1);
+  };
+
+  const clearSelectedEditReportPhoto = () => {
+    revokeObjectUrl(editPhotoPreviewUrl);
+    setEditSelectedPhotoFile(null);
+    setEditPhotoPreviewUrl("");
+    setEditPhotoInputKey((current) => current + 1);
+  };
+
+  useEffect(() => {
+    return () => {
+      revokeObjectUrl(photoPreviewUrl);
+      revokeObjectUrl(editPhotoPreviewUrl);
+    };
+  }, [photoPreviewUrl, editPhotoPreviewUrl]);
 
   // Helper function to extract base64 cleanly
   const fileToBase64 = (file: File): Promise<string> => {
@@ -550,54 +575,68 @@ export default function ChapterDashboard() {
     });
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setUploading(true);
-    
-    try {
-      // 1. Fetch the secure Google Apps Script URL from the backend
-      const urlResponse = await fetch("/api/upload-url");
-      const urlData = await urlResponse.json();
+  const uploadImageToGoogleDrive = async (file: File, purpose: string) => {
+    const urlResponse = await fetch("/api/upload-url");
+    const urlData = await urlResponse.json();
 
-      if (!urlData.success || !urlData.url) {
-        throw new Error(urlData.error || "Failed to retrieve upload configuration.");
-      }
-
-      const gasUrl = urlData.url;
-
-      // 2. Convert file to Base64
-      const base64String = await fileToBase64(file);
-
-      // 3. Send directly to Google Drive via GAS Web App
-      const uploadResponse = await fetch(gasUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify({
-          base64: base64String,
-          fileName: file.name,
-          mimeType: file.type
-        })
-      });
-
-      const uploadData = await uploadResponse.json();
-
-      if (uploadData.success && uploadData.url) {
-        setPhotoUrl(uploadData.url); 
-      } else {
-        throw new Error(uploadData.error || "Google Drive upload rejected the file.");
-      }
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message || "Failed to upload image", variant: "destructive" });
-    } finally {
-      setUploading(false);
+    if (!urlData.success || !urlData.url) {
+      throw new Error(urlData.error || "Failed to retrieve upload configuration.");
     }
+
+    const base64String = await fileToBase64(file);
+
+    const uploadFileName = buildGoogleDriveUploadFileName({
+      originalFileName: file.name,
+      uploaderUsername: authUser?.username,
+      uploadLocation: authUser?.chapterName
+        ? `chapter-dashboard-${authUser.chapterName}`
+        : "chapter-dashboard",
+      purpose,
+    });
+
+    const uploadResponse = await fetch(urlData.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8",
+      },
+      body: JSON.stringify({
+        base64: base64String,
+        fileName: uploadFileName,
+        mimeType: file.type,
+      }),
+    });
+
+    const uploadData = await uploadResponse.json();
+    const uploadedUrl = getGoogleDriveUploadUrl(uploadData);
+
+    if (uploadData.success && uploadedUrl) {
+      return uploadedUrl;
+    }
+
+    throw new Error(uploadData.error || "Google Drive upload rejected the file.");
   };
 
-  const handleSubmitReport = (e: React.FormEvent) => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      clearSelectedReportPhoto();
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid image", description: "Please select an image file.", variant: "destructive" });
+      e.target.value = "";
+      clearSelectedReportPhoto();
+      return;
+    }
+
+    revokeObjectUrl(photoPreviewUrl);
+    setSelectedPhotoFile(file);
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setPhotoUrl("");
+  };
+
+  const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectName || !projectWriteup || !facebookLink) {
       toast({ title: "Error", description: "Please fill all required fields", variant: "destructive" });
@@ -607,10 +646,25 @@ export default function ChapterDashboard() {
       toast({ title: "Error", description: "Please select the collaborating chapter", variant: "destructive" });
       return;
     }
+
+    let resolvedPhotoUrl = photoUrl || null;
+    if (selectedPhotoFile) {
+      setUploading(true);
+      try {
+        resolvedPhotoUrl = await uploadImageToGoogleDrive(selectedPhotoFile, "submit-report-photo");
+        setPhotoUrl(resolvedPhotoUrl);
+      } catch (error) {
+        toast({ title: "Error", description: getGoogleDriveUploadErrorMessage(error), variant: "destructive" });
+        return;
+      } finally {
+        setUploading(false);
+      }
+    }
+
     submitReportMutation.mutate({
       projectName,
       projectWriteup,
-      photoUrl: photoUrl || null,
+      photoUrl: resolvedPhotoUrl,
       facebookPostLink: facebookLink,
       collaborationType,
       collaboratingChapterId: collaborationType === "ANOTHER_CHAPTER" ? collaboratingChapterId : null
@@ -622,6 +676,7 @@ export default function ChapterDashboard() {
     setEditProjectName("");
     setEditProjectWriteup("");
     setEditPhotoUrl("");
+    clearSelectedEditReportPhoto();
     setEditFacebookPostLink("");
     setEditCollaborationType("NONE");
     setEditCollaboratingChapterId(null);
@@ -633,59 +688,32 @@ export default function ChapterDashboard() {
     setEditProjectName(report.projectName);
     setEditProjectWriteup(report.projectWriteup);
     setEditPhotoUrl((report.photoUrl || "").trim());
+    clearSelectedEditReportPhoto();
     setEditFacebookPostLink(report.facebookPostLink);
     setEditCollaborationType((report.collaborationType || "NONE") as "NONE" | "ANOTHER_CHAPTER" | "YSP_NATIONAL");
     setEditCollaboratingChapterId(report.collaboratingChapterId || null);
   };
 
-  const handleEditImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEditImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    setEditUploading(true);
-
-    try {
-      // 1. Fetch the secure Google Apps Script URL from the backend
-      const urlResponse = await fetch("/api/upload-url");
-      const urlData = await urlResponse.json();
-
-      if (!urlData.success || !urlData.url) {
-        throw new Error(urlData.error || "Failed to retrieve upload configuration.");
-      }
-
-      const gasUrl = urlData.url;
-
-      // 2. Convert file to Base64
-      const base64String = await fileToBase64(file);
-
-      // 3. Send directly to Google Drive via GAS Web App
-      const uploadResponse = await fetch(gasUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: JSON.stringify({
-          base64: base64String,
-          fileName: file.name,
-          mimeType: file.type
-        })
-      });
-
-      const uploadData = await uploadResponse.json();
-
-      if (uploadData.success && uploadData.url) {
-        setEditPhotoUrl(uploadData.url); 
-      } else {
-        throw new Error(uploadData.error || "Google Drive upload rejected the file.");
-      }
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message || "Failed to upload image", variant: "destructive" });
-    } finally {
-      setEditUploading(false);
+    if (!file) {
+      clearSelectedEditReportPhoto();
+      return;
     }
+
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid image", description: "Please select an image file.", variant: "destructive" });
+      e.target.value = "";
+      clearSelectedEditReportPhoto();
+      return;
+    }
+
+    revokeObjectUrl(editPhotoPreviewUrl);
+    setEditSelectedPhotoFile(file);
+    setEditPhotoPreviewUrl(URL.createObjectURL(file));
   };
 
-  const handleUpdateReport = (e: React.FormEvent) => {
+  const handleUpdateReport = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!editingReportId) {
@@ -702,12 +730,26 @@ export default function ChapterDashboard() {
       return;
     }
 
+    let resolvedEditPhotoUrl = editPhotoUrl || null;
+    if (editSelectedPhotoFile) {
+      setEditUploading(true);
+      try {
+        resolvedEditPhotoUrl = await uploadImageToGoogleDrive(editSelectedPhotoFile, "edit-report-photo");
+        setEditPhotoUrl(resolvedEditPhotoUrl);
+      } catch (error) {
+        toast({ title: "Error", description: getGoogleDriveUploadErrorMessage(error), variant: "destructive" });
+        return;
+      } finally {
+        setEditUploading(false);
+      }
+    }
+
     updateReportMutation.mutate({
       id: editingReportId,
       data: {
         projectName: editProjectName,
         projectWriteup: editProjectWriteup,
-        photoUrl: editPhotoUrl || null,
+        photoUrl: resolvedEditPhotoUrl,
         facebookPostLink: editFacebookPostLink,
         collaborationType: editCollaborationType,
         collaboratingChapterId: editCollaborationType === "ANOTHER_CHAPTER" ? editCollaboratingChapterId : null,
@@ -1012,6 +1054,7 @@ export default function ChapterDashboard() {
                       <Label htmlFor="photo">Photo</Label>
                       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                         <Input
+                          key={photoInputKey}
                           id="photo"
                           type="file"
                           accept="image/*"
@@ -1019,9 +1062,16 @@ export default function ChapterDashboard() {
                           className="w-full sm:max-w-xs"
                           data-testid="input-photo"
                         />
-                        {uploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
-                        {photoUrl && (
-                          <img src={getDisplayImageUrl(photoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
+                        {uploading && <span className="text-sm text-muted-foreground">Uploading to Drive...</span>}
+                        {selectedPhotoFile && !uploading && (
+                          <span className="text-sm text-muted-foreground">Selected. Uploads when you submit.</span>
+                        )}
+                        {(photoPreviewUrl || photoUrl) && (
+                          <img
+                            src={photoPreviewUrl || getDisplayImageUrl(photoUrl)}
+                            alt="Preview"
+                            className="h-20 w-20 object-cover rounded"
+                          />
                         )}
                       </div>
                     </div>
@@ -1082,11 +1132,11 @@ export default function ChapterDashboard() {
                     <Button 
                       type="submit" 
                       className="w-full sm:w-auto"
-                      disabled={submitReportMutation.isPending}
+                      disabled={submitReportMutation.isPending || uploading}
                       data-testid="button-submit-report"
                     >
                       <Upload className="h-4 w-4 mr-2" />
-                      {submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
+                      {uploading ? "Uploading..." : submitReportMutation.isPending ? "Submitting..." : "Submit Report"}
                     </Button>
                   </form>
                 </CardContent>
@@ -1377,6 +1427,7 @@ export default function ChapterDashboard() {
                       <Label htmlFor="editPhoto">Photo</Label>
                       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
                         <Input
+                          key={editPhotoInputKey}
                           id="editPhoto"
                           type="file"
                           accept="image/*"
@@ -1384,9 +1435,16 @@ export default function ChapterDashboard() {
                           className="w-full sm:max-w-xs"
                           data-testid="input-edit-photo"
                         />
-                        {editUploading && <span className="text-sm text-muted-foreground">Uploading...</span>}
-                        {editPhotoUrl && (
-                          <img src={getDisplayImageUrl(editPhotoUrl)} alt="Preview" className="h-20 w-20 object-cover rounded" />
+                        {editUploading && <span className="text-sm text-muted-foreground">Uploading to Drive...</span>}
+                        {editSelectedPhotoFile && !editUploading && (
+                          <span className="text-sm text-muted-foreground">Selected. Uploads when you save.</span>
+                        )}
+                        {(editPhotoPreviewUrl || editPhotoUrl) && (
+                          <img
+                            src={editPhotoPreviewUrl || getDisplayImageUrl(editPhotoUrl)}
+                            alt="Preview"
+                            className="h-20 w-20 object-cover rounded"
+                          />
                         )}
                       </div>
                     </div>
@@ -1462,7 +1520,7 @@ export default function ChapterDashboard() {
                         data-testid="button-save-edited-report"
                       >
                         <Save className="h-4 w-4 mr-2" />
-                        {updateReportMutation.isPending ? "Saving..." : "Save Changes"}
+                        {editUploading ? "Uploading..." : updateReportMutation.isPending ? "Saving..." : "Save Changes"}
                       </Button>
                     </div>
                   </form>

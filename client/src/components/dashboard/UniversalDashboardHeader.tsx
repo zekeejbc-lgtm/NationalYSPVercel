@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Monitor, Moon, Sun, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useTheme } from "@/hooks/use-theme";
 import MyProfile from "@/pages/MyProfile";
 
@@ -89,6 +89,8 @@ export default function UniversalDashboardHeader({ title, subtitle, onLogout }: 
 
       <Dialog open={profileModalOpen} onOpenChange={setProfileModalOpen}>
         <DialogContent className="max-w-4xl p-0 overflow-hidden" hideClose>
+          <DialogTitle className="sr-only">My Profile</DialogTitle>
+          <DialogDescription className="sr-only">Manage your account information and password.</DialogDescription>
           <div className="flex h-[85dvh] flex-col">
             <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
               <div>

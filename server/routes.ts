@@ -248,7 +248,7 @@ function normalizeDriveUrl(url: string): string {
     return url;
   }
 
-  const normalized = `https://drive.google.com/uc?export=view&id=${fileId}`;
+  const normalized = `https://drive.google.com/thumbnail?id=${fileId}&sz=w4000`;
   console.error("[image] normalized drive url", {
     originalUrl: url,
     normalizedUrl: normalized,
@@ -262,6 +262,11 @@ const imageProxyAllowedHosts = new Set([
   "imgbb.com",
   "www.imgbb.com",
   "i.ibb.co",
+  "drive.google.com",
+  "www.drive.google.com",
+  "docs.google.com",
+  "www.docs.google.com",
+  "drive.usercontent.google.com",
 ]);
 
 const IMAGE_RELAY_BASE_URL = process.env.IMAGE_RELAY_BASE_URL || "https://images.weserv.nl/";
@@ -305,6 +310,10 @@ function extractOgImageFromHtml(html: string): string | null {
 async function resolveImageProxyTarget(rawUrl: string): Promise<string> {
   const parsed = new URL(rawUrl);
   const host = parsed.hostname.toLowerCase();
+
+  if (isGoogleDriveLikeUrl(rawUrl)) {
+    return normalizeDriveUrl(rawUrl);
+  }
 
   if (host === "ibb.co" || host === "www.ibb.co" || host === "imgbb.com" || host === "www.imgbb.com") {
     const pageResponse = await fetchWithImageProxyTimeout(rawUrl, { redirect: "follow" });
@@ -2367,7 +2376,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.redirect(302, getRelayedImageUrl(resolvedUrl));
       }
 
-      const imageResponse = await fetchWithImageProxyTimeout(resolvedUrl, { redirect: "follow" });
+      const imageResponse = await fetchWithImageProxyTimeout(resolvedUrl, {
+        redirect: "follow",
+        headers: LINKED_IMAGE_FETCH_HEADERS,
+      });
       if (!imageResponse.ok) {
         return res.status(imageResponse.status).json({ error: "Failed to fetch image" });
       }

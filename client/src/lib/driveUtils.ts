@@ -3,6 +3,14 @@ export const DEFAULT_IMAGE_FALLBACK_SRC = "/images/ysp-logo.png";
 
 const FALLBACK_APPLIED_DATASET_KEY = "fallbackApplied";
 
+type GoogleDriveUploadFileNameOptions = {
+  originalFileName: string;
+  uploaderUsername?: string | null;
+  uploadLocation: string;
+  purpose: string;
+  uploadedAt?: Date;
+};
+
 export function extractDriveFileId(url: string): string | null {
   if (!url) return null;
 
@@ -44,7 +52,7 @@ export function normalizeDriveImageUrl(url: string): string {
 
   const fileId = extractDriveFileId(url);
   if (fileId) {
-    const normalizedUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
+    const normalizedUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w4000`;
     if (IMAGE_DEBUG_ENABLED) {
       console.error("[Image Debug] Normalized Drive URL", {
         originalUrl: url,
@@ -101,7 +109,12 @@ export function getDisplayImageUrl(imageUrl: string): string {
   }
 
   if (isDriveUrl(sanitizedUrl)) {
-    return normalizeDriveImageUrl(sanitizedUrl);
+    const normalizedUrl = normalizeDriveImageUrl(sanitizedUrl);
+    const proxyUrl = getImageProxyUrl(normalizedUrl);
+    if (IMAGE_DEBUG_ENABLED) {
+      console.error("[Image Debug] Using Drive image proxy URL", { imageUrl: sanitizedUrl, normalizedUrl, proxyUrl });
+    }
+    return proxyUrl;
   }
 
   if (isIbbPageUrl(sanitizedUrl)) {
@@ -113,6 +126,93 @@ export function getDisplayImageUrl(imageUrl: string): string {
   }
 
   return sanitizedUrl;
+}
+
+export function getGoogleDriveUploadUrl(uploadData: unknown): string {
+  if (!uploadData || typeof uploadData !== "object") {
+    return "";
+  }
+
+  const data = uploadData as Record<string, unknown>;
+  const candidates = [
+    data.url,
+    data.webViewLink,
+    data.viewLink,
+    data.publicUrl,
+    data.publicURL,
+    data.fileUrl,
+    data.fileURL,
+    data.driveUrl,
+    data.driveURL,
+    data.downloadUrl,
+    data.downloadURL,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return "";
+}
+
+export function getGoogleDriveUploadErrorMessage(error: unknown): string {
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Failed to upload image";
+
+  if (/access denied:\s*driveapp/i.test(rawMessage)) {
+    return "Google Drive rejected the upload because the Apps Script does not have Drive access. Redeploy or reauthorize the script with Drive permission, and make sure the target folder is writable by the script owner.";
+  }
+
+  return rawMessage;
+}
+
+function getSafeFileNameSegment(value?: string | null): string {
+  return (
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "unknown"
+  );
+}
+
+function getFileExtension(fileName: string): string {
+  const match = fileName.match(/\.([a-zA-Z0-9]{1,12})$/);
+  return match ? `.${match[1].toLowerCase()}` : "";
+}
+
+function formatUploadDateTime(value: Date): string {
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return [
+    value.getFullYear(),
+    pad(value.getMonth() + 1),
+    pad(value.getDate()),
+  ].join("-") + `_${pad(value.getHours())}-${pad(value.getMinutes())}-${pad(value.getSeconds())}`;
+}
+
+export function buildGoogleDriveUploadFileName({
+  originalFileName,
+  uploaderUsername,
+  uploadLocation,
+  purpose,
+  uploadedAt = new Date(),
+}: GoogleDriveUploadFileNameOptions): string {
+  const extension = getFileExtension(originalFileName);
+  const baseName = [
+    getSafeFileNameSegment(uploaderUsername),
+    getSafeFileNameSegment(uploadLocation),
+    getSafeFileNameSegment(purpose),
+    formatUploadDateTime(uploadedAt),
+  ].join("_");
+
+  return `${baseName}${extension}`;
 }
 
 export function applyImageFallback(target: HTMLImageElement, fallbackSrc = DEFAULT_IMAGE_FALLBACK_SRC): boolean {

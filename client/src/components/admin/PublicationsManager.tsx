@@ -18,8 +18,11 @@ import type { Chapter, Publication } from "@shared/schema";
 import { format } from "date-fns";
 import {
   applyImageFallback,
+  buildGoogleDriveUploadFileName,
   DEFAULT_IMAGE_FALLBACK_SRC,
   getDisplayImageUrl,
+  getGoogleDriveUploadErrorMessage,
+  getGoogleDriveUploadUrl,
   resetImageFallback,
 } from "@/lib/driveUtils";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
@@ -296,6 +299,12 @@ export default function PublicationsManager() {
 
       // 2. Convert file to Base64 using the clean helper
       const base64String = await fileToBase64(selectedPhotoFile);
+      const uploadFileName = buildGoogleDriveUploadFileName({
+        originalFileName: selectedPhotoFile.name,
+        uploaderUsername: "admin",
+        uploadLocation: "admin-publications-manager",
+        purpose: editingPublication ? "edit-publication-image" : "create-publication-image",
+      });
 
       // 3. Send directly to Google Drive via GAS Web App (Bypasses Vercel Limit)
       const uploadResponse = await fetch(gasUrl, {
@@ -306,7 +315,7 @@ export default function PublicationsManager() {
         },
         body: JSON.stringify({
           base64: base64String,
-          fileName: selectedPhotoFile.name,
+          fileName: uploadFileName,
           mimeType: selectedPhotoFile.type
         })
       });
@@ -314,8 +323,10 @@ export default function PublicationsManager() {
       // 4. Parse the Drive URL returned from the GAS script
       const uploadData = await uploadResponse.json();
 
-      if (uploadData.success && uploadData.url) {
-        return uploadData.url; 
+      const uploadedUrl = getGoogleDriveUploadUrl(uploadData);
+
+      if (uploadData.success && uploadedUrl) {
+        return uploadedUrl;
       } else {
         throw new Error(uploadData.error || "Google Drive upload rejected the file.");
       }
@@ -690,7 +701,7 @@ export default function PublicationsManager() {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to upload image",
+        description: getGoogleDriveUploadErrorMessage(error),
         variant: "destructive",
       });
     }
