@@ -174,6 +174,22 @@ export default function Admin() {
     }
   };
 
+  const handleForceRefresh = async () => {
+    try {
+      await apiRequest("POST", "/api/admin/force-refresh");
+      toast({
+        title: "Refresh queued",
+        description: "Active devices will clear cache and reload on their next status check.",
+      });
+    } catch {
+      toast({
+        title: "Refresh failed",
+        description: "Unable to queue the universal refresh right now.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const isDashboardBootstrapLoading = loading || (authenticated && (isBirthdaysPending || isHouseholdSummaryPending));
 
   if (isDashboardBootstrapLoading) {
@@ -228,6 +244,7 @@ export default function Admin() {
         title="Admin Dashboard"
         subtitle="Manage website content"
         onLogout={handleLogout}
+        onForceRefresh={handleForceRefresh}
       />
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-24 md:pb-8">

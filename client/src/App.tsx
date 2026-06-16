@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Switch, Route, useLocation } from "wouter";
-import { queryClient } from "./lib/queryClient";
+import { clearSessionQueryPersistence, queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -249,9 +249,109 @@ function setCanonicalLink(href: string) {
 
 const LAST_ROUTE_STORAGE_KEY = "ysp:last-route:v1";
 const SCROLL_POSITIONS_STORAGE_KEY = "ysp:scroll-positions:v1";
+const APP_STATUS_STORAGE_KEY = "ysp:app-status:v1";
+const APP_STATUS_POLL_INTERVAL_MS = 45000;
+
+type AppControlKey =
+  | "force_refresh"
+  | "accounts"
+  | "chapters"
+  | "contact"
+  | "content"
+  | "documents"
+  | "kpis"
+  | "members"
+  | "publications"
+  | "requests"
+  | "volunteer";
+
+type AppStatus = {
+  buildVersion: string;
+  checkedAt: string;
+  versions: Record<AppControlKey, number>;
+};
+
+const DATA_VERSION_QUERY_PREFIXES: Record<Exclude<AppControlKey, "force_refresh">, string[]> = {
+  accounts: ["/api/all-accounts", "/api/admin-users", "/api/chapter-users", "/api/barangay-users"],
+  chapters: ["/api/chapters", "/api/leaderboard", "/api/barangay-leaderboard"],
+  contact: ["/api/contact-info"],
+  content: ["/api/stats", "/api/home-content", "/api/programs", "/api/chapters/showcase-ranking"],
+  documents: ["/api/important-documents", "/api/chapter-document-acks", "/api/mou-submissions"],
+  kpis: ["/api/chapter-kpis", "/api/kpi-templates", "/api/kpi-completions", "/api/barangay-kpi-completions", "/api/leaderboard"],
+  members: ["/api/members", "/api/member-totals", "/api/household-summary", "/api/birthdays-today", "/api/barangay-users", "/api/barangay-leaderboard"],
+  publications: ["/api/publications", "/api/project-reports", "/api/leaderboard", "/api/chapters/showcase-ranking"],
+  requests: ["/api/chapter-requests", "/api/national-requests"],
+  volunteer: ["/api/volunteer-opportunities"],
+};
 
 function canUseSessionStorage() {
   return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
+}
+
+function canUseLocalStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function readStoredAppStatus() {
+  if (!canUseLocalStorage()) {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(APP_STATUS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as AppStatus) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAppStatus(status: AppStatus) {
+  if (!canUseLocalStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(APP_STATUS_STORAGE_KEY, JSON.stringify(status));
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+function getQueryKeyUrl(queryKey: readonly unknown[]) {
+  return typeof queryKey[0] === "string" ? queryKey[0] : "";
+}
+
+function invalidateDataVersionGroup(group: Exclude<AppControlKey, "force_refresh">) {
+  const prefixes = DATA_VERSION_QUERY_PREFIXES[group];
+  queryClient.invalidateQueries({
+    predicate: (query) => {
+      const url = getQueryKeyUrl(query.queryKey);
+      return prefixes.some((prefix) => url.startsWith(prefix));
+    },
+  });
+}
+
+async function clearBrowserCachesForReload() {
+  queryClient.clear();
+  clearSessionQueryPersistence();
+
+  if ("caches" in window) {
+    try {
+      const names = await window.caches.keys();
+      await Promise.all(names.map((name) => window.caches.delete(name)));
+    } catch {
+      // Browser cache cleanup is best-effort.
+    }
+  }
+
+  if ("serviceWorker" in navigator) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.update()));
+    } catch {
+      // Service worker update checks are best-effort.
+    }
+  }
 }
 
 function shouldPersistRoute(route: string) {
@@ -323,6 +423,97 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+function AppStatusWatcher() {
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+
+    const applyStatus = async (status: AppStatus) => {
+      const previousStatus = readStoredAppStatus();
+
+      if (!previousStatus) {
+        writeStoredAppStatus(status);
+        return;
+      }
+
+      const forceRefreshChanged =
+        status.versions.force_refresh !== previousStatus.versions.force_refresh ||
+        status.buildVersion !== previousStatus.buildVersion;
+
+      if (forceRefreshChanged) {
+        writeStoredAppStatus(status);
+        await clearBrowserCachesForReload();
+        if (!cancelled) {
+          window.location.reload();
+        }
+        return;
+      }
+
+      for (const group of Object.keys(DATA_VERSION_QUERY_PREFIXES) as Array<Exclude<AppControlKey, "force_refresh">>) {
+        if (status.versions[group] !== previousStatus.versions[group]) {
+          invalidateDataVersionGroup(group);
+        }
+      }
+
+      writeStoredAppStatus(status);
+    };
+
+    const checkAppStatus = async () => {
+      if (cancelled || inFlight) {
+        return;
+      }
+
+      inFlight = true;
+      try {
+        const response = await fetch("/api/app-status", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const status = (await response.json()) as AppStatus;
+        if (!cancelled && status?.versions) {
+          await applyStatus(status);
+        }
+      } catch {
+        // Status checks should never interrupt normal app use.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void checkAppStatus();
+    const intervalId = window.setInterval(() => {
+      void checkAppStatus();
+    }, APP_STATUS_POLL_INTERVAL_MS);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void checkAppStatus();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      void checkAppStatus();
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
+  return null;
 }
 
 function AppContent() {
@@ -528,6 +719,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <ConfirmDialogProvider>
+            <AppStatusWatcher />
             <AppContent />
             <Toaster />
           </ConfirmDialogProvider>

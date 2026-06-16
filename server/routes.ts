@@ -85,6 +85,208 @@ type VolunteerOpportunityWithAffiliation = VolunteerOpportunity & {
 };
 
 const VOLUNTEER_AFFILIATION_TABLE = "volunteer_opportunity_affiliations";
+const APP_CONTROL_TABLE = "app_control_versions";
+const APP_CONTROL_KEYS = [
+  "force_refresh",
+  "accounts",
+  "chapters",
+  "contact",
+  "content",
+  "documents",
+  "kpis",
+  "members",
+  "publications",
+  "requests",
+  "volunteer",
+] as const;
+
+type AppControlKey = typeof APP_CONTROL_KEYS[number];
+type AppStatus = {
+  buildVersion: string;
+  checkedAt: string;
+  versions: Record<AppControlKey, number>;
+};
+
+const memoryAppControlVersions = APP_CONTROL_KEYS.reduce(
+  (versions, key) => {
+    versions[key] = 0;
+    return versions;
+  },
+  {} as Record<AppControlKey, number>,
+);
+
+let appControlInfraEnsured = false;
+let appControlInfraEnsurePromise: Promise<void> | null = null;
+
+function getBuildVersion() {
+  return (
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.COMMIT_SHA ||
+    process.env.npm_package_version ||
+    "development"
+  );
+}
+
+async function ensureAppControlInfrastructure() {
+  if (appControlInfraEnsured || !pool) {
+    return;
+  }
+
+  if (!appControlInfraEnsurePromise) {
+    appControlInfraEnsurePromise = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${APP_CONTROL_TABLE} (
+          key text PRIMARY KEY,
+          value integer NOT NULL DEFAULT 0,
+          updated_at timestamp NOT NULL DEFAULT now()
+        )
+      `);
+
+      for (const key of APP_CONTROL_KEYS) {
+        await pool.query(
+          `
+          INSERT INTO ${APP_CONTROL_TABLE} (key, value)
+          VALUES ($1, 0)
+          ON CONFLICT (key) DO NOTHING
+          `,
+          [key],
+        );
+      }
+
+      appControlInfraEnsured = true;
+    })().catch((error) => {
+      appControlInfraEnsurePromise = null;
+      throw error;
+    });
+  }
+
+  await appControlInfraEnsurePromise;
+}
+
+async function getAppStatus(): Promise<AppStatus> {
+  const versions = { ...memoryAppControlVersions };
+
+  if (pool) {
+    try {
+      await ensureAppControlInfrastructure();
+      const result = await pool.query<{ key: AppControlKey; value: number }>(
+        `SELECT key, value FROM ${APP_CONTROL_TABLE}`,
+      );
+
+      for (const row of result.rows) {
+        if ((APP_CONTROL_KEYS as readonly string[]).includes(row.key)) {
+          versions[row.key] = Number(row.value) || 0;
+        }
+      }
+    } catch (error: any) {
+      console.error("[app-control] Failed to read app status; using in-memory fallback", {
+        message: error?.message,
+      });
+    }
+  }
+
+  return {
+    buildVersion: getBuildVersion(),
+    checkedAt: new Date().toISOString(),
+    versions,
+  };
+}
+
+async function bumpAppControlVersion(key: AppControlKey) {
+  memoryAppControlVersions[key] += 1;
+
+  if (!pool) {
+    return memoryAppControlVersions[key];
+  }
+
+  try {
+    await ensureAppControlInfrastructure();
+    const result = await pool.query<{ value: number }>(
+      `
+      INSERT INTO ${APP_CONTROL_TABLE} (key, value, updated_at)
+      VALUES ($1, 1, now())
+      ON CONFLICT (key)
+      DO UPDATE SET value = ${APP_CONTROL_TABLE}.value + 1, updated_at = now()
+      RETURNING value
+      `,
+      [key],
+    );
+
+    const value = Number(result.rows[0]?.value) || memoryAppControlVersions[key];
+    memoryAppControlVersions[key] = value;
+    return value;
+  } catch (error: any) {
+    console.error("[app-control] Failed to bump version; using in-memory fallback", {
+      key,
+      message: error?.message,
+    });
+    return memoryAppControlVersions[key];
+  }
+}
+
+function getAppControlKeysForMutation(pathname: string): AppControlKey[] {
+  if (pathname.startsWith("/api/admin/force-refresh")) {
+    return [];
+  }
+
+  if (
+    pathname.startsWith("/api/admin-users") ||
+    pathname.startsWith("/api/chapter-users") ||
+    pathname.startsWith("/api/barangay-users") ||
+    pathname.startsWith("/api/reset-password") ||
+    pathname.startsWith("/api/unlock-account")
+  ) {
+    return ["accounts"];
+  }
+
+  if (pathname.startsWith("/api/chapters")) {
+    return ["chapters", "accounts"];
+  }
+
+  if (pathname.startsWith("/api/members") || pathname.startsWith("/api/upload/member-photo")) {
+    return ["members"];
+  }
+
+  if (pathname.startsWith("/api/publications") || pathname.startsWith("/api/project-reports")) {
+    return ["publications"];
+  }
+
+  if (pathname.startsWith("/api/programs") || pathname.startsWith("/api/stats") || pathname.startsWith("/api/home-content")) {
+    return ["content"];
+  }
+
+  if (pathname.startsWith("/api/contact-info")) {
+    return ["contact"];
+  }
+
+  if (pathname.startsWith("/api/volunteer-opportunities")) {
+    return ["volunteer"];
+  }
+
+  if (
+    pathname.startsWith("/api/chapter-kpis") ||
+    pathname.startsWith("/api/kpi-templates") ||
+    pathname.startsWith("/api/kpi-completions") ||
+    pathname.startsWith("/api/barangay-kpi-completions")
+  ) {
+    return ["kpis"];
+  }
+
+  if (
+    pathname.startsWith("/api/important-documents") ||
+    pathname.startsWith("/api/chapter-document-acks") ||
+    pathname.startsWith("/api/mou-submissions")
+  ) {
+    return ["documents"];
+  }
+
+  if (pathname.startsWith("/api/chapter-requests") || pathname.startsWith("/api/national-requests")) {
+    return ["requests"];
+  }
+
+  return [];
+}
 
 const DEFAULT_DATA_INIT_TIMEOUT_MS = 6000;
 
@@ -2271,6 +2473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await ensureChapterRequestInfra();
       await ensurePublicationsModerationInfra();
       await ensureChapterWebsiteInfra();
+      await ensureAppControlInfrastructure();
     } catch (error: any) {
       console.error("[startup] Failed to ensure startup schema infra", {
         message: error?.message,
@@ -2347,6 +2550,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .type("application/xml")
       .set("Cache-Control", "public, max-age=3600")
       .send(sitemap);
+  });
+
+  app.get("/api/app-status", async (_req, res) => {
+    const status = await getAppStatus();
+    res
+      .set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+      .json(status);
+  });
+
+  app.use("/api", (req, res, next) => {
+    const shouldTrackMutation = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
+    if (!shouldTrackMutation) {
+      next();
+      return;
+    }
+
+    res.on("finish", () => {
+      if (res.statusCode >= 400) {
+        return;
+      }
+
+      const requestPath = req.originalUrl.split("?")[0] || req.path;
+      const keys = getAppControlKeysForMutation(requestPath);
+      for (const key of keys) {
+        void bumpAppControlVersion(key);
+      }
+    });
+
+    next();
+  });
+
+  app.post("/api/admin/force-refresh", requireAdminAuth, async (_req, res) => {
+    await bumpAppControlVersion("force_refresh");
+    for (const key of APP_CONTROL_KEYS) {
+      if (key !== "force_refresh") {
+        await bumpAppControlVersion(key);
+      }
+    }
+
+    const status = await getAppStatus();
+    res.json({
+      success: true,
+      message: "All connected devices will hard refresh on their next app status check.",
+      status,
+    });
   });
 
   app.get("/api/image-proxy", async (req, res) => {
