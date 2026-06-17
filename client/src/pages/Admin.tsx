@@ -210,7 +210,7 @@ export default function Admin() {
     { value: "inbox", label: "National Inbox", icon: MessageSquare, group: "Communication", dataTestId: "tab-inbox", mobilePriority: true, desktopPriority: true },
     { value: "contact", label: "Contact", icon: Phone, group: "Communication", dataTestId: "tab-contact" },
     { value: "newsletter", label: "Newsletter", icon: Mail, group: "Communication", dataTestId: "tab-newsletter" },
-    { value: "admin-accounts-action", label: "Admin Accounts", icon: ShieldCheck, group: "Account", dataTestId: "tab-admin-accounts" },
+    { value: "admin-accounts-action", label: "Admin Control", icon: ShieldCheck, group: "Account", dataTestId: "tab-admin-control" },
   ];
 
   const handleDashboardNavChange = (value: string) => {

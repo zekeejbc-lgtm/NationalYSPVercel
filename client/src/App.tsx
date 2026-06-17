@@ -175,11 +175,11 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
     keywords: ["youth service philippines admin dashboard"],
   },
   "/admin/accounts": {
-    title: "Admin Accounts | Youth Service Philippines National",
-    description: "Manage administrator accounts and permissions for Youth Service Philippines.",
+    title: "Admin Control | Youth Service Philippines National",
+    description: "Manage administrator accounts, app refresh controls, and live operations for Youth Service Philippines.",
     path: "/admin/accounts",
     indexable: false,
-    keywords: ["youth service philippines admin accounts"],
+    keywords: ["youth service philippines admin control"],
   },
   "/chapter-dashboard": {
     title: "Chapter Dashboard | Youth Service Philippines National",
@@ -251,6 +251,9 @@ const LAST_ROUTE_STORAGE_KEY = "ysp:last-route:v1";
 const SCROLL_POSITIONS_STORAGE_KEY = "ysp:scroll-positions:v1";
 const APP_STATUS_STORAGE_KEY = "ysp:app-status:v1";
 const APP_STATUS_POLL_INTERVAL_MS = 45000;
+const SESSION_PRESENCE_HEARTBEAT_MS = 15000;
+const SESSION_TYPING_WINDOW_MS = 12000;
+const SESSION_TYPING_IMMEDIATE_THROTTLE_MS = 5000;
 
 type AppControlKey =
   | "force_refresh"
@@ -283,6 +286,141 @@ const DATA_VERSION_QUERY_PREFIXES: Record<Exclude<AppControlKey, "force_refresh"
   requests: ["/api/chapter-requests", "/api/national-requests"],
   volunteer: ["/api/volunteer-opportunities"],
 };
+
+const FORM_CONTROL_SELECTOR = [
+  "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset'])",
+  "textarea",
+  "select",
+  "[contenteditable='true']",
+].join(",");
+
+function readEditableElementValue(element: Element) {
+  if (element instanceof HTMLInputElement) {
+    if (element.type === "checkbox" || element.type === "radio") {
+      return element.checked ? "checked" : "unchecked";
+    }
+
+    if (element.type === "file") {
+      return element.files && element.files.length > 0 ? "has-file" : "";
+    }
+
+    return element.value;
+  }
+
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+    return element.value;
+  }
+
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    return element.textContent || "";
+  }
+
+  return "";
+}
+
+function getEditableElementBaseline(element: Element) {
+  if (element instanceof HTMLInputElement) {
+    if (element.type === "checkbox" || element.type === "radio") {
+      return element.defaultChecked ? "checked" : "unchecked";
+    }
+
+    if (element.type === "file") {
+      return "";
+    }
+
+    return element.defaultValue;
+  }
+
+  if (element instanceof HTMLTextAreaElement) {
+    return element.defaultValue;
+  }
+
+  if (element instanceof HTMLSelectElement) {
+    const selectedOption = Array.from(element.options).find((option) => option.defaultSelected);
+    return selectedOption?.value || "";
+  }
+
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    return element.dataset.yspInitialContent || "";
+  }
+
+  return "";
+}
+
+function initializeContentEditableBaselines() {
+  document.querySelectorAll<HTMLElement>("[contenteditable='true']").forEach((element) => {
+    if (element.dataset.yspInitialContent === undefined) {
+      element.dataset.yspInitialContent = element.textContent || "";
+    }
+  });
+}
+
+function isEditableElementVisible(element: Element) {
+  if (element instanceof HTMLElement) {
+    const hidden = element.closest("[hidden], [aria-hidden='true']");
+    return !hidden && element.getClientRects().length > 0;
+  }
+
+  return false;
+}
+
+function getEditableElementLabel(element: Element) {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+    if (element.id) {
+      const label = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(element.id)}"]`);
+      if (label?.textContent?.trim()) {
+        return label.textContent.trim();
+      }
+    }
+
+    const ariaLabel = element.getAttribute("aria-label");
+    if (ariaLabel?.trim()) {
+      return ariaLabel.trim();
+    }
+
+    if ((element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) && element.placeholder?.trim()) {
+      return element.placeholder.trim();
+    }
+
+    if (element.name?.trim()) {
+      return element.name.trim();
+    }
+  }
+
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    const ariaLabel = element.getAttribute("aria-label");
+    if (ariaLabel?.trim()) {
+      return ariaLabel.trim();
+    }
+  }
+
+  return "a form";
+}
+
+function hasUnsavedFormInput() {
+  initializeContentEditableBaselines();
+
+  const editableElements = Array.from(document.querySelectorAll(FORM_CONTROL_SELECTOR));
+  return editableElements.some((element) => {
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      if (element.disabled || element.readOnly) {
+        return false;
+      }
+    }
+
+    if (element instanceof HTMLSelectElement) {
+      if (element.disabled) {
+        return false;
+      }
+    }
+
+    if (!isEditableElementVisible(element)) {
+      return false;
+    }
+
+    return readEditableElementValue(element) !== getEditableElementBaseline(element);
+  });
+}
 
 function canUseSessionStorage() {
   return typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
@@ -443,6 +581,15 @@ function AppStatusWatcher() {
         status.buildVersion !== previousStatus.buildVersion;
 
       if (forceRefreshChanged) {
+        if (hasUnsavedFormInput()) {
+          for (const group of Object.keys(DATA_VERSION_QUERY_PREFIXES) as Array<Exclude<AppControlKey, "force_refresh">>) {
+            if (status.versions[group] !== previousStatus.versions[group]) {
+              invalidateDataVersionGroup(group);
+            }
+          }
+          return;
+        }
+
         writeStoredAppStatus(status);
         await clearBrowserCachesForReload();
         if (!cancelled) {
@@ -512,6 +659,83 @@ function AppStatusWatcher() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
+
+  return null;
+}
+
+function SessionPresenceReporter() {
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    let cancelled = false;
+    let lastTypingAt = 0;
+    let lastTypingLabel = "";
+    let lastImmediateHeartbeatAt = 0;
+
+    const sendHeartbeat = async (options?: { immediate?: boolean }) => {
+      if (cancelled) {
+        return;
+      }
+
+      const now = Date.now();
+      const isTyping = now - lastTypingAt <= SESSION_TYPING_WINDOW_MS;
+
+      if (options?.immediate && now - lastImmediateHeartbeatAt < SESSION_TYPING_IMMEDIATE_THROTTLE_MS) {
+        return;
+      }
+
+      if (options?.immediate) {
+        lastImmediateHeartbeatAt = now;
+      }
+
+      try {
+        const response = await fetch("/api/session-presence/heartbeat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            route: location,
+            isTyping,
+            typingLabel: isTyping ? lastTypingLabel || "a form" : "",
+          }),
+        });
+
+        if ((response.status === 401 || response.status === 403) && isProtectedRoute(location)) {
+          queryClient.clear();
+          clearSessionQueryPersistence();
+          setLocation("/login");
+        }
+      } catch {
+        // Presence reporting is best-effort and should not interrupt app usage.
+      }
+    };
+
+    const handleInputActivity = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.matches(FORM_CONTROL_SELECTOR) || !isEditableElementVisible(target)) {
+        return;
+      }
+
+      lastTypingAt = Date.now();
+      lastTypingLabel = getEditableElementLabel(target);
+      void sendHeartbeat({ immediate: true });
+    };
+
+    void sendHeartbeat();
+    const intervalId = window.setInterval(() => {
+      void sendHeartbeat();
+    }, SESSION_PRESENCE_HEARTBEAT_MS);
+
+    document.addEventListener("input", handleInputActivity, true);
+    document.addEventListener("change", handleInputActivity, true);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("input", handleInputActivity, true);
+      document.removeEventListener("change", handleInputActivity, true);
+    };
+  }, [location, setLocation]);
 
   return null;
 }
@@ -720,6 +944,7 @@ function App() {
         <TooltipProvider>
           <ConfirmDialogProvider>
             <AppStatusWatcher />
+            <SessionPresenceReporter />
             <AppContent />
             <Toaster />
           </ConfirmDialogProvider>

@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useDeleteConfirmation } from "@/hooks/use-confirm-dialog";
 import { checkAuthSession } from "@/lib/authSession";
 import { apiRequest, clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
-import { AlertTriangle, ArrowLeft, Edit, LogOut, Plus, RefreshCw, ShieldAlert, Trash2, UserRound } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, Edit, Keyboard, LogOut, Plus, Power, Radio, RefreshCw, ShieldAlert, Trash2, UserRound, Users } from "lucide-react";
 
 type AdminAccount = {
   id: string;
@@ -26,6 +26,28 @@ type AdminAccount = {
   isMotherAccount: boolean;
   canEdit: boolean;
   canDelete: boolean;
+};
+
+type ActiveSession = {
+  presenceId: string;
+  userId: string;
+  role: "admin" | "chapter" | "barangay";
+  username: string;
+  displayName: string;
+  accountLabel: string;
+  route: string;
+  lastSeenAt: string;
+  isTyping: boolean;
+  typingRoute: string | null;
+  typingLabel: string | null;
+  isCurrentSession: boolean;
+};
+
+type ActiveSessionsPayload = {
+  checkedAt: string;
+  activeCount: number;
+  typingCount: number;
+  sessions: ActiveSession[];
 };
 
 type AccountFormState = {
@@ -119,6 +141,18 @@ export default function AdminAccounts() {
     enabled: authenticated,
   });
 
+  const {
+    data: activeSessionsPayload,
+    isLoading: activeSessionsLoading,
+    isError: activeSessionsError,
+    error: activeSessionsErrorDetails,
+  } = useQuery<ActiveSessionsPayload>({
+    queryKey: ["/api/admin/active-sessions"],
+    enabled: authenticated,
+    refetchInterval: 10000,
+    refetchIntervalInBackground: true,
+  });
+
   const createAdminMutation = useMutation({
     mutationFn: async (payload: AccountFormState) => {
       return await apiRequest("POST", "/api/admin-users", payload);
@@ -182,6 +216,26 @@ export default function AdminAccounts() {
     },
   });
 
+  const forceLogoutMutation = useMutation({
+    mutationFn: async (presenceId: string) => {
+      return await apiRequest("POST", `/api/admin/active-sessions/${presenceId}/force-logout`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Session ended",
+        description: "The selected device has been logged out and further operations are blocked.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/active-sessions"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Logout failed",
+        description: error.message || "Unable to end that session right now.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/auth/logout");
@@ -206,6 +260,22 @@ export default function AdminAccounts() {
       );
     });
   }, [adminAccounts, searchTerm]);
+
+  const activeSessions = activeSessionsPayload?.sessions || [];
+  const activeUsersCount = activeSessionsPayload?.activeCount || 0;
+  const typingUsersCount = activeSessionsPayload?.typingCount || 0;
+  const activeNonAdminCount = activeSessions.filter((session) => session.role !== "admin").length;
+
+  const formatRelativeSeen = (value: string) => {
+    const diffSeconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+    if (diffSeconds < 10) {
+      return "just now";
+    }
+    if (diffSeconds < 60) {
+      return `${diffSeconds}s ago`;
+    }
+    return `${Math.round(diffSeconds / 60)}m ago`;
+  };
 
   const onCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -287,8 +357,8 @@ export default function AdminAccounts() {
             <div className="flex items-center gap-3">
               <img src="/images/ysp-logo.png" alt="YSP Logo" className="h-10 w-auto" />
               <div>
-                <h1 className="text-xl font-bold">Admin Account Management</h1>
-                <p className="text-sm text-muted-foreground">Create, update, and remove admin users</p>
+                <h1 className="text-xl font-bold">Admin Control</h1>
+                <p className="text-sm text-muted-foreground">Accounts, app refresh, and live user operations</p>
               </div>
             </div>
             <div className="hidden sm:flex items-center gap-2">
@@ -333,10 +403,42 @@ export default function AdminAccounts() {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Admin Dashboard
           </Button>
-          <Button onClick={() => setShowCreateDialog(true)} data-testid="button-create-admin-account">
-            <Plus className="h-4 w-4 mr-2" />
-            Create Admin Account
-          </Button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-lg border bg-background p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Active Sessions</p>
+                <p className="mt-1 text-2xl font-bold">{activeUsersCount}</p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Radio className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border bg-background p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Currently Typing</p>
+                <p className="mt-1 text-2xl font-bold">{typingUsersCount}</p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                <Keyboard className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border bg-background p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-muted-foreground">Chapter/Barangay Online</p>
+                <p className="mt-1 text-2xl font-bold">{activeNonAdminCount}</p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                <Users className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
         </div>
 
         <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-900/60 dark:bg-amber-950/20">
@@ -366,17 +468,118 @@ export default function AdminAccounts() {
           </CardHeader>
           <CardContent className="pt-0">
             <div className="rounded-md border border-amber-200 bg-background/70 p-3 text-sm text-muted-foreground dark:border-amber-900/60">
-              Disclaimer: this does not edit accounts or database records. It tells active browsers to clear app caches, reload the latest code, and refetch updated data groups on their next status check.
+              Disclaimer: this does not edit accounts or database records. It tells active browsers to clear app caches, reload the latest code, and refetch updated data groups on their next status check. Devices with unsaved typed form input will wait until the form is saved or cleared before reloading.
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Admin Users</CardTitle>
-            <CardDescription>
-              Accounts created by another admin cannot modify or delete their creator account.
-            </CardDescription>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5" />
+                  Live Operations
+                </CardTitle>
+                <CardDescription>
+                  See active logged-in devices and end a session when operations need to stop.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/active-sessions"] })}
+                disabled={activeSessionsLoading}
+                data-testid="button-refresh-active-sessions"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${activeSessionsLoading ? "animate-spin" : ""}`} />
+                Update
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {activeSessionsLoading && activeSessions.length === 0 ? (
+              <LoadingState label="Loading active sessions..." rows={3} compact />
+            ) : activeSessionsError ? (
+              <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Live operations monitor is not available yet.</p>
+                <p className="mt-1">
+                  Restart the local server or deploy the latest backend so active-session tracking can start.
+                </p>
+                {activeSessionsErrorDetails instanceof Error ? (
+                  <p className="mt-2 text-xs">Server response: {activeSessionsErrorDetails.message}</p>
+                ) : null}
+              </div>
+            ) : activeSessions.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No active logged-in devices reported recently.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activeSessions.map((session) => (
+                  <div
+                    key={session.presenceId}
+                    className="flex flex-col gap-3 rounded-lg border p-4 lg:flex-row lg:items-center lg:justify-between"
+                    data-testid={`active-session-row-${session.presenceId}`}
+                  >
+                    <div className="min-w-0 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{session.displayName}</span>
+                        <Badge variant="secondary">{session.role}</Badge>
+                        {session.isCurrentSession ? <Badge variant="outline">Current Device</Badge> : null}
+                        {session.isTyping ? (
+                          <Badge className="bg-amber-600 text-white hover:bg-amber-600">
+                            Typing
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                        <span>{session.accountLabel}</span>
+                        <span>Username: {session.username}</span>
+                        <span>Seen: {formatRelativeSeen(session.lastSeenAt)}</span>
+                        <span>Page: {session.route}</span>
+                      </div>
+                      {session.isTyping ? (
+                        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                          <Keyboard className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            Currently editing {session.typingLabel || "a form"}
+                            {session.typingRoute ? ` on ${session.typingRoute}` : ""}. Typed content is not visible to admins.
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => forceLogoutMutation.mutate(session.presenceId)}
+                      disabled={session.isCurrentSession || forceLogoutMutation.isPending}
+                      data-testid={`button-force-logout-${session.presenceId}`}
+                    >
+                      <Power className="h-4 w-4 mr-2" />
+                      Force Logout
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Admin Accounts</CardTitle>
+                <CardDescription>
+                  Accounts created by another admin cannot modify or delete their creator account.
+                </CardDescription>
+              </div>
+              <Button onClick={() => setShowCreateDialog(true)} data-testid="button-create-admin-account">
+                <Plus className="h-4 w-4 mr-2" />
+                Create Admin Account
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <Input
@@ -526,7 +729,7 @@ export default function AdminAccounts() {
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               <p className="font-medium">Disclaimer</p>
               <p className="mt-1">
-                Users may briefly lose unsaved form input during reload. Offline or closed devices will update when they reconnect or open the app again.
+                Devices with unsaved typed form input will not reload immediately. The reload is postponed for that device until the form is saved or cleared. Offline or closed devices will update when they reconnect or open the app again.
               </p>
             </div>
           </div>

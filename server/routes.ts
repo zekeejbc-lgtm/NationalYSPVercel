@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { hasDatabaseUrl, pool } from "./db";
 import multer from "multer";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "path";
 import bcrypt from "bcryptjs";
@@ -107,6 +108,23 @@ type AppStatus = {
   versions: Record<AppControlKey, number>;
 };
 
+type SessionPresenceRecord = {
+  presenceId: string;
+  sessionId: string;
+  userId: string;
+  role: "admin" | "chapter" | "barangay";
+  username: string;
+  displayName: string;
+  accountLabel: string;
+  route: string;
+  ipAddress: string;
+  userAgent: string;
+  lastSeenAt: number;
+  typingAt: number | null;
+  typingRoute: string | null;
+  typingLabel: string | null;
+};
+
 const memoryAppControlVersions = APP_CONTROL_KEYS.reduce(
   (versions, key) => {
     versions[key] = 0;
@@ -117,6 +135,51 @@ const memoryAppControlVersions = APP_CONTROL_KEYS.reduce(
 
 let appControlInfraEnsured = false;
 let appControlInfraEnsurePromise: Promise<void> | null = null;
+const sessionPresenceById = new Map<string, SessionPresenceRecord>();
+const presenceIdBySessionId = new Map<string, string>();
+const revokedSessionIds = new Set<string>();
+const ACTIVE_SESSION_WINDOW_MS = 1000 * 60 * 2;
+const TYPING_WINDOW_MS = 1000 * 20;
+const PRESENCE_RETENTION_MS = 1000 * 60 * 10;
+
+function getPresenceIdForSession(sessionId: string) {
+  const existingPresenceId = presenceIdBySessionId.get(sessionId);
+  if (existingPresenceId) {
+    return existingPresenceId;
+  }
+
+  const presenceId = crypto.createHash("sha256").update(sessionId).digest("hex").slice(0, 32);
+  presenceIdBySessionId.set(sessionId, presenceId);
+  return presenceId;
+}
+
+function sanitizePresenceText(value: unknown, fallback = "") {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  return value.trim().replace(/\s+/g, " ").slice(0, 160) || fallback;
+}
+
+function cleanupSessionPresence() {
+  const cutoff = Date.now() - PRESENCE_RETENTION_MS;
+  for (const [presenceId, record] of Array.from(sessionPresenceById.entries())) {
+    if (record.lastSeenAt < cutoff || revokedSessionIds.has(record.sessionId)) {
+      sessionPresenceById.delete(presenceId);
+      presenceIdBySessionId.delete(record.sessionId);
+    }
+  }
+}
+
+function isSessionRevoked(req: Request) {
+  return Boolean(req.sessionID && revokedSessionIds.has(req.sessionID));
+}
+
+function rejectRevokedSession(req: Request, res: Response) {
+  req.session.destroy(() => {
+    res.status(401).json({ error: "Session ended by administrator" });
+  });
+}
 
 function getBuildVersion() {
   return (
@@ -1018,6 +1081,10 @@ declare module "express-session" {
 }
 
 function requireAuth(req: Request, res: Response, next: Function) {
+  if (isSessionRevoked(req)) {
+    return rejectRevokedSession(req, res);
+  }
+
   if (!req.session.userId) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -1025,6 +1092,10 @@ function requireAuth(req: Request, res: Response, next: Function) {
 }
 
 function requireAdminAuth(req: Request, res: Response, next: Function) {
+  if (isSessionRevoked(req)) {
+    return rejectRevokedSession(req, res);
+  }
+
   if (!req.session.userId || req.session.role !== "admin") {
     return res.status(401).json({ error: "Admin access required" });
   }
@@ -1032,6 +1103,10 @@ function requireAdminAuth(req: Request, res: Response, next: Function) {
 }
 
 function requireChapterAuth(req: Request, res: Response, next: Function) {
+  if (isSessionRevoked(req)) {
+    return rejectRevokedSession(req, res);
+  }
+
   if (!req.session.userId || req.session.role !== "chapter") {
     return res.status(401).json({ error: "Chapter access required" });
   }
@@ -1039,6 +1114,10 @@ function requireChapterAuth(req: Request, res: Response, next: Function) {
 }
 
 function requireBarangayAuth(req: Request, res: Response, next: Function) {
+  if (isSessionRevoked(req)) {
+    return rejectRevokedSession(req, res);
+  }
+
   if (!req.session.userId || req.session.role !== "barangay") {
     return res.status(401).json({ error: "Barangay access required" });
   }
@@ -1046,6 +1125,10 @@ function requireBarangayAuth(req: Request, res: Response, next: Function) {
 }
 
 function requireChapterOrBarangayAuth(req: Request, res: Response, next: Function) {
+  if (isSessionRevoked(req)) {
+    return rejectRevokedSession(req, res);
+  }
+
   if (!req.session.userId || (req.session.role !== "chapter" && req.session.role !== "barangay")) {
     return res.status(401).json({ error: "Chapter or Barangay access required" });
   }
@@ -1134,6 +1217,86 @@ async function saveSessionWithRecovery(req: Request, res: Response, onSuccess: (
   }
 
   res.status(500).json({ error: "Failed to save session" });
+}
+
+async function resolveCurrentSessionPresence(req: Request) {
+  if (!req.session.userId || !req.session.role || !req.sessionID) {
+    return null;
+  }
+
+  if (req.session.role === "admin") {
+    const user = await storage.getAdminUser(req.session.userId);
+    if (!user) {
+      return null;
+    }
+
+    return {
+      userId: user.id,
+      role: "admin" as const,
+      username: user.username,
+      displayName: user.username,
+      accountLabel: "National Admin",
+    };
+  }
+
+  if (req.session.role === "chapter") {
+    const user = await storage.getChapterUser(req.session.userId);
+    if (!user) {
+      return null;
+    }
+
+    const chapter = await storage.getChapter(user.chapterId);
+    return {
+      userId: user.id,
+      role: "chapter" as const,
+      username: user.username,
+      displayName: chapter?.name || user.username,
+      accountLabel: "Chapter Account",
+    };
+  }
+
+  if (req.session.role === "barangay") {
+    const user = await storage.getBarangayUser(req.session.userId);
+    if (!user) {
+      return null;
+    }
+
+    const chapter = await storage.getChapter(user.chapterId);
+    return {
+      userId: user.id,
+      role: "barangay" as const,
+      username: user.username,
+      displayName: user.barangayName,
+      accountLabel: chapter?.name ? `Barangay Account - ${chapter.name}` : "Barangay Account",
+    };
+  }
+
+  return null;
+}
+
+function destroySessionFromStore(req: Request, sessionId: string) {
+  return new Promise<void>((resolve, reject) => {
+    req.sessionStore.destroy(sessionId, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function destroyPersistedSession(sessionId: string) {
+  if (!pool) {
+    return;
+  }
+
+  const configuredTableName = (process.env.SESSION_TABLE_NAME || "session").trim() || "session";
+  const tableName = isSafeSqlIdentifier(configuredTableName) ? configuredTableName : "session";
+  const quotedTableName = quoteSqlIdentifier(tableName);
+  await ensureSessionStoreInfrastructure();
+  await pool.query(`DELETE FROM ${quotedTableName} WHERE sid = $1`, [sessionId]);
 }
 
 async function getChapterBarangayIdSet(chapterId: string): Promise<Set<string>> {
@@ -3120,6 +3283,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/auth/logout", (req, res) => {
+    if (req.sessionID) {
+      revokedSessionIds.delete(req.sessionID);
+      const presenceId = presenceIdBySessionId.get(req.sessionID);
+      if (presenceId) {
+        sessionPresenceById.delete(presenceId);
+      }
+      presenceIdBySessionId.delete(req.sessionID);
+    }
+
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ error: "Failed to logout" });
@@ -3129,6 +3301,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/auth/check", async (req, res) => {
+    if (isSessionRevoked(req)) {
+      return rejectRevokedSession(req, res);
+    }
+
     if (!req.session.userId) {
       return res.json({ authenticated: false });
     }
@@ -3197,6 +3373,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     res.json({ authenticated: false });
+  });
+
+  app.post("/api/session-presence/heartbeat", requireAuth, async (req, res) => {
+    const sessionInfo = await resolveCurrentSessionPresence(req);
+    if (!sessionInfo || !req.sessionID) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    cleanupSessionPresence();
+
+    const presenceId = getPresenceIdForSession(req.sessionID);
+    const now = Date.now();
+    const route = sanitizePresenceText(req.body?.route, req.originalUrl || "/");
+    const isTyping = Boolean(req.body?.isTyping);
+    const typingLabel = sanitizePresenceText(req.body?.typingLabel, "a form");
+    const existing = sessionPresenceById.get(presenceId);
+
+    sessionPresenceById.set(presenceId, {
+      presenceId,
+      sessionId: req.sessionID,
+      ...sessionInfo,
+      route,
+      ipAddress: req.ip || "",
+      userAgent: req.get("user-agent") || "",
+      lastSeenAt: now,
+      typingAt: isTyping ? now : existing?.typingAt && now - existing.typingAt < TYPING_WINDOW_MS ? existing.typingAt : null,
+      typingRoute: isTyping ? route : existing?.typingAt && now - existing.typingAt < TYPING_WINDOW_MS ? existing.typingRoute : null,
+      typingLabel: isTyping ? typingLabel : existing?.typingAt && now - existing.typingAt < TYPING_WINDOW_MS ? existing.typingLabel : null,
+    });
+
+    res.json({ success: true, presenceId });
+  });
+
+  app.get("/api/admin/active-sessions", requireAdminAuth, async (req, res) => {
+    cleanupSessionPresence();
+    const now = Date.now();
+    const sessions = Array.from(sessionPresenceById.values())
+      .filter((record) => now - record.lastSeenAt <= ACTIVE_SESSION_WINDOW_MS)
+      .sort((left, right) => right.lastSeenAt - left.lastSeenAt)
+      .map((record) => ({
+        presenceId: record.presenceId,
+        userId: record.userId,
+        role: record.role,
+        username: record.username,
+        displayName: record.displayName,
+        accountLabel: record.accountLabel,
+        route: record.route,
+        lastSeenAt: new Date(record.lastSeenAt).toISOString(),
+        isTyping: Boolean(record.typingAt && now - record.typingAt <= TYPING_WINDOW_MS),
+        typingRoute: record.typingAt && now - record.typingAt <= TYPING_WINDOW_MS ? record.typingRoute : null,
+        typingLabel: record.typingAt && now - record.typingAt <= TYPING_WINDOW_MS ? record.typingLabel : null,
+        isCurrentSession: record.sessionId === req.sessionID,
+      }));
+
+    res.json({
+      checkedAt: new Date(now).toISOString(),
+      activeCount: sessions.length,
+      typingCount: sessions.filter((session) => session.isTyping).length,
+      sessions,
+    });
+  });
+
+  app.post("/api/admin/active-sessions/:presenceId/force-logout", requireAdminAuth, async (req, res) => {
+    cleanupSessionPresence();
+    const record = sessionPresenceById.get(req.params.presenceId);
+    if (!record) {
+      return res.status(404).json({ error: "Active session not found" });
+    }
+
+    if (record.sessionId === req.sessionID) {
+      return res.status(400).json({ error: "You cannot force logout your current admin session from here." });
+    }
+
+    revokedSessionIds.add(record.sessionId);
+    sessionPresenceById.delete(record.presenceId);
+    presenceIdBySessionId.delete(record.sessionId);
+
+    try {
+      await destroySessionFromStore(req, record.sessionId);
+    } catch (error: any) {
+      console.error("[admin-control] session store destroy failed", {
+        presenceId: record.presenceId,
+        message: error?.message,
+      });
+    }
+
+    try {
+      await destroyPersistedSession(record.sessionId);
+    } catch (error: any) {
+      console.error("[admin-control] persisted session destroy failed", {
+        presenceId: record.presenceId,
+        message: error?.message,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `${record.displayName} has been logged out and further operations from that session are blocked.`,
+    });
   });
 
   app.get("/api/auth/profile", requireAuth, async (req, res) => {
