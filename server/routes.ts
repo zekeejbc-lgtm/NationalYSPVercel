@@ -521,6 +521,57 @@ function normalizeDriveUrl(url: string): string {
   return normalized;
 }
 
+type GoogleDriveCrudPayload = Record<string, unknown> & {
+  action: string;
+};
+
+async function callGoogleDriveCrudAction(payload: GoogleDriveCrudPayload) {
+  const gasUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
+  const crudSecret = process.env.GOOGLE_APPS_SCRIPT_CRUD_SECRET;
+
+  if (!gasUrl) {
+    throw new Error("Google Apps Script URL is not configured on the server.");
+  }
+
+  if (payload.action !== "upload" && !crudSecret) {
+    throw new Error("Google Drive CRUD secret is not configured on the server.");
+  }
+
+  const response = await fetch(gasUrl, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({
+      ...payload,
+      ...(payload.action === "upload" ? {} : { secret: crudSecret }),
+    }),
+  });
+
+  const responseText = await response.text();
+  let data: any;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error("Google Drive backend returned a non-JSON response.");
+  }
+
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || `Google Drive backend failed with status ${response.status}.`);
+  }
+
+  return data;
+}
+
+function getDriveFileIdFromRequestValue(value: unknown): string {
+  const rawValue = String(value || "").trim();
+  const fileId = extractDriveFileIdForNormalization(rawValue) || rawValue;
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    throw new Error("Invalid or missing Google Drive file ID.");
+  }
+
+  return fileId;
+}
+
 const imageProxyAllowedHosts = new Set([
   "ibb.co",
   "www.ibb.co",
@@ -5084,7 +5135,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 app.post("/api/upload/member-photo", upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     try {
-      const result = await handleGoogleDriveUpload(req.file, "member-photos");
+      const result = await handleGoogleDriveUpload(req.file, "member-photos", {
+        requireGoogleDrive: true,
+      });
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -5105,6 +5158,123 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
     res.json({ success: true, url: gasUrl });
   });
 
+  app.get("/api/drive-images", requireAdminAuth, async (req, res) => {
+    try {
+      const limit = Number(req.query.limit || 50);
+      const includeTrashed = req.query.includeTrashed === "true" || req.query.includeTrashed === "1";
+      const data = await callGoogleDriveCrudAction({
+        action: "list",
+        limit: Number.isFinite(limit) ? limit : 50,
+        includeTrashed,
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to list Google Drive images" });
+    }
+  });
+
+  app.post("/api/drive-images", requireAdminAuth, upload.single("image"), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    try {
+      const fileExtension = resolveImageExtension(req.file.originalname, req.file.mimetype);
+      const fileName = `${sanitizePathSegment(String(req.body?.purpose || "admin-drive-image"))}-${Date.now()}${fileExtension}`;
+      const data = await callGoogleDriveCrudAction({
+        action: "upload",
+        base64: req.file.buffer.toString("base64"),
+        fileName,
+        mimeType: req.file.mimetype,
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to upload Google Drive image" });
+    }
+  });
+
+  app.get("/api/drive-images/:fileId", requireAdminAuth, async (req, res) => {
+    try {
+      const data = await callGoogleDriveCrudAction({
+        action: "get",
+        fileId: getDriveFileIdFromRequestValue(req.params.fileId),
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to get Google Drive image" });
+    }
+  });
+
+  app.patch("/api/drive-images/:fileId", requireAdminAuth, async (req, res) => {
+    try {
+      const payload = z
+        .object({
+          fileName: z.string().min(1).max(120).optional(),
+          description: z.string().max(500).optional(),
+          makePublic: z.boolean().optional(),
+        })
+        .parse(req.body || {});
+
+      const data = await callGoogleDriveCrudAction({
+        action: "update",
+        fileId: getDriveFileIdFromRequestValue(req.params.fileId),
+        ...payload,
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      const validationError = error?.issues ? fromError(error).message : error.message;
+      res.status(400).json({ error: validationError || "Failed to update Google Drive image" });
+    }
+  });
+
+  app.post("/api/drive-images/:fileId/replace", requireAdminAuth, upload.single("image"), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    try {
+      const fileExtension = resolveImageExtension(req.file.originalname, req.file.mimetype);
+      const fileName = `${sanitizePathSegment(String(req.body?.purpose || "admin-drive-image-replacement"))}-${Date.now()}${fileExtension}`;
+      const data = await callGoogleDriveCrudAction({
+        action: "replace",
+        fileId: getDriveFileIdFromRequestValue(req.params.fileId),
+        base64: req.file.buffer.toString("base64"),
+        fileName,
+        mimeType: req.file.mimetype,
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to replace Google Drive image" });
+    }
+  });
+
+  app.post("/api/drive-images/:fileId/restore", requireAdminAuth, async (req, res) => {
+    try {
+      const data = await callGoogleDriveCrudAction({
+        action: "restore",
+        fileId: getDriveFileIdFromRequestValue(req.params.fileId),
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to restore Google Drive image" });
+    }
+  });
+
+  app.delete("/api/drive-images/:fileId", requireAdminAuth, async (req, res) => {
+    try {
+      const data = await callGoogleDriveCrudAction({
+        action: "delete",
+        fileId: getDriveFileIdFromRequestValue(req.params.fileId),
+      });
+
+      res.json(data);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to delete Google Drive image" });
+    }
+  });
+
   app.post("/api/upload", requireAuth, upload.single("image"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     try {
@@ -5115,10 +5285,18 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
     }
   });
 
-  async function handleGoogleDriveUpload(file: Express.Multer.File, folderPrefix: string) {
+  async function handleGoogleDriveUpload(
+    file: Express.Multer.File,
+    folderPrefix: string,
+    options: { requireGoogleDrive?: boolean } = {},
+  ) {
     const gasUrl = process.env.GOOGLE_APPS_SCRIPT_URL;
     
     if (!gasUrl) {
+      if (options.requireGoogleDrive) {
+        throw new Error("Google Drive upload is not configured on the server.");
+      }
+
       console.warn("No GOOGLE_APPS_SCRIPT_URL found. Falling back to local storage.");
       const uploadsDir = ensureUploadsDir();
       const fileExtension = resolveImageExtension(file.originalname, file.mimetype);
@@ -5135,8 +5313,9 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
 
       const response = await fetch(gasUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({
+          action: "upload",
           base64: base64Data,
           fileName: fileName,
           mimeType: file.mimetype
@@ -5148,7 +5327,12 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
         throw new Error(data.error || "Google Drive upload failed");
       }
 
-      return { url: data.url };
+      return {
+        fileId: data.fileId,
+        url: data.url,
+        webViewLink: data.webViewLink,
+        sharingWarning: data.sharingWarning,
+      };
     } catch (error: any) {
       console.error("[gdrive-upload] Upload failed", error);
       throw new Error("Failed to upload image to Google Drive.");

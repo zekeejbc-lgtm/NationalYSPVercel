@@ -6,6 +6,9 @@ var ALLOWED_IMAGE_MIME_TYPES = {
   "image/webp": true
 };
 var CHECK_FILE_PREFIX = "gas-permission-check";
+var DRIVE_CRUD_SECRET_PROPERTY = "DRIVE_CRUD_SECRET";
+var DEFAULT_LIST_LIMIT = 50;
+var MAX_LIST_LIMIT = 200;
 
 function doPost(e) {
   try {
@@ -14,47 +17,41 @@ function doPost(e) {
     }
 
     var data = JSON.parse(e.postData.contents);
-    var base64Data = String(data.base64 || "").replace(/^data:[^,]+,/, "");
-    var fileName = sanitizeFileName(data.fileName || "uploaded-image");
-    var mimeType = String(data.mimeType || "").toLowerCase();
+    var action = String(data.action || "upload").toLowerCase();
 
-    if (!base64Data) {
-      throw new Error("Missing image data.");
+    if (action === "upload") {
+      return createJsonResponse(uploadImage(data));
     }
 
-    if (!ALLOWED_IMAGE_MIME_TYPES[mimeType]) {
-      throw new Error("Unsupported image type: " + mimeType);
+    requireCrudSecret(data.secret);
+
+    if (action === "delete") {
+      return createJsonResponse(deleteImage(data));
     }
 
-    var decodedData = Utilities.base64Decode(base64Data);
-    var blob = Utilities.newBlob(decodedData, mimeType, fileName);
-
-    var folder = DriveApp.getFolderById(UPLOAD_FOLDER_ID);
-
-    var file = folder.createFile(blob);
-
-    var sharingWarning = "";
-    try {
-      // Make the file publicly viewable.
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    } catch (sharingError) {
-      // Some Workspace/Drive policies block public sharing even when upload is allowed.
-      // The upload should still be treated as successful because the file was created.
-      sharingWarning = sharingError.toString();
+    if (action === "restore") {
+      return createJsonResponse(restoreImage(data));
     }
 
-    var fileId = file.getId();
+    if (action === "rename" || action === "update") {
+      return createJsonResponse(updateImageMetadata(data));
+    }
 
-    // Drive thumbnail URL used by the frontend/backend image display helpers.
-    var directUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w4000";
-    var webViewLink = "https://drive.google.com/file/d/" + fileId + "/view?usp=sharing";
+    if (action === "replace") {
+      return createJsonResponse(replaceImage(data));
+    }
+
+    if (action === "get" || action === "read") {
+      return createJsonResponse(getImageMetadata(data));
+    }
+
+    if (action === "list") {
+      return createJsonResponse(listImages(data));
+    }
 
     return createJsonResponse({
-      success: true,
-      fileId: fileId,
-      url: directUrl,
-      webViewLink: webViewLink,
-      sharingWarning: sharingWarning
+      success: false,
+      error: "Unsupported action: " + action
     });
   } catch (error) {
     return createJsonResponse({
@@ -74,6 +71,23 @@ function doGet(e) {
     }));
   }
 
+  try {
+    if (action === "get" || action === "read") {
+      requireCrudSecret(e && e.parameter ? e.parameter.secret : "");
+      return createJsonResponse(getImageMetadata(e.parameter));
+    }
+
+    if (action === "list") {
+      requireCrudSecret(e && e.parameter ? e.parameter.secret : "");
+      return createJsonResponse(listImages(e.parameter));
+    }
+  } catch (error) {
+    return createJsonResponse({
+      success: false,
+      error: error.toString()
+    });
+  }
+
   return createJsonResponse({
     success: true,
     message: "Web App is running correctly.",
@@ -85,6 +99,132 @@ function doGet(e) {
 // Run this function once manually in the Apps Script editor to grant Drive permissions.
 function setupPermissions() {
   return checkConfiguration({ writeTest: true });
+}
+
+function uploadImage(data) {
+  var base64Data = String(data.base64 || "").replace(/^data:[^,]+,/, "");
+  var fileName = sanitizeFileName(data.fileName || "uploaded-image");
+  var mimeType = String(data.mimeType || "").toLowerCase();
+
+  if (!base64Data) {
+    throw new Error("Missing image data.");
+  }
+
+  if (!ALLOWED_IMAGE_MIME_TYPES[mimeType]) {
+    throw new Error("Unsupported image type: " + mimeType);
+  }
+
+  var decodedData = Utilities.base64Decode(base64Data);
+  var blob = Utilities.newBlob(decodedData, mimeType, fileName);
+  var folder = DriveApp.getFolderById(UPLOAD_FOLDER_ID);
+  var file = folder.createFile(blob);
+  var sharingWarning = makeFilePublic(file);
+
+  return createImageResponse(file, {
+    sharingWarning: sharingWarning
+  });
+}
+
+function deleteImage(data) {
+  var file = getManagedImageFile(data.fileId);
+  file.setTrashed(true);
+
+  return {
+    success: true,
+    action: "delete",
+    fileId: file.getId(),
+    trashed: file.isTrashed()
+  };
+}
+
+function restoreImage(data) {
+  var file = getManagedImageFile(data.fileId);
+  file.setTrashed(false);
+
+  return {
+    success: true,
+    action: "restore",
+    file: fileToJson(file)
+  };
+}
+
+function updateImageMetadata(data) {
+  var file = getManagedImageFile(data.fileId);
+
+  if (data.fileName) {
+    file.setName(sanitizeFileName(data.fileName));
+  }
+
+  if (typeof data.description !== "undefined") {
+    file.setDescription(String(data.description || "").slice(0, 500));
+  }
+
+  var sharingWarning = "";
+  if (data.makePublic === true || String(data.makePublic || "").toLowerCase() === "true") {
+    sharingWarning = makeFilePublic(file);
+  }
+
+  return createImageResponse(file, {
+    action: "update",
+    sharingWarning: sharingWarning
+  });
+}
+
+function replaceImage(data) {
+  var oldFile = getManagedImageFile(data.fileId);
+  var newImage = uploadImage(data);
+
+  try {
+    oldFile.setTrashed(true);
+    newImage.replacedFileId = oldFile.getId();
+    newImage.replacedFileTrashed = true;
+  } catch (error) {
+    newImage.replacedFileId = oldFile.getId();
+    newImage.replacedFileTrashed = false;
+    newImage.warning = "New image uploaded, but old image could not be trashed: " + error.toString();
+  }
+
+  newImage.action = "replace";
+  return newImage;
+}
+
+function getImageMetadata(data) {
+  var file = getManagedImageFile(data.fileId);
+
+  return {
+    success: true,
+    action: "get",
+    file: fileToJson(file)
+  };
+}
+
+function listImages(data) {
+  var folder = DriveApp.getFolderById(UPLOAD_FOLDER_ID);
+  var files = folder.getFiles();
+  var limit = Math.min(Math.max(Number(data.limit || DEFAULT_LIST_LIMIT), 1), MAX_LIST_LIMIT);
+  var includeTrashed = data.includeTrashed === true || String(data.includeTrashed || "").toLowerCase() === "true";
+  var items = [];
+
+  while (files.hasNext() && items.length < limit) {
+    var file = files.next();
+    if (!includeTrashed && file.isTrashed()) {
+      continue;
+    }
+
+    if (!ALLOWED_IMAGE_MIME_TYPES[String(file.getMimeType() || "").toLowerCase()]) {
+      continue;
+    }
+
+    items.push(fileToJson(file));
+  }
+
+  return {
+    success: true,
+    action: "list",
+    count: items.length,
+    limit: limit,
+    items: items
+  };
 }
 
 function sanitizeFileName(fileName) {
@@ -101,6 +241,90 @@ function createJsonResponse(payload) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function requireCrudSecret(providedSecret) {
+  var expectedSecret = PropertiesService.getScriptProperties().getProperty(DRIVE_CRUD_SECRET_PROPERTY);
+
+  if (!expectedSecret) {
+    throw new Error("Drive CRUD actions are disabled. Set Script Property " + DRIVE_CRUD_SECRET_PROPERTY + " before using this action.");
+  }
+
+  if (!providedSecret || String(providedSecret) !== expectedSecret) {
+    throw new Error("Unauthorized Drive CRUD action.");
+  }
+}
+
+function getManagedImageFile(fileId) {
+  fileId = String(fileId || "").trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    throw new Error("Invalid or missing fileId.");
+  }
+
+  var file = DriveApp.getFileById(fileId);
+  var mimeType = String(file.getMimeType() || "").toLowerCase();
+
+  if (!ALLOWED_IMAGE_MIME_TYPES[mimeType]) {
+    throw new Error("File is not an allowed image type: " + mimeType);
+  }
+
+  if (!isFileInUploadFolder(file)) {
+    throw new Error("File is not in the configured upload folder.");
+  }
+
+  return file;
+}
+
+function isFileInUploadFolder(file) {
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    if (parents.next().getId() === UPLOAD_FOLDER_ID) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function makeFilePublic(file) {
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return "";
+  } catch (sharingError) {
+    // Some Workspace/Drive policies block public sharing even when upload is allowed.
+    return sharingError.toString();
+  }
+}
+
+function createImageResponse(file, extras) {
+  var response = fileToJson(file);
+  response.success = true;
+
+  extras = extras || {};
+  Object.keys(extras).forEach(function(key) {
+    response[key] = extras[key];
+  });
+
+  return response;
+}
+
+function fileToJson(file) {
+  var fileId = file.getId();
+  var directUrl = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w4000";
+  var webViewLink = "https://drive.google.com/file/d/" + fileId + "/view?usp=sharing";
+
+  return {
+    fileId: fileId,
+    name: file.getName(),
+    mimeType: file.getMimeType(),
+    size: file.getSize(),
+    description: file.getDescription(),
+    dateCreated: file.getDateCreated().toISOString(),
+    lastUpdated: file.getLastUpdated().toISOString(),
+    trashed: file.isTrashed(),
+    url: directUrl,
+    webViewLink: webViewLink
+  };
+}
+
 function checkConfiguration(options) {
   options = options || {};
 
@@ -115,6 +339,7 @@ function checkConfiguration(options) {
       folderReadable: false,
       folderWritable: false,
       publicSharingAllowed: false,
+      crudSecretConfigured: false,
       cleanupSucceeded: null
     },
     details: {
@@ -145,6 +370,12 @@ function checkConfiguration(options) {
     summary.checks.driveAppAccessible = true;
   } catch (error) {
     summary.errors.push("DriveApp is not accessible: " + error.toString());
+  }
+
+  try {
+    summary.checks.crudSecretConfigured = Boolean(PropertiesService.getScriptProperties().getProperty(DRIVE_CRUD_SECRET_PROPERTY));
+  } catch (error) {
+    summary.warnings.push("Could not read Script Properties: " + error.toString());
   }
 
   var folder = null;
@@ -202,6 +433,10 @@ function checkConfiguration(options) {
 
   if (options.writeTest && summary.checks.folderWritable && !summary.checks.publicSharingAllowed) {
     summary.nextSteps.push("The upload can work, but public image display may fail until folder/file link sharing is allowed by Drive or Workspace policy.");
+  }
+
+  if (!summary.checks.crudSecretConfigured) {
+    summary.nextSteps.push("Set Script Property " + DRIVE_CRUD_SECRET_PROPERTY + " to enable protected list/read/update/delete image actions.");
   }
 
   summary.success =
