@@ -3914,113 +3914,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(400).json({ error: "No chapter logo file uploaded" });
     }
 
-    const supabaseClient = getSupabaseStorageClient();
-
     try {
       const fileExtension = resolveImageExtension(req.file.originalname, req.file.mimetype);
-      const baseFileName = `${sanitizePathSegment(existingChapter.name)}-${Date.now()}-${Math.round(Math.random() * 1e9)}${fileExtension}`;
-      const storageObjectPath = [
-        "chapters",
+      const uploadPrefix = [
+        "chapter-logo",
+        sanitizePathSegment(existingChapter.name),
         sanitizePathSegment(chapterId),
-        baseFileName,
-      ].join("/");
+      ].join("-");
+      const driveUpload = await handleGoogleDriveUpload(
+        {
+          ...req.file,
+          originalname: `${uploadPrefix}${fileExtension}`,
+        },
+        uploadPrefix,
+        { requireGoogleDrive: true },
+      );
+      const logoUrl = normalizeDriveUrl(driveUpload.url);
 
-      if (!supabaseClient) {
-        const uploadsDir = ensureUploadsDir();
-        const localFileName = `chapter-${sanitizePathSegment(chapterId)}-${baseFileName}`;
-        const localFilePath = path.join(uploadsDir, localFileName);
-        await fs.promises.writeFile(localFilePath, req.file.buffer);
-
-        const localLogoUrl = `/uploads/${localFileName}`;
-        const updatedChapter = await storage.updateChapter(chapterId, { photo: localLogoUrl });
-        if (!updatedChapter) {
-          return res.status(404).json({ error: "Chapter not found after upload" });
-        }
-
-        const previousLocalLogoPath = existingChapter.photo
-          ? getUploadsPathFromPublicUrl(existingChapter.photo)
-          : null;
-
-        if (previousLocalLogoPath && previousLocalLogoPath !== localFileName) {
-          try {
-            await fs.promises.unlink(path.join(uploadsDir, previousLocalLogoPath));
-          } catch {
-            // Ignore cleanup failures for old fallback files.
-          }
-        }
-
-        return res.json({
-          url: localLogoUrl,
-          photo: localLogoUrl,
-          logoUrl: localLogoUrl,
-          chapter: updatedChapter,
-          storageProvider: "local-fallback",
-        });
-      }
-
-      await ensureChapterLogoBucket(supabaseClient);
-
-      const { error: uploadError } = await supabaseClient.storage
-        .from(CHAPTER_LOGO_BUCKET)
-        .upload(storageObjectPath, req.file.buffer, {
-          contentType: req.file.mimetype,
-          cacheControl: "31536000",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        console.error("[chapter-logo-upload] upload failed", {
-          chapterId,
-          message: uploadError.message,
-        });
-        return res.status(500).json({ error: "Failed to upload chapter logo to Supabase" });
-      }
-
-      const { data: publicUrlData } = supabaseClient.storage
-        .from(CHAPTER_LOGO_BUCKET)
-        .getPublicUrl(storageObjectPath);
-
-      const publicLogoUrl = publicUrlData?.publicUrl;
-      if (!publicLogoUrl) {
-        return res.status(500).json({ error: "Supabase did not return a public logo URL" });
-      }
-
-      const updatedChapter = await storage.updateChapter(chapterId, { photo: publicLogoUrl });
+      const updatedChapter = await storage.updateChapter(chapterId, { photo: logoUrl });
       if (!updatedChapter) {
         return res.status(404).json({ error: "Chapter not found after upload" });
       }
 
-      const previousLogoPath = existingChapter.photo
-        ? getStoragePathFromPublicUrl(existingChapter.photo, CHAPTER_LOGO_BUCKET)
-        : null;
-
-      if (previousLogoPath && previousLogoPath !== storageObjectPath) {
-        const { error: deleteOldLogoError } = await supabaseClient.storage
-          .from(CHAPTER_LOGO_BUCKET)
-          .remove([previousLogoPath]);
-
-        if (deleteOldLogoError) {
-          console.error("[chapter-logo-upload] failed to remove old logo", {
-            chapterId,
-            previousLogoPath,
-            message: deleteOldLogoError.message,
-          });
-        }
-      }
-
       res.json({
-        url: publicLogoUrl,
-        photo: publicLogoUrl,
-        logoUrl: publicLogoUrl,
+        fileId: driveUpload.fileId,
+        url: logoUrl,
+        photo: logoUrl,
+        logoUrl,
+        webViewLink: driveUpload.webViewLink,
+        sharingWarning: driveUpload.sharingWarning,
         chapter: updatedChapter,
-        storageProvider: "supabase",
+        storageProvider: "google-drive",
       });
     } catch (error: any) {
       console.error("[chapter-logo-upload] request failed", {
         chapterId,
         message: error?.message,
       });
-      res.status(500).json({ error: "Failed to upload chapter logo to Supabase" });
+      res.status(500).json({ error: error?.message || "Failed to upload chapter logo to Google Drive" });
     }
   });
 

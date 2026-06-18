@@ -2252,10 +2252,10 @@ export default function ChaptersManager() {
 
                   <p className="text-xs text-muted-foreground">
                     {isChapterLogoUploading
-                      ? "Uploading chapter logo..."
+                      ? "Uploading chapter logo to Google Drive..."
                       : pendingChapterLogoFile
-                        ? "Logo selected. Click Save Chapter to upload and apply this logo."
-                        : "Upload only: JPG, PNG, GIF, or WEBP, maximum 5MB. Upload happens when you click Save Chapter."}
+                        ? "Logo selected. Click Save Chapter to upload it to Google Drive and apply it."
+                        : "Upload only: JPG, PNG, GIF, or WEBP, maximum 5MB. Upload to Google Drive happens when you click Save Chapter."}
                   </p>
 
                   {pendingChapterLogoFile && (
