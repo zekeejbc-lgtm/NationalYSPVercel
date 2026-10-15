@@ -1,7 +1,62 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, jsonb, uuid, index, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export const coalitionRegistrations = pgTable("coalition_registrations", {
+  id: uuid("id").primaryKey(),
+  registrationType: text("registration_type").notNull(),
+  fullName: text("full_name"),
+  organizationName: text("organization_name"),
+  organizationType: text("organization_type"),
+  representativeName: text("representative_name"),
+  representativePosition: text("representative_position"),
+  organizationLink: text("organization_link"),
+  email: text("email").notNull(),
+  contactNumber: text("contact_number").notNull().default(""),
+  city: text("city").notNull(),
+  province: text("province").notNull(),
+  privacyConsent: boolean("privacy_consent").notNull(),
+  authorizedRepresentative: boolean("authorized_representative").notNull().default(false),
+  noticeVersion: text("notice_version").notNull(),
+  consentedAt: timestamp("consented_at", { withTimezone: true }).notNull().defaultNow(),
+  status: text("status").notNull().default("submitted"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  legacyStatus: text("legacy_status"),
+}, table => [
+  index("coalition_created_idx").on(table.createdAt.desc()),
+  check("coalition_registrations_registration_type_check", sql`${table.registrationType} IN ('individual', 'organization')`),
+  check("coalition_registrations_status_check", sql`${table.status} IN ('submitted', 'under_review', 'needs_information', 'approved', 'declined', 'withdrawn')`),
+  check("coalition_registrations_privacy_consent_check", sql`${table.privacyConsent} = true`),
+  check("coalition_registrations_check", sql`(${table.registrationType} = 'individual' AND ${table.fullName} IS NOT NULL) OR (${table.registrationType} = 'organization' AND ${table.organizationName} IS NOT NULL AND ${table.organizationType} IS NOT NULL AND ${table.representativeName} IS NOT NULL AND ${table.representativePosition} IS NOT NULL AND ${table.authorizedRepresentative} = true)`),
+]).enableRLS();
+export const coalitionSubmissionLimits = pgTable("coalition_submission_limits", {
+  key: text("key").primaryKey(),
+  attempts: integer("attempts").notNull(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+
+export const coalitionEvents = pgTable("coalition_events", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  registrationId: uuid("registration_id").notNull().references(() => coalitionRegistrations.id, { onDelete: "cascade" }),
+  status: text("status").notNull(), message: text("message").notNull().default(""),
+  actor: text("actor").notNull(), actorId: text("actor_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => [index("coalition_events_registration_idx").on(table.registrationId, table.createdAt), check("coalition_events_actor_check", sql`${table.actor} IN ('admin','applicant','system')`)]).enableRLS();
+export const coalitionTrackingTokens = pgTable("coalition_tracking_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  registrationId: uuid("registration_id").notNull().references(() => coalitionRegistrations.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, table => [index("coalition_tokens_registration_idx").on(table.registrationId), index("coalition_tokens_expiry_idx").on(table.expiresAt), check("coalition_tracking_tokens_kind_check", sql`${table.kind} IN ('access','session')`)]).enableRLS();
+export const coalitionEmailOutbox = pgTable("coalition_email_outbox", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  registrationId: uuid("registration_id").notNull().references(() => coalitionRegistrations.id, { onDelete: "cascade" }),
+  recipient: text("recipient").notNull(), subject: text("subject").notNull(), body: text("body").notNull(),
+  attempts: integer("attempts").notNull().default(0), sentAt: timestamp("sent_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(), lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => [index("coalition_outbox_pending_idx").on(table.nextAttemptAt).where(sql`${table.sentAt} IS NULL`)]).enableRLS();
 
 export const contactSocialLinkSchema = z.object({
   url: z.string().trim().min(1).max(2048),

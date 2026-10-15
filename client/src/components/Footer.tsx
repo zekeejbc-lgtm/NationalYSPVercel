@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { ContactInfo } from "@shared/schema";
 import { resolveMainFacebookUrl, sanitizeContactSocials } from "@/lib/contactSocials";
 
-const DEFAULT_CONTACT_EMAIL = "phyouthservice@gmail.com";
+const DEFAULT_CONTACT_EMAIL = "national.hq@youthserviceph.org";
 const DEFAULT_CONTACT_PHONE = "09177798413";
 const DEFAULT_CONTACT_FACEBOOK = "https://www.facebook.com/YOUTHSERVICEPHILIPPINES";
 

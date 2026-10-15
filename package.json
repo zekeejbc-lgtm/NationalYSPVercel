@@ -4,6 +4,9 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
+    "coalition:setup": "tsx scripts/setup-coalition.ts",
+    "coalition:mail-setup": "tsx scripts/setup-coalition-mail.ts",
+    "coalition:test": "tsx scripts/test-coalition.ts",
     "dev": "cross-env NODE_ENV=development tsx server/index-dev.ts",
     "build": "npm run build:server && vite build",
     "build:server": "esbuild server/app.ts --bundle --platform=node --format=cjs --outfile=dist-server/server/app.cjs",

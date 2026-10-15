@@ -179,6 +179,8 @@ function shouldPersistQuery(queryKey: unknown): queryKey is unknown[] {
   }
 
   const key = queryKey[0];
+  // Personal coalition records must not be copied into browser session storage.
+  if (key.startsWith("/api/coalition/")) return false;
   if (!key.startsWith("/api/")) {
     return false;
   }

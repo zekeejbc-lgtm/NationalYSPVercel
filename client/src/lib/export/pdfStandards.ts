@@ -5,7 +5,7 @@ export const ORGANIZATION_REPORT_INFO = {
   secRegistryNumber: "2023010080782-00",
   facebook: "/YOUTHSERVICEPHILIPPINES",
   website: "youthserviceph.org",
-  email: "national@youthserviceph.org",
+  email: "national.hq@youthserviceph.org",
   logoPath: "/images/ysp-logo.png",
 } as const;
 

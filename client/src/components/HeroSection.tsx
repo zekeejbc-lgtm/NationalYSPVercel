@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { Publication } from "@shared/schema";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
-import heroImage from "@assets/generated_images/hero_image_volunteers_building.png";
+import heroImage from "@assets/photos/ysp-batangas-volunteers.jpg";
 
 const AUTOPLAY_DELAY_MS = 10000;
 const DRAG_THRESHOLD_PX = 64;
@@ -386,7 +386,7 @@ export default function HeroSection() {
               <div key={slide.id} className="relative h-full w-full shrink-0">
                 <img
                   src={isLoaded ? slide.imageUrl : heroImage}
-                  alt={slide.title || "Youth Service Philippines hero background"}
+                  alt={slide.title || "Youth Service Philippines Batangas volunteers working together at a table"}
                   className="h-full w-full object-cover"
                   style={panStyle}
                   draggable={false}

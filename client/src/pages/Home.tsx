@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import HeroSection from "@/components/HeroSection";
+import CoalitionSection from "@/components/CoalitionSection";
 import StatsSection from "@/components/StatsSection";
 import ProgramCard from "@/components/ProgramCard";
 import ChapterCard from "@/components/ChapterCard";
@@ -299,6 +300,7 @@ export default function Home() {
   return (
     <div className="min-h-screen flex flex-col">
       <HeroSection />
+      <CoalitionSection />
       
       {isHomeDataLoading ? (
         <section className="py-10 md:py-12">

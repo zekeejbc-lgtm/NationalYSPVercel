@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { hasDatabaseUrl, pool } from "./db";
+import { ensureCoalitionInfrastructure, registerCoalitionRoutes } from "./coalition";
 import multer from "multer";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -2594,6 +2595,7 @@ async function generateUniqueMemberApplicationReferenceId() {
 }
 
 const PUBLIC_SITE_PATHS = [
+  "/coalition-signup",
   "/",
   "/programs",
   "/publications",
@@ -2679,8 +2681,10 @@ function isPdfFallbackScopeAllowed(req: Request, contract: PdfExportContract) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  registerCoalitionRoutes(app, requireAdminAuth);
   if (hasDatabaseUrl) {
     try {
+      await ensureCoalitionInfrastructure();
       await ensureKpiCompletionBarangayInfra();
       await ensureVolunteerOpportunityInfra();
       await ensureVolunteerOpportunityAffiliationInfra();

@@ -75,7 +75,7 @@ type DateScopedListOptions = {
   startDate?: Date | null;
 };
 
-const DEFAULT_CONTACT_EMAIL = "phyouthservice@gmail.com";
+const DEFAULT_CONTACT_EMAIL = "national.hq@youthserviceph.org";
 const DEFAULT_CONTACT_PHONE = "09177798413";
 const DEFAULT_CONTACT_FACEBOOK = "https://www.facebook.com/YOUTHSERVICEPHILIPPINES";
 const DEFAULT_HOME_CONTENT = {
@@ -164,13 +164,19 @@ function getMainFacebookUrl(rawFacebook: string, socials: ContactSocialLink[]) {
   return firstFacebookSocial?.url || DEFAULT_CONTACT_FACEBOOK;
 }
 
+function normalizeContactEmail(value: string | null | undefined): string {
+  const email = value?.trim() || "";
+  const legacyEmails = ["phyouthservice@gmail.com", "national@youthserviceph.org"];
+  return !email || legacyEmails.includes(email.toLowerCase()) ? DEFAULT_CONTACT_EMAIL : email;
+}
+
 function normalizeContactInfoPayload(info: InsertContactInfo): InsertContactInfo {
   const socials = sanitizeContactSocials(info.socials);
   const mainFacebook = getMainFacebookUrl(info.facebook, socials);
 
   return {
     ...info,
-    email: (info.email || "").trim() || DEFAULT_CONTACT_EMAIL,
+    email: normalizeContactEmail(info.email),
     phone: (info.phone || "").trim() || DEFAULT_CONTACT_PHONE,
     facebook: mainFacebook,
     socials,
@@ -185,7 +191,7 @@ function normalizeContactInfoRecord(record: ContactInfo): ContactInfo {
 
   return {
     ...record,
-    email: record.email?.trim() || DEFAULT_CONTACT_EMAIL,
+    email: normalizeContactEmail(record.email),
     phone: record.phone?.trim() || DEFAULT_CONTACT_PHONE,
     facebook: getMainFacebookUrl(record.facebook, socials),
     socials,

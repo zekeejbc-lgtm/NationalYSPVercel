@@ -1,4 +1,5 @@
 node_modules
+scripts/coalition-mail-config.gs
 dist
 dist-server/server/app.cjs
 .DS_Store
@@ -13,3 +14,5 @@ vite.config.ts.*
 .claude/
 .junie/
 .vscode/mcp.json
+.vercel
+.env*

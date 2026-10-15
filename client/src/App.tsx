@@ -8,6 +8,8 @@ import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import Home from "@/pages/Home";
 import Programs from "@/pages/Programs";
+import CoalitionSignup from "@/pages/CoalitionSignup";
+import CoalitionTrackingPage from "@/pages/CoalitionTracking";
 import Publications from "@/pages/Publications";
 import Membership from "@/pages/Membership";
 import Volunteer from "@/pages/Volunteer";
@@ -53,6 +55,18 @@ const DEFAULT_KEYWORDS = [
 ];
 
 const ROUTE_SEO: Record<string, RouteSeo> = {
+  "/coalition-track": {
+    title: "Track your Coalition Application | Youth Service Philippines National",
+    description: "Privately track the progress of your Youth Service Coalition application.",
+    path: "/coalition-track", indexable: false, keywords: [],
+  },
+  "/coalition-signup": {
+    title: "Youth Service Coalition Sign-up | Youth Service Philippines National",
+    description: "Register as an individual or organization and connect with the Youth Service Coalition.",
+    path: "/coalition-signup",
+    indexable: true,
+    keywords: ["youth service coalition", "coalition registration", "youth service philippines"],
+  },
   "/": {
     title: "Youth Service Philippines National | Empowering Filipino Youth Through Service",
     description:
@@ -547,6 +561,8 @@ function Router() {
       <Route path="/programs" component={Programs} />
       <Route path="/publications" component={Publications} />
       <Route path="/membership" component={Membership} />
+      <Route path="/coalition-signup" component={CoalitionSignup} />
+      <Route path="/coalition-track" component={CoalitionTrackingPage} />
       <Route path="/volunteer" component={Volunteer} />
       <Route path="/contact" component={Contact} />
       <Route path="/verification" component={GoogleNonprofitVerification} />

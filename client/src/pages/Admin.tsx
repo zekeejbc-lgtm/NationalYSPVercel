@@ -27,10 +27,12 @@ const ChapterRequestsPanel = lazy(() => import("@/components/admin/ChapterReques
 const NationalRequestsManager = lazy(() => import("@/components/admin/NationalRequestsManager"));
 const NewsletterManager = lazy(() => import("@/components/admin/NewsletterManager"));
 const HomeEditorManager = lazy(() => import("@/components/admin/HomeEditorManager"));
+const CoalitionManager = lazy(() => import("@/components/admin/CoalitionManager"));
 
 const ADMIN_ACTIVE_TAB_STORAGE_KEY = "ysp:admin-active-tab:v1";
 const ADMIN_TAB_FALLBACK = "stats";
 const VALID_ADMIN_TABS = new Set([
+  "coalition",
   "stats",
   "home-editor",
   "programs",
@@ -197,6 +199,7 @@ export default function Admin() {
   }
 
   const dashboardTabs: AdaptiveDashboardTab[] = [
+    { value: "coalition", label: "Coalition", icon: Users, group: "People", dataTestId: "tab-coalition", desktopPriority: true },
     { value: "stats", label: "Stats", icon: BarChart3, group: "Insights", dataTestId: "tab-stats", mobilePriority: true, desktopPriority: true },
     { value: "home-editor", label: "Home Editor", icon: Home, group: "Content", dataTestId: "tab-home-editor", mobilePriority: true, desktopPriority: true },
     { value: "programs", label: "Programs", icon: FileText, group: "Content", dataTestId: "tab-programs", desktopPriority: true },
@@ -280,6 +283,12 @@ export default function Admin() {
           <TabsContent value="home-editor">
             <Suspense fallback={<DashboardTabSkeleton variant="stats" label="Loading home editor..." />}>
               <HomeEditorManager />
+            </Suspense>
+          </TabsContent>
+
+          <TabsContent value="coalition">
+            <Suspense fallback={<DashboardTabSkeleton variant="members" label="Loading coalition registrations..." />}>
+              <CoalitionManager />
             </Suspense>
           </TabsContent>
 
