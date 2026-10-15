@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import LoadingState from "@/components/ui/loading-state";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { createClient } from "@/lib/client";
 
 interface MyProfileProps {
   embedded?: boolean;
@@ -32,6 +33,9 @@ interface AuthCheckResponse {
   authenticated: boolean;
   user?: ProfileResponse;
 }
+
+const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
+const PASSKEY_AUTH_ENABLED = import.meta.env.VITE_PASSKEY_AUTH_ENABLED === "true";
 
 type ParsedResponsePayload<T = unknown> = {
   data: T | null;
@@ -92,6 +96,8 @@ export default function MyProfile({ embedded = false, hideEmbeddedHeading = fals
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [externalProviders, setExternalProviders] = useState<string[]>([]);
+  const supabase = createClient();
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -113,6 +119,8 @@ export default function MyProfile({ embedded = false, hideEmbeddedHeading = fals
 
         if (response.ok && isProfileResponse(payload.data)) {
           applyProfile(payload.data);
+          const externalResponse = await fetch("/api/auth/external", { credentials: "include" });
+          if (externalResponse.ok) setExternalProviders((await externalResponse.json()).map((item: any) => item.provider));
           return;
         }
 
@@ -149,6 +157,53 @@ export default function MyProfile({ embedded = false, hideEmbeddedHeading = fals
 
     loadProfile();
   }, [setLocation, toast]);
+
+  const linkExternalProvider = async (provider: "google" | "passkey") => {
+    try {
+      if ((provider === "google" && !GOOGLE_AUTH_ENABLED) || (provider === "passkey" && !PASSKEY_AUTH_ENABLED)) return;
+      if (provider === "google") {
+        const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/profile?link=google` } });
+        if (error) throw error;
+        return;
+      }
+      const existingSession = (await supabase.auth.getSession()).data.session;
+      if (!existingSession) {
+        const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: `${window.location.origin}/profile?link=passkey` } });
+        if (error) throw error;
+        return;
+      }
+      const { error } = await (supabase.auth as any).registerPasskey();
+      if (error) throw error;
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.access_token) throw new Error("Passkey session unavailable");
+      const response = await fetch("/api/auth/external/link", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ provider }), credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not link passkey");
+      setExternalProviders((current) => Array.from(new Set([...current, provider])));
+      toast({ title: "Passkey linked", description: "You can now use it to sign in." });
+    } catch (error: any) {
+      toast({ title: "Could not link sign-in method", description: error.message, variant: "destructive" });
+    }
+  };
+
+  useEffect(() => {
+    const linkMode = new URLSearchParams(window.location.search).get("link");
+    if (linkMode !== "google" && linkMode !== "passkey") return;
+    void (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.access_token) return;
+      if (linkMode === "passkey") {
+        const { error } = await (supabase.auth as any).registerPasskey();
+        if (error) throw error;
+      }
+      const response = await fetch("/api/auth/external/link", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}`, "Content-Type": "application/json" }, body: JSON.stringify({ provider: linkMode === "passkey" ? "passkey" : "google" }), credentials: "include" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not link Google");
+      setExternalProviders((current) => Array.from(new Set([...current, linkMode === "passkey" ? "passkey" : "google"])));
+      window.history.replaceState({}, "", "/profile");
+      toast({ title: linkMode === "passkey" ? "Passkey linked" : "Google linked", description: "You can now use it to sign in." });
+    })().catch((error: any) => toast({ title: "Could not link Google", description: error.message, variant: "destructive" }));
+  }, []);
 
   const updateProfileMutation = useMutation({
     mutationFn: async () => {
@@ -408,6 +463,21 @@ export default function MyProfile({ embedded = false, hideEmbeddedHeading = fals
           </form>
         </CardContent>
       </Card>
+
+      {(GOOGLE_AUTH_ENABLED || PASSKEY_AUTH_ENABLED) && <Card>
+        <CardHeader>
+          <CardTitle>Google and Passkey sign-in</CardTitle>
+          <CardDescription>Link sign-in methods to this existing YSP account. Linking does not create a new account.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          {GOOGLE_AUTH_ENABLED && <Button type="button" variant="outline" onClick={() => linkExternalProvider("google")} disabled={externalProviders.includes("google")}>
+            {externalProviders.includes("google") ? "Google linked" : "Link Google"}
+          </Button>}
+          {PASSKEY_AUTH_ENABLED && <Button type="button" variant="outline" onClick={() => linkExternalProvider("passkey")} disabled={externalProviders.includes("passkey")}>
+            {externalProviders.includes("passkey") ? "Passkey linked" : "Add a passkey"}
+          </Button>}
+        </CardContent>
+      </Card>}
     </>
   );
 

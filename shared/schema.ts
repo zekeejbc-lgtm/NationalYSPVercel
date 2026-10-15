@@ -190,6 +190,26 @@ export const barangayUsers = pgTable("barangay_users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+/**
+ * Maps a verified Supabase Auth identity to one pre-provisioned YSP account.
+ * The provider subject is immutable; email is deliberately not used as the key.
+ */
+export const externalAuthIdentities = pgTable("external_auth_identities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountType: text("account_type").notNull(),
+  accountId: varchar("account_id").notNull(),
+  provider: text("provider").notNull(),
+  providerSubject: text("provider_subject").notNull(),
+  email: text("email"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+}, table => [
+  index("external_auth_account_idx").on(table.accountType, table.accountId),
+  index("external_auth_provider_subject_idx").on(table.provider, table.providerSubject),
+  check("external_auth_account_type_check", sql`${table.accountType} IN ('admin','chapter','barangay')`),
+  check("external_auth_provider_check", sql`${table.provider} IN ('google','passkey')`),
+]).enableRLS();
+
 export const projectReports = pgTable("project_reports", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chapterId: varchar("chapter_id").notNull().references(() => chapters.id),

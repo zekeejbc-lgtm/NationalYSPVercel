@@ -48,6 +48,7 @@ import {
   type KpiDependencyMetric,
 } from "@shared/kpi-dependencies";
 import { parsePdfExportContract, type PdfExportContract } from "@shared/pdf-export-contract";
+import { ensureExternalAuthInfrastructure, registerExternalAuthRoutes } from "./external-auth";
 import {
   getPdfFallbackAuditEntryById,
   getPdfFallbackInternalEntryById,
@@ -2681,8 +2682,10 @@ function isPdfFallbackScopeAllowed(req: Request, contract: PdfExportContract) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  await ensureExternalAuthInfrastructure();
   registerCoalitionRoutes(app, requireAdminAuth);
-  if (hasDatabaseUrl) {
+  registerExternalAuthRoutes(app, requireAuth);
+  if (hasDatabaseUrl && !(process.env.VERCEL === "1" && process.env.RUN_STARTUP_SCHEMA_SETUP !== "true")) {
     try {
       await ensureCoalitionInfrastructure();
       await ensureKpiCompletionBarangayInfra();

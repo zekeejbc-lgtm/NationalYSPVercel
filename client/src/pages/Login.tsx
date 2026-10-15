@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
 import { Eye, EyeOff } from "lucide-react";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
+import { createClient } from "@/lib/client";
 
 interface AuthResponse {
   authenticated: boolean;
@@ -28,6 +29,8 @@ type ParsedResponsePayload<T = unknown> = {
 };
 
 const LAST_ROUTE_STORAGE_KEY = "ysp:last-route:v1";
+const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
+const PASSKEY_AUTH_ENABLED = import.meta.env.VITE_PASSKEY_AUTH_ENABLED === "true";
 
 function readLastRoute() {
   if (typeof window === "undefined" || typeof window.sessionStorage === "undefined") {
@@ -110,6 +113,7 @@ export default function Login() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [debugInfo, setDebugInfo] = useState<{ hasSession: boolean; role: string; path: string } | null>(null);
   const hasRedirected = useRef(false);
+  const supabase = createClient();
   
   const showDebug = typeof window !== "undefined" && window.location.search.includes("debugAuth=1");
 
@@ -166,6 +170,58 @@ export default function Login() {
     
     checkExistingAuth();
   }, [setLocation, toast, showDebug]);
+
+  const finishExternalLogin = async (provider: "google" | "passkey") => {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (!accessToken) throw new Error("External sign-in did not return a session.");
+    const response = await fetch("/api/auth/external/exchange", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider }),
+      credentials: "include",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "This identity is not linked to a YSP account.");
+    const role = payload.user?.role;
+    if (role !== "admin" && role !== "chapter" && role !== "barangay") throw new Error("Account role is not configured.");
+    setLocation(resolveTargetRoute(role, payload.user?.mustChangePassword));
+  };
+
+  const handleGoogleLogin = async () => {
+    if (!GOOGLE_AUTH_ENABLED) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/login` },
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      toast({ title: "Google sign-in failed", description: error.message, variant: "destructive" });
+      setLoading(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!PASSKEY_AUTH_ENABLED) return;
+    setLoading(true);
+    try {
+      const { error } = await (supabase.auth as any).signInWithPasskey();
+      if (error) throw error;
+      await finishExternalLogin("passkey");
+    } catch (error: any) {
+      toast({ title: "Passkey sign-in failed", description: error.message, variant: "destructive" });
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!GOOGLE_AUTH_ENABLED || !window.location.hash.includes("access_token") && !window.location.search.includes("code=")) return;
+    void finishExternalLogin("google").catch((error: any) => {
+      toast({ title: "Google sign-in failed", description: error.message, variant: "destructive" });
+    });
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -320,6 +376,12 @@ export default function Login() {
             >
               Sign In
             </Button>
+            {(GOOGLE_AUTH_ENABLED || PASSKEY_AUTH_ENABLED) && (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {GOOGLE_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handleGoogleLogin} disabled={loading}>Continue with Google</Button>}
+                {PASSKEY_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handlePasskeyLogin} disabled={loading}>Use a passkey</Button>}
+              </div>
+            )}
             <Button
               type="button"
               variant="ghost"

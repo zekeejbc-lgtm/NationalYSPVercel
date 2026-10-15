@@ -68,6 +68,10 @@ const trackingCookie = "ysp_coalition_tracking";
 let lastCleanup = 0;
 let referenceBackfillDone = false;
 async function ready() {
+  // Vercel instances should use the schema provisioned by the deployment
+  // migration. Running DDL, backfills, and retention cleanup in a user-facing
+  // request makes cold starts exceed the function timeout.
+  if (process.env.VERCEL === "1" && process.env.RUN_STARTUP_SCHEMA_SETUP !== "true") return;
   await ensureCoalitionInfrastructure();
   await backfillReferenceCodes();
   if (Date.now() - lastCleanup < 3600000) return;

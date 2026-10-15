@@ -94,14 +94,42 @@ export default function CoalitionSignup() {
     }
     setPending(true);
     try {
-      const response = await fetch("/api/coalition/registrations", {
+      // The apex domain redirects to www. Using the canonical API origin avoids
+      // a 307 round trip and prevents browsers from treating the redirect as a
+      // cross-origin request.
+      const apiOrigin =
+        window.location.hostname === "youthserviceph.org"
+          ? "https://www.youthserviceph.org"
+          : "";
+      const response = await fetch(`${apiOrigin}/api/coalition/registrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed.data),
       });
-      const result = await response.json();
+      const responseText = await response.text();
+      let result: {
+        reference?: string;
+        trackingToken?: string;
+        emailSent?: boolean;
+        error?: string;
+        message?: string;
+      } = {};
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(
+          responseText.trim().startsWith("<")
+            ? "The registration service returned a webpage instead of an API response. Please refresh and try again."
+            : "The registration service returned an invalid response. Please try again.",
+        );
+      }
       if (!response.ok)
-        throw new Error(result.error || "Unable to submit. Please try again.");
+        throw new Error(
+          result.error || result.message || "Unable to submit. Please try again.",
+        );
+      if (!result.reference) {
+        throw new Error("The registration service did not return a reference. Please try again.");
+      }
       setReference(result.reference);
       setTrackingToken(result.trackingToken || "");
       setEmailSent(!!result.emailSent);
