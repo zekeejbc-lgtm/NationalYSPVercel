@@ -42,7 +42,12 @@ export async function flushCoalitionMail(registrationId?: string) {
           `UPDATE coalition_email_outbox SET sent_at = now(), body = '', last_error = NULL WHERE id = $1`,
           [message.id],
         );
-      } catch {
+      } catch (error) {
+        console.error("[coalition-mail] delivery failed", {
+          messageId: message.id,
+          registrationId: message.registration_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
         await client.query(
           `UPDATE coalition_email_outbox SET attempts = attempts + 1, next_attempt_at = now() + interval '5 minutes', last_error = 'Delivery failed. Check GAS authorization, quota, and shared secret.' WHERE id = $1`,
           [message.id],

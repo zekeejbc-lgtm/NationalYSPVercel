@@ -272,7 +272,7 @@ export function registerCoalitionRoutes(
       await client.query("COMMIT");
       client.release();
       client = undefined;
-      void delivery(d.requestId);
+      await delivery(d.requestId);
       return res.status(201).json({
         reference: referenceCode,
         referenceCode,
@@ -408,7 +408,7 @@ export function registerCoalitionRoutes(
       await client.query("COMMIT");
       client.release();
       client = undefined;
-      void delivery(row.id);
+      await delivery(row.id);
       res.json({ success: true, status: status.data });
     } catch (error) {
       if (client) await client.query("ROLLBACK");
@@ -501,7 +501,7 @@ export function registerCoalitionRoutes(
       await client.query("COMMIT");
       client.release();
       client = undefined;
-      if (row) void delivery(row.id);
+      if (row) await delivery(row.id);
       res.json({
         message:
           "If the reference and email match an application, a private verification link will be emailed. Check your inbox and spam folder.",
@@ -646,7 +646,7 @@ export function registerCoalitionRoutes(
       await client.query("COMMIT");
       client.release();
       client = undefined;
-      void delivery(row.id);
+      await delivery(row.id);
       res.json({ success: true });
     } catch (error) {
       if (client) await client.query("ROLLBACK");

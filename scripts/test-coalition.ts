@@ -262,12 +262,11 @@ try {
     noMatchBody,
     "Recovery must not reveal whether a record exists.",
   );
-  const recoveryMessage = (
-    await pool!.query(
-      "SELECT body FROM coalition_email_outbox WHERE registration_id=$1 ORDER BY created_at DESC LIMIT 1",
-      [ids[1]],
-    )
-  ).rows[0].body as string;
+  const recoveryMessage = sent
+    .slice()
+    .reverse()
+    .find((message) => message.to === base.email)?.body;
+  assert(recoveryMessage, "Recovery email should be delivered.");
   const recoveryToken = new URLSearchParams(
     recoveryMessage.split("#")[1].split("\n")[0],
   ).get("token")!;
