@@ -34,6 +34,8 @@ export const databaseUrl = resolveDatabaseUrl();
 export const hasDatabaseUrl = Boolean(databaseUrl);
 
 const DEFAULT_POOL_MAX = 10;
+const DEFAULT_SERVERLESS_POOL_MAX = 2;
+const MAX_SERVERLESS_POOL_MAX = 3;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10000;
 
@@ -60,9 +62,18 @@ let initializedPool: Pool | null = null;
 
 if (databaseUrl) {
   try {
+    const configuredPoolMax = parsePositiveInt(
+      process.env.PG_POOL_MAX,
+      process.env.VERCEL === "1" ? DEFAULT_SERVERLESS_POOL_MAX : DEFAULT_POOL_MAX,
+    );
+    const poolMax =
+      process.env.VERCEL === "1"
+        ? Math.min(configuredPoolMax, MAX_SERVERLESS_POOL_MAX)
+        : configuredPoolMax;
+
     initializedPool = new Pool({
       connectionString: databaseUrl,
-      max: parsePositiveInt(process.env.PG_POOL_MAX, DEFAULT_POOL_MAX),
+      max: poolMax,
       idleTimeoutMillis: parsePositiveInt(process.env.PG_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS),
       connectionTimeoutMillis: parsePositiveInt(
         process.env.PG_CONNECTION_TIMEOUT_MS,
