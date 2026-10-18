@@ -1,0 +1,12 @@
+.env
+.env.*
+.mcp.json
+.clasp.json
+.claspignore
+.clasprc.json
+scripts/coalition-mail-config.gs
+.agents/
+.vscode/
+.claude/
+.junie/
+artifacts/

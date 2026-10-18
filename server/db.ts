@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { attachDatabasePool } from "@vercel/functions";
 import * as schema from "@shared/schema";
 
 let poolInitializationError: Error | null = null;
@@ -35,9 +36,11 @@ export const hasDatabaseUrl = Boolean(databaseUrl);
 
 const DEFAULT_POOL_MAX = 10;
 const DEFAULT_SERVERLESS_POOL_MAX = 2;
-const MAX_SERVERLESS_POOL_MAX = 3;
+const MAX_SERVERLESS_POOL_MAX = 2;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10000;
+const SERVERLESS_IDLE_TIMEOUT_MS = 1000;
+const isServerless = process.env.VERCEL === "1";
 
 function parsePositiveInt(rawValue: string | undefined, fallback: number) {
   const parsed = Number.parseInt(rawValue || "", 10);
@@ -64,17 +67,25 @@ if (databaseUrl) {
   try {
     const configuredPoolMax = parsePositiveInt(
       process.env.PG_POOL_MAX,
-      process.env.VERCEL === "1" ? DEFAULT_SERVERLESS_POOL_MAX : DEFAULT_POOL_MAX,
+      isServerless ? DEFAULT_SERVERLESS_POOL_MAX : DEFAULT_POOL_MAX,
     );
     const poolMax =
-      process.env.VERCEL === "1"
+      isServerless
         ? Math.min(configuredPoolMax, MAX_SERVERLESS_POOL_MAX)
         : configuredPoolMax;
+    const configuredIdleTimeout = parsePositiveInt(
+      process.env.PG_IDLE_TIMEOUT_MS,
+      isServerless ? SERVERLESS_IDLE_TIMEOUT_MS : DEFAULT_IDLE_TIMEOUT_MS,
+    );
 
     initializedPool = new Pool({
       connectionString: databaseUrl,
       max: poolMax,
-      idleTimeoutMillis: parsePositiveInt(process.env.PG_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS),
+      // Each Vercel instance has its own pool. Release idle connections quickly,
+      // even when an older deployment environment still specifies a long timeout.
+      idleTimeoutMillis: isServerless
+        ? Math.min(configuredIdleTimeout, SERVERLESS_IDLE_TIMEOUT_MS)
+        : configuredIdleTimeout,
       connectionTimeoutMillis: parsePositiveInt(
         process.env.PG_CONNECTION_TIMEOUT_MS,
         DEFAULT_CONNECTION_TIMEOUT_MS,
@@ -84,6 +95,15 @@ if (databaseUrl) {
         ? { rejectUnauthorized: false }
         : undefined,
     });
+    initializedPool.on("error", (error: Error & { code?: string }) => {
+      // pg removes the failed idle client; handle the event so a disconnected
+      // idle connection does not crash the entire server.
+      console.error("[database] idle connection error", { code: error.code });
+    });
+    if (isServerless) {
+      // Timers alone cannot clean up a pool after Vercel suspends an instance.
+      attachDatabasePool(initializedPool);
+    }
   } catch (error: any) {
     poolInitializationError = error instanceof Error ? error : new Error(String(error));
     console.error("[startup] Failed to initialize database pool", poolInitializationError);

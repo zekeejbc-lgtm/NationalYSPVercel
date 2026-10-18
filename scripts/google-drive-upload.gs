@@ -204,14 +204,25 @@ function buildCoalitionEmailHtml_(subject, body) {
     '<!--[if mso]><table role="presentation" width="600"><tr><td><![endif]-->' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid #e1e5ea;border-radius:12px">' +
     '<tr><td class="email-pad" style="padding:28px 32px;background:#12334a;border-top:5px solid #f97316">' +
-    '<p style="margin:0 0 8px;color:#ffad73;font-size:13px;font-weight:bold;letter-spacing:2px">YSP &bull; NATIONAL COALITION</p>' +
-    '<p style="margin:0;color:#ffffff;font-size:20px;font-weight:bold">Youth Service Philippines</p></td></tr>' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td width="76" valign="top" style="padding-right:16px">' +
+    '<a href="https://www.youthserviceph.org" style="text-decoration:none"><img src="https://www.youthserviceph.org/images/ysp-logo.png" width="60" height="60" alt="YSP logo" style="display:block;border:0;border-radius:8px"></a></td>' +
+    '<td valign="middle"><p style="margin:0 0 6px;color:#ffad73;font-size:11px;font-weight:bold;letter-spacing:1px">NATIONAL COALITION</p>' +
+    '<p style="margin:0;color:#ffffff;font-size:20px;font-weight:bold;line-height:1.35">Youth Service Philippines</p></td></tr></table></td></tr>' +
     '<tr><td class="email-pad" style="padding:32px;font-size:16px;line-height:1.75;word-break:break-word">' +
     '<h1 class="email-title" style="margin:0 0 24px;color:#12334a;font-size:28px;line-height:1.3;overflow-wrap:anywhere">' + escape(subject) + '</h1>' + content + fallback + '</td></tr>' +
     '<tr><td class="email-pad" style="padding:22px 32px;background:#fff6ee;border-top:1px solid #f7dfcc">' +
     '<p style="margin:0 0 6px;color:#12334a;font-size:14px;font-weight:bold">Together in service. Connected by purpose.</p>' +
     '<p style="margin:0;color:#596675;font-size:12px;line-height:1.7">Keep your application link private. It provides access to your coalition application.</p>' +
-    '<p style="margin:12px 0 0;font-size:12px"><a href="https://www.youthserviceph.org" style="color:#a63b08">Visit Youth Service Philippines</a></p>' +
+    '<p style="margin:18px 0"><a href="https://www.youthserviceph.org" style="display:inline-block;background:#12334a;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;padding:12px 20px;border-radius:8px">Open YSP portal &rarr;</a></p>' +
+    '<p style="margin:0 0 14px;color:#596675;font-size:12px;line-height:1.75">Empowering Filipino youth through community service and leadership development.<br>' +
+    '<a href="mailto:national.hq@youthserviceph.org" style="color:#596675">national.hq@youthserviceph.org</a><br>' +
+    '<a href="tel:+639177798413" style="color:#596675">+63 917 779 8413</a></p>' +
+    '<p style="margin:0 0 8px;color:#596675;font-size:12px">Connect with YSP</p>' +
+    '<p style="margin:0 0 16px">' +
+    '<a href="https://www.facebook.com/YOUTHSERVICEPHILIPPINES" style="display:inline-block;border:1px solid #cbd3db;border-radius:6px;padding:10px 12px;margin:0 6px 8px 0;color:#12334a;font-size:12px;text-decoration:none"><img src="https://www.youthserviceph.org/images/mail/facebook.png" width="22" height="22" alt="" style="border:0;vertical-align:middle;margin-right:6px">Facebook</a>' +
+    '<a href="https://www.instagram.com/youthserviceph/" style="display:inline-block;border:1px solid #cbd3db;border-radius:6px;padding:10px 12px;margin:0 6px 8px 0;color:#12334a;font-size:12px;text-decoration:none"><img src="https://www.youthserviceph.org/images/mail/instagram.png" width="22" height="22" alt="" style="border:0;vertical-align:middle;margin-right:6px">Instagram</a>' +
+    '<a href="https://www.youtube.com/@YouthServicePhilippines" style="display:inline-block;border:1px solid #cbd3db;border-radius:6px;padding:10px 12px;margin:0 0 8px;color:#12334a;font-size:12px;text-decoration:none"><img src="https://www.youthserviceph.org/images/mail/youtube.png" width="22" height="22" alt="" style="border:0;vertical-align:middle;margin-right:6px">YouTube</a></p>' +
+    '<p style="margin:0;padding-top:16px;border-top:1px solid #ecdccd;color:#637080;font-size:11px;line-height:1.75">Youth Service to the Filipino Youth, Inc.<br>Official owner and operator of youthserviceph.org<br>SEC Registration No. 2023010080782-00<br>&copy; ' + new Date().getFullYear() + ' Youth Service Philippines. All rights reserved.</p>' +
     '</td></tr></table><!--[if mso]></td></tr></table><![endif]--></td></tr></table></body></html>';
 }
 
