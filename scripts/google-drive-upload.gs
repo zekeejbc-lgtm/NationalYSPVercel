@@ -159,7 +159,13 @@ function sendCoalitionMail(data) {
     var key = "coalition-mail-sent-" + messageId;
     if (properties.getProperty(key)) return { success: true, duplicate: true };
     if (MailApp.getRemainingDailyQuota() < 1) throw new Error("Email daily quota exhausted.");
-    MailApp.sendEmail({ to: to, subject: subject, body: body, name: "Youth Service Philippines" });
+    MailApp.sendEmail({
+      to: to,
+      subject: subject,
+      body: body,
+      htmlBody: buildCoalitionEmailHtml_(subject, body),
+      name: "Youth Service Philippines"
+    });
     properties.setProperty(key, String(Date.now()));
     var all = properties.getProperties();
     Object.keys(all).forEach(function(storedKey) {
@@ -169,6 +175,44 @@ function sendCoalitionMail(data) {
     });
     return { success: true };
   } finally { lock.releaseLock(); }
+}
+
+// Email clients need their own HTML document. HtmlService only styles the web
+// console; it does not change the message delivered by MailApp.
+function buildCoalitionEmailHtml_(subject, body) {
+  var escape = function(value) {
+    return String(value).replace(/[&<>"']/g, function(character) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character];
+    });
+  };
+  var trackingUrl = "";
+  var content = String(body).replace(/\r\n?/g, "\n").split(/\n{2,}/).map(function(paragraph) {
+    var trimmed = paragraph.trim();
+    // Only turn our own private tracking links into buttons. Keep fragment
+    // tokens intact and never treat applicant-provided text as HTML.
+    if (/^https:\/\/(?:www\.)?youthserviceph\.org\/coalition-track#[^\s<>"']+$/.test(trimmed)) {
+      trackingUrl = trimmed;
+      return '<p style="margin:24px 0"><a href="' + escape(trimmed) + '" style="display:inline-block;background:#c94b0b;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold;padding:15px 24px;border-radius:8px">View your application &rarr;</a></p>';
+    }
+    return '<p style="margin:0 0 18px;overflow-wrap:anywhere;word-break:break-word">' + escape(paragraph).replace(/\n/g, "<br>") + '</p>';
+  }).join("");
+  var fallback = trackingUrl ? '<p style="margin:20px 0 0;color:#596675;font-size:12px;line-height:1.7">If the button does not open, copy this private link into your browser:<br><a href="' + escape(trackingUrl) + '" style="color:#a63b08;word-break:break-all;overflow-wrap:anywhere">' + escape(trackingUrl) + '</a></p>' : "";
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + escape(subject) + '</title>' +
+    '<style>@media only screen and (max-width:600px){.email-pad{padding:24px 18px!important}.outer-pad{padding:12px 8px!important}.email-title{font-size:24px!important}}</style></head>' +
+    '<body style="margin:0;padding:0;background:#f4f5f7;color:#243340;font-family:Arial,Helvetica,sans-serif">' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7"><tr><td class="outer-pad" align="center" style="padding:36px 16px">' +
+    '<!--[if mso]><table role="presentation" width="600"><tr><td><![endif]-->' +
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border:1px solid #e1e5ea;border-radius:12px">' +
+    '<tr><td class="email-pad" style="padding:28px 32px;background:#12334a;border-top:5px solid #f97316">' +
+    '<p style="margin:0 0 8px;color:#ffad73;font-size:13px;font-weight:bold;letter-spacing:2px">YSP &bull; NATIONAL COALITION</p>' +
+    '<p style="margin:0;color:#ffffff;font-size:20px;font-weight:bold">Youth Service Philippines</p></td></tr>' +
+    '<tr><td class="email-pad" style="padding:32px;font-size:16px;line-height:1.75;word-break:break-word">' +
+    '<h1 class="email-title" style="margin:0 0 24px;color:#12334a;font-size:28px;line-height:1.3;overflow-wrap:anywhere">' + escape(subject) + '</h1>' + content + fallback + '</td></tr>' +
+    '<tr><td class="email-pad" style="padding:22px 32px;background:#fff6ee;border-top:1px solid #f7dfcc">' +
+    '<p style="margin:0 0 6px;color:#12334a;font-size:14px;font-weight:bold">Together in service. Connected by purpose.</p>' +
+    '<p style="margin:0;color:#596675;font-size:12px;line-height:1.7">Keep your application link private. It provides access to your coalition application.</p>' +
+    '<p style="margin:12px 0 0;font-size:12px"><a href="https://www.youthserviceph.org" style="color:#a63b08">Visit Youth Service Philippines</a></p>' +
+    '</td></tr></table><!--[if mso]></td></tr></table><![endif]--></td></tr></table></body></html>';
 }
 
 function uploadImage(data) {
