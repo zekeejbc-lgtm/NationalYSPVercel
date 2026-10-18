@@ -198,7 +198,7 @@ export default function CoalitionManager() {
     }
   }
   return (
-    <Card>
+    <Card className="min-w-0 max-w-full">
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -291,129 +291,134 @@ export default function CoalitionManager() {
             No coalition registrations to show.
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Registrant</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Consent / submitted</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.items.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell className="min-w-52">
-                    <p className="font-medium">
-                      {row.organizationName || row.fullName}
-                    </p>
-                    <p className="text-sm text-muted-foreground capitalize">
-                      {row.registrationType}
-                      {row.organizationType ? ` · ${row.organizationType}` : ""}
-                    </p>
-                    {row.representativeName && (
-                      <p className="text-sm mt-1">
-                        {row.representativeName} · {row.representativePosition}
-                      </p>
-                    )}
-                    {row.organizationLink && (
-                      <a
-                        href={row.organizationLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-primary underline"
-                      >
-                        Organization link
-                      </a>
-                    )}
-                    <p className="font-mono text-xs text-muted-foreground mt-2 break-all">
-                      {row.referenceCode || row.id}
-                    </p>
-                  </TableCell>
-                  <TableCell>
-                    <a
-                      href={`mailto:${row.email}`}
-                      className="text-primary hover:underline"
-                    >
-                      {row.email}
-                    </a>
-                    {row.contactNumber && (
-                      <p className="text-sm mt-1">{row.contactNumber}</p>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {row.city}
-                    <p className="text-sm text-muted-foreground">
-                      {row.province}
-                    </p>
-                  </TableCell>
-                  <TableCell className="min-w-40">
-                    <p>
-                      {new Date(row.createdAt).toLocaleDateString("en-PH", {
-                        timeZone: "Asia/Manila",
-                      })}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Consent recorded
-                      <br />
-                      {row.noticeVersion}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(row.consentedAt).toLocaleString("en-PH", {
-                        timeZone: "Asia/Manila",
-                      })}
-                    </p>
-                  </TableCell>
-                  <TableCell>
-                    <Select
-                      value={row.status}
-                      disabled={busy}
-                      onValueChange={(v) => review(row, v as CoalitionStatus)}
-                    >
-                      <SelectTrigger
-                        className="w-44"
-                        aria-label={`Status for ${row.organizationName || row.fullName}`}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={row.status}>
-                          {COALITION_STATUS_LABELS[row.status]}
-                        </SelectItem>
-                        {COALITION_TRANSITIONS[row.status].map((status) => (
-                          <SelectItem key={status} value={status}>
-                            {COALITION_STATUS_LABELS[status]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => review(row)}
-                    >
-                      Review
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      disabled={busy}
-                      aria-label={`Delete registration for ${row.organizationName || row.fullName}`}
-                      onClick={() => setDeleting(row)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </TableCell>
+          <div className="min-w-0 space-y-2">
+            <p className="text-xs text-muted-foreground xl:hidden">
+              Scroll sideways to see all application details and actions.
+            </p>
+            <Table className="min-w-[1100px] [&_th]:whitespace-nowrap [&_td]:align-top">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Registrant</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Location</TableHead>
+                  <TableHead>Consent / submitted</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.items.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell className="min-w-[208px] max-w-[280px]">
+                      <p className="font-medium">
+                        {row.organizationName || row.fullName}
+                      </p>
+                      <p className="text-sm text-muted-foreground capitalize">
+                        {row.registrationType}
+                        {row.organizationType ? ` · ${row.organizationType}` : ""}
+                      </p>
+                      {row.representativeName && (
+                        <p className="text-sm mt-1">
+                          {row.representativeName} · {row.representativePosition}
+                        </p>
+                      )}
+                      {row.organizationLink && (
+                        <a
+                          href={row.organizationLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-primary underline"
+                        >
+                          Organization link
+                        </a>
+                      )}
+                      <p className="font-mono text-xs text-muted-foreground mt-2 break-all">
+                        {row.referenceCode || row.id}
+                      </p>
+                    </TableCell>
+                    <TableCell className="min-w-[240px] max-w-[320px]">
+                      <a
+                        href={`mailto:${row.email}`}
+                        className="text-primary hover:underline"
+                      >
+                        {row.email}
+                      </a>
+                      {row.contactNumber && (
+                        <p className="text-sm mt-1">{row.contactNumber}</p>
+                      )}
+                    </TableCell>
+                    <TableCell className="min-w-[160px]">
+                      {row.city}
+                      <p className="text-sm text-muted-foreground">
+                        {row.province}
+                      </p>
+                    </TableCell>
+                    <TableCell className="min-w-[160px]">
+                      <p>
+                        {new Date(row.createdAt).toLocaleDateString("en-PH", {
+                          timeZone: "Asia/Manila",
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Consent recorded
+                        <br />
+                        {row.noticeVersion}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(row.consentedAt).toLocaleString("en-PH", {
+                          timeZone: "Asia/Manila",
+                        })}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={row.status}
+                        disabled={busy}
+                        onValueChange={(v) => review(row, v as CoalitionStatus)}
+                      >
+                        <SelectTrigger
+                          className="w-44"
+                          aria-label={`Status for ${row.organizationName || row.fullName}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={row.status}>
+                            {COALITION_STATUS_LABELS[row.status]}
+                          </SelectItem>
+                          {COALITION_TRANSITIONS[row.status].map((status) => (
+                            <SelectItem key={status} value={status}>
+                              {COALITION_STATUS_LABELS[status]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => review(row)}
+                      >
+                        Review
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        disabled={busy}
+                        aria-label={`Delete registration for ${row.organizationName || row.fullName}`}
+                        onClick={() => setDeleting(row)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
         <div className="flex items-center justify-between gap-3">
           <Button

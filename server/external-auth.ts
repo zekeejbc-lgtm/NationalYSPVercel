@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { createClient, type User } from "@supabase/supabase-js";
 import { pool } from "./db";
+import { assertExternalSignInMethod } from "./external-auth-policy";
+import { z } from "zod";
 
 type ExternalProvider = "google" | "passkey";
 type AccountType = "admin" | "chapter" | "barangay";
@@ -71,6 +73,12 @@ async function getSupabaseUser(req: Request): Promise<User> {
   return data.user;
 }
 
+async function verifySignInMethod(req: Request, user: User, selectedProvider: ExternalProvider) {
+  const { data, error } = await supabase!.auth.getClaims(bearerToken(req));
+  if (error || !data) throw new Error("Invalid external authentication session.");
+  assertExternalSignInMethod(user, data.claims.amr, selectedProvider);
+}
+
 async function getAccount(accountTypeValue: AccountType, accountId: string) {
   if (!pool) return null;
   if (accountTypeValue === "admin") {
@@ -107,6 +115,7 @@ function publicAccount(account: any) {
 }
 
 async function saveLocalSession(req: Request, res: Response, account: any) {
+  await new Promise<void>((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()));
   req.session.userId = account.id;
   req.session.role = account.role;
   req.session.chapterId = account.chapterId;
@@ -117,18 +126,62 @@ async function saveLocalSession(req: Request, res: Response, account: any) {
 }
 
 export function registerExternalAuthRoutes(app: Express, requireAuth: (req: Request, res: Response, next: Function) => void) {
+  app.post("/api/auth/external/enroll", requireAuth, async (req, res) => {
+    try {
+      if (!pool || !req.session.userId || !req.session.role) return res.status(401).json({ error: "Sign in with your YSP credentials first." });
+      if (!isProviderEnabled("google") && !isProviderEnabled("passkey")) return res.status(404).json({ error: "External sign-in is not enabled." });
+      if (req.body?.accountId !== req.session.userId) return res.status(409).json({ error: "Your YSP account changed. Start linking again from My Profile." });
+      const parsed = z.string().trim().email().max(254).safeParse(req.body?.email);
+      if (!parsed.success) return res.status(400).json({ error: "Enter the Google email you want to link." });
+      const email = parsed.data.toLowerCase();
+      if (!await getAccount(req.session.role, req.session.userId)) return res.status(403).json({ error: "Your YSP account is inactive or no longer exists." });
+      const connection = await pool.connect();
+      try {
+        await connection.query("begin");
+        await connection.query("select pg_advisory_xact_lock(hashtext($1))", [`external-auth-email:${email}`]);
+        const linked = await connection.query(
+          `select i.account_type, i.account_id from external_auth_identities i
+           join auth.users u on u.id::text = i.provider_subject where u.email = $1`, [email],
+        );
+        if (linked.rows.some(row => row.account_type !== req.session.role || row.account_id !== req.session.userId)) throw new Error("This Google account is already linked to another YSP account.");
+        const existingGoogle = await connection.query(
+          `select u.email from external_auth_identities i join auth.users u on u.id::text = i.provider_subject
+           where i.account_type = $1 and i.account_id = $2 and i.provider = 'google'`, [req.session.role, req.session.userId],
+        );
+        if (existingGoogle.rows.some(row => row.email?.toLowerCase() !== email)) throw new Error("Use the Google email already linked to this YSP account.");
+        const pending = await connection.query("select account_type, account_id from ysp_auth.google_enrollments where email = $1 and expires_at > now()", [email]);
+        if (pending.rows.some(row => row.account_type !== req.session.role || row.account_id !== req.session.userId)) throw new Error("This Google email has another pending connection. Please try again later.");
+        await connection.query("delete from ysp_auth.google_enrollments where (account_type = $1 and account_id = $2) or (email = $3 and expires_at <= now())", [req.session.role, req.session.userId, email]);
+        await connection.query("insert into ysp_auth.google_enrollments (email, account_type, account_id, expires_at) values ($1, $2, $3, now() + interval '10 minutes')", [email, req.session.role, req.session.userId]);
+        await connection.query("commit");
+      } catch (error) {
+        await connection.query("rollback");
+        throw error;
+      } finally {
+        connection.release();
+      }
+      res.json({ success: true, email });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || "Could not authorize this Google connection." });
+    }
+  });
+
   app.post("/api/auth/external/exchange", async (req, res) => {
     try {
       const selectedProvider = provider(req.body?.provider);
       if (!selectedProvider || !pool) return res.status(400).json({ error: "Unsupported external provider" });
       if (!isProviderEnabled(selectedProvider)) return res.status(404).json({ error: "This sign-in method is not enabled." });
       const user = await getSupabaseUser(req);
+      await verifySignInMethod(req, user, selectedProvider);
       const result = await pool.query(
         `select account_type as "accountType", account_id as "accountId" from external_auth_identities where provider = $1 and provider_subject = $2`,
         [selectedProvider, user.id],
       );
       const identity = result.rows[0];
-      if (!identity) return res.status(403).json({ error: "This identity is not linked to a YSP account. Sign in with your YSP credentials first, then link it from Profile." });
+      if (!identity) {
+        await supabase!.auth.admin.signOut(bearerToken(req), "local");
+        return res.status(403).json({ error: "This identity is not linked to a YSP account. Sign in with your YSP credentials first, then link it from Profile." });
+      }
       const type = accountType(identity.accountType);
       const account = type ? await getAccount(type, identity.accountId) : null;
       if (!account) return res.status(403).json({ error: "The linked YSP account is inactive or no longer exists." });
@@ -144,15 +197,49 @@ export function registerExternalAuthRoutes(app: Express, requireAuth: (req: Requ
       const selectedProvider = provider(req.body?.provider);
       if (!selectedProvider || !pool || !req.session.userId || !req.session.role) return res.status(400).json({ error: "Unsupported external provider" });
       if (!isProviderEnabled(selectedProvider)) return res.status(404).json({ error: "This sign-in method is not enabled." });
+      if (req.body.accountId !== req.session.userId) return res.status(409).json({ error: "Your YSP account changed. Start linking again from My Profile." });
       const user = await getSupabaseUser(req);
       const account = await getAccount(req.session.role, req.session.userId);
       if (!account) return res.status(404).json({ error: "Account not found or inactive" });
-      await pool.query(
-        `insert into external_auth_identities (account_type, account_id, provider, provider_subject, email)
-         values ($1, $2, $3, $4, $5)
-         on conflict (account_type, account_id, provider) do update set provider_subject = excluded.provider_subject, email = excluded.email`,
-        [req.session.role, req.session.userId, selectedProvider, user.id, user.email || null],
-      );
+      if (selectedProvider === "google") {
+        await verifySignInMethod(req, user, "google");
+      } else {
+        const { data, error } = await supabase!.auth.admin.passkey.listPasskeys({ userId: user.id });
+        if (error || !data?.length) throw new Error("Register a passkey before linking passkey sign-in.");
+      }
+      const connection = await pool.connect();
+      try {
+        await connection.query("begin");
+        // Serialize links for the same Supabase user, including different providers.
+        await connection.query("select pg_advisory_xact_lock(hashtext($1))", [`external-auth:${user.id}`]);
+        const existing = await connection.query(
+          "select account_type, account_id, provider from external_auth_identities where provider_subject = $1",
+          [user.id],
+        );
+        if (existing.rows.some(row => row.account_id !== req.session.userId || row.account_type !== req.session.role)) {
+          throw new Error("This identity is already linked to another YSP account.");
+        }
+        if (selectedProvider === "google" && !existing.rows.some(row => row.provider === "google")) {
+          const authorized = await connection.query(
+            `delete from ysp_auth.google_enrollments where email = $1 and account_type = $2 and account_id = $3 and expires_at > now() returning email`,
+            [user.email?.toLowerCase(), req.session.role, req.session.userId],
+          );
+          if (!authorized.rowCount) throw new Error("Authorize this Google email from My Profile before linking it.");
+        }
+        if (selectedProvider === "passkey" && !existing.rows.length) throw new Error("Link your Google account from My Profile before adding a passkey.");
+        await connection.query(
+          `insert into external_auth_identities (account_type, account_id, provider, provider_subject, email)
+           values ($1, $2, $3, $4, $5)
+           on conflict (account_type, account_id, provider) do update set provider_subject = excluded.provider_subject, email = excluded.email`,
+          [req.session.role, req.session.userId, selectedProvider, user.id, user.email || null],
+        );
+        await connection.query("commit");
+      } catch (error) {
+        await connection.query("rollback");
+        throw error;
+      } finally {
+        connection.release();
+      }
       res.json({ success: true, provider: selectedProvider });
     } catch (error: any) {
       const status = /duplicate|unique/i.test(error?.message || "") ? 409 : 400;

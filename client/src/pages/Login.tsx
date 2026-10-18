@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { clearSessionQueryPersistence, queryClient } from "@/lib/queryClient";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Fingerprint } from "lucide-react";
+import { FcGoogle } from "react-icons/fc";
 import AuthLoadingScreen from "@/components/ui/auth-loading-screen";
-import { createClient } from "@/lib/client";
+import { createClient, readOAuthCallback } from "@/lib/client";
 
 interface AuthResponse {
   authenticated: boolean;
@@ -113,6 +114,9 @@ export default function Login() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [debugInfo, setDebugInfo] = useState<{ hasSession: boolean; role: string; path: string } | null>(null);
   const hasRedirected = useRef(false);
+  // The SDK removes the authorization code while initializing its session.
+  const oauthCallback = useRef(readOAuthCallback());
+  const callbackStarted = useRef(false);
   const supabase = createClient();
   
   const showDebug = typeof window !== "undefined" && window.location.search.includes("debugAuth=1");
@@ -121,6 +125,10 @@ export default function Login() {
     hasRedirected.current = false;
     
     const checkExistingAuth = async () => {
+      if (oauthCallback.current.present) {
+        setCheckingAuth(false);
+        return;
+      }
       try {
         const response = await fetch("/api/auth/check", { credentials: "include" });
         const payload = await readResponsePayload<AuthResponse>(response);
@@ -159,6 +167,7 @@ export default function Login() {
             });
           }
         } else {
+          await supabase.auth.signOut({ scope: "local" });
           queryClient.clear();
           clearSessionQueryPersistence();
         }
@@ -182,9 +191,15 @@ export default function Login() {
       credentials: "include",
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "This identity is not linked to a YSP account.");
+    if (!response.ok) {
+      await supabase.auth.signOut({ scope: "local" });
+      throw new Error(payload.error || "This identity is not linked to a YSP account.");
+    }
     const role = payload.user?.role;
     if (role !== "admin" && role !== "chapter" && role !== "barangay") throw new Error("Account role is not configured.");
+    queryClient.clear();
+    clearSessionQueryPersistence();
+    window.history.replaceState({}, "", "/login");
     setLocation(resolveTargetRoute(role, payload.user?.mustChangePassword));
   };
 
@@ -194,7 +209,7 @@ export default function Login() {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/login` },
+        options: { redirectTo: `${window.location.origin}/login`, queryParams: { prompt: "select_account" } },
       });
       if (error) throw error;
     } catch (error: any) {
@@ -207,7 +222,7 @@ export default function Login() {
     if (!PASSKEY_AUTH_ENABLED) return;
     setLoading(true);
     try {
-      const { error } = await (supabase.auth as any).signInWithPasskey();
+      const { error } = await supabase.auth.signInWithPasskey();
       if (error) throw error;
       await finishExternalLogin("passkey");
     } catch (error: any) {
@@ -217,9 +232,17 @@ export default function Login() {
   };
 
   useEffect(() => {
-    if (!GOOGLE_AUTH_ENABLED || !window.location.hash.includes("access_token") && !window.location.search.includes("code=")) return;
-    void finishExternalLogin("google").catch((error: any) => {
+    if (!GOOGLE_AUTH_ENABLED || !oauthCallback.current.present || callbackStarted.current) return;
+    callbackStarted.current = true;
+    setLoading(true);
+    void (async () => {
+      if (oauthCallback.current.error) throw new Error(oauthCallback.current.error);
+      await finishExternalLogin("google");
+    })().catch((error: any) => {
+      void supabase.auth.signOut({ scope: "local" });
       toast({ title: "Google sign-in failed", description: error.message, variant: "destructive" });
+      window.history.replaceState({}, "", "/login");
+      setLoading(false);
     });
   }, []);
 
@@ -378,8 +401,8 @@ export default function Login() {
             </Button>
             {(GOOGLE_AUTH_ENABLED || PASSKEY_AUTH_ENABLED) && (
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {GOOGLE_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handleGoogleLogin} disabled={loading}>Continue with Google</Button>}
-                {PASSKEY_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handlePasskeyLogin} disabled={loading}>Use a passkey</Button>}
+                {GOOGLE_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handleGoogleLogin} disabled={loading}><FcGoogle className="h-4 w-4 shrink-0" aria-hidden="true" />Continue with Google</Button>}
+                {PASSKEY_AUTH_ENABLED && <Button type="button" variant="outline" onClick={handlePasskeyLogin} disabled={loading}><Fingerprint className="h-4 w-4 shrink-0" aria-hidden="true" />Use a passkey</Button>}
               </div>
             )}
             <Button
