@@ -422,7 +422,7 @@ export default function HeroSection() {
             Together, we build a better future through service, leadership, and compassion.
           </p>
           <div className="flex flex-wrap gap-4">
-            <Link href="/membership">
+            <Link href="/coalition-signup">
               <Button
                 size="lg"
                 className="bg-primary hover:bg-primary/90 backdrop-blur-md"

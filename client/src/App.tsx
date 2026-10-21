@@ -61,8 +61,8 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
     path: "/coalition-track", indexable: false, keywords: [],
   },
   "/coalition-signup": {
-    title: "Youth Service Coalition Sign-up | Youth Service Philippines National",
-    description: "Register as an individual or organization and connect with the Youth Service Coalition.",
+    title: "Coalition Membership Form | Youth Service Philippines National",
+    description: "Apply for individual YSP and Coalition membership or register your group or organization through one form.",
     path: "/coalition-signup",
     indexable: true,
     keywords: ["youth service coalition", "coalition registration", "youth service philippines"],
@@ -560,7 +560,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/programs" component={Programs} />
       <Route path="/publications" component={Publications} />
-      <Route path="/membership" component={Membership} />
+      <Route path="/membership">{() => <Membership />}</Route>
       <Route path="/coalition-signup" component={CoalitionSignup} />
       <Route path="/coalition-track" component={CoalitionTrackingPage} />
       <Route path="/volunteer" component={Volunteer} />

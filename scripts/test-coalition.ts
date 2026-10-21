@@ -7,7 +7,7 @@ import {
   registerCoalitionRoutes,
   ensureCoalitionInfrastructure,
 } from "../server/coalition";
-import { COALITION_NOTICE_VERSION } from "../shared/coalition";
+import { COALITION_NOTICE_VERSION, COALITION_CERTIFICATE_MAX_BYTES, coalitionSignupSchema } from "../shared/coalition";
 
 const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
 const original = {
@@ -104,7 +104,26 @@ try {
     representativePosition: "Coordinator",
     authorizedRepresentative: true,
     organizationLink: "https://example.invalid",
+    yorpStatus: "registered",
+    yorpRegistrationNumber: "NYC-YORP-TEST-001",
+    otherRegistrations: ["sec", "lgu_lydo", "other"],
+    otherRegistrationDetails: "Community recognition",
   };
+  assert(coalitionSignupSchema.safeParse({ ...org, yorpStatus: undefined, yorpRegistrationNumber: "", otherRegistrations: [], otherRegistrationDetails: "" }).success, "Registration details must be optional.");
+  assert(!coalitionSignupSchema.safeParse({ ...org, otherRegistrations: ["none", "sec"] }).success);
+  assert(!coalitionSignupSchema.safeParse({ ...org, yorpStatus: "pending" }).success);
+  assert(!coalitionSignupSchema.safeParse({ ...org, otherRegistrations: ["sec"] }).success);
+  async function upload(body: unknown, bytes: Uint8Array, mime = "application/pdf") {
+    const form = new FormData();
+    form.append("data", JSON.stringify(body));
+    form.append("yorpCertificate", new Blob([bytes], { type: mime }), "certificate.pdf");
+    return fetch(origin + "/api/coalition/registrations", { method: "POST", body: form });
+  }
+  const certificate = Buffer.from("%PDF-1.7\nCoalition certificate test\n%%EOF");
+  assert.equal((await upload(org, Buffer.from("<html>invalid</html>"))).status, 400);
+  assert.equal((await upload({ ...org, yorpStatus: "pending", yorpRegistrationNumber: "" }, certificate)).status, 400);
+  assert.equal((await upload(base, certificate)).status, 400);
+  assert.equal((await upload(org, new Uint8Array(COALITION_CERTIFICATE_MAX_BYTES + 1))).status, 400);
   assert.equal(
     (await signup({ ...org, authorizedRepresentative: false })).status,
     400,
@@ -120,7 +139,17 @@ try {
   assert.match(receipt.reference, /^YSC-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
   assert.match(receipt.trackingToken, /^[a-f0-9]{64}$/);
   assert.equal(receipt.emailQueued, true);
-  const orgReceipt = await (await signup(org)).json();
+  const orgResponse = await upload(org, certificate);
+  assert.equal(orgResponse.status, 201, await orgResponse.clone().text());
+  const orgReceipt = await orgResponse.json();
+  assert.equal((await req("GET", `registrations/${ids[1]}/certificate`)).status, 401);
+  const download = await req("GET", `registrations/${ids[1]}/certificate`, undefined, true);
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get("content-type"), "application/pdf");
+  assert.equal(download.headers.get("cache-control"), "no-store");
+  assert.equal(download.headers.get("x-content-type-options"), "nosniff");
+  assert(download.headers.get("content-disposition")?.startsWith("attachment;"));
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), certificate);
   assert.match(orgReceipt.reference, /^YSC-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
   assert.equal((await signup(base)).status, 200);
   assert.equal(
@@ -234,6 +263,13 @@ try {
   const list = await (
     await req("GET", "registrations?type=organization", undefined, true)
   ).json();
+  const savedOrg = list.items.find((item: { id: string }) => item.id === ids[1]);
+  assert.equal(savedOrg.yorpStatus, "registered");
+  assert.equal(savedOrg.yorpRegistrationNumber, org.yorpRegistrationNumber);
+  assert.deepEqual(savedOrg.otherRegistrations, org.otherRegistrations);
+  assert.equal(savedOrg.otherRegistrationDetails, org.otherRegistrationDetails);
+  assert.equal(savedOrg.hasYorpCertificate, true);
+  assert(!("contents" in savedOrg));
   assert(
     list.items.every(
       (r: { registrationType: string }) =>
@@ -335,6 +371,7 @@ try {
     [ids[1]],
   );
   assert.equal((await decide(ids[1], "withdrawn")).status, 404);
+  assert.equal((await req("GET", `registrations/${ids[1]}/certificate`, undefined, true)).status, 404);
   for (let i = 0; i < 7; i++) assert.equal((await signup(base)).status, 200);
   assert.equal((await signup({ ...base, requestId: ids[2] })).status, 429);
   assert.equal(
@@ -362,6 +399,7 @@ try {
   for (const { rolname } of roles.rows) {
     for (const table of [
       "coalition_registrations",
+      "coalition_documents",
       "coalition_submission_limits",
       "coalition_events",
       "coalition_tracking_tokens",
@@ -370,7 +408,7 @@ try {
       for (const statement of [
         `SELECT * FROM ${table} LIMIT 1`,
         `INSERT INTO ${table} DEFAULT VALUES`,
-        `UPDATE ${table} SET ${table === "coalition_submission_limits" ? "attempts=0" : table === "coalition_tracking_tokens" ? "kind='session'" : table === "coalition_email_outbox" ? "attempts=0" : "status='submitted'"} WHERE false`,
+        `UPDATE ${table} SET ${table === "coalition_documents" ? "mime_type='application/pdf'" : table === "coalition_submission_limits" ? "attempts=0" : table === "coalition_tracking_tokens" ? "kind='session'" : table === "coalition_email_outbox" ? "attempts=0" : "status='submitted'"} WHERE false`,
         `DELETE FROM ${table} WHERE false`,
       ]) {
         const client = await pool!.connect();
@@ -381,15 +419,15 @@ try {
             client.query(statement),
             (e: { code: string }) => e.code === "42501",
           );
-          await client.query("ROLLBACK");
         } finally {
+          await client.query("ROLLBACK");
           client.release();
         }
       }
     }
   }
   console.log(
-    "Passed: signup, consent, idempotency, all review transitions, applicant replies and withdrawal, private tracking sessions, cross-applicant denial, recovery privacy, token expiry, mocked GAS mail and outage retries, rate limits, cascade deletion, and all-operation public-role denial for all five tables.",
+    "Passed: optional organization registrations, private certificate upload/download, file validation and size limits, expired certificate denial, signup, consent, idempotency, all review transitions, applicant replies and withdrawal, tracking, recovery, mocked mail, rate limits, cascade deletion, and public-role denial for all six tables.",
   );
 } finally {
   await pool?.query(

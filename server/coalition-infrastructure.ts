@@ -32,6 +32,16 @@ async function initialize() {
     await client.query(
       `ALTER TABLE coalition_registrations ADD COLUMN IF NOT EXISTS reference_code text`,
     );
+    await client.query(`ALTER TABLE coalition_registrations
+      ADD COLUMN IF NOT EXISTS yorp_status text CHECK (yorp_status IN ('registered','pending','not_registered')),
+      ADD COLUMN IF NOT EXISTS yorp_registration_number text,
+      ADD COLUMN IF NOT EXISTS other_registrations text[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS other_registration_details text`);
+    await client.query(`CREATE TABLE IF NOT EXISTS coalition_documents (
+      registration_id uuid PRIMARY KEY REFERENCES coalition_registrations(id) ON DELETE CASCADE,
+      mime_type text NOT NULL CHECK (mime_type IN ('application/pdf','image/jpeg','image/png')),
+      contents bytea NOT NULL CHECK (octet_length(contents) BETWEEN 1 AND 3145728)
+    )`);
     await client.query(
       `CREATE UNIQUE INDEX IF NOT EXISTS coalition_reference_code_idx ON coalition_registrations (reference_code) WHERE reference_code IS NOT NULL`,
     );
@@ -85,6 +95,7 @@ async function initialize() {
     );
     for (const table of [
       "coalition_registrations",
+      "coalition_documents",
       "coalition_submission_limits",
       "coalition_events",
       "coalition_tracking_tokens",

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "wouter";
+import Membership from "./Membership";
 import {
   Building2,
   UserRound,
@@ -30,12 +31,17 @@ import {
   COALITION_NOTICE_VERSION,
   COALITION_RETENTION_MONTHS,
   coalitionSignupSchema,
+  COALITION_CERTIFICATE_MAX_BYTES,
+  YORP_STATUS_LABELS,
+  ORGANIZATION_REGISTRATION_LABELS,
 } from "@shared/coalition";
 
 const initialFields = {
   fullName: "",
   organizationName: "",
   organizationType: "",
+  yorpRegistrationNumber: "",
+  otherRegistrationDetails: "",
   representativeName: "",
   representativePosition: "",
   email: "",
@@ -53,6 +59,9 @@ export default function CoalitionSignup() {
       : "individual",
   );
   const [fields, setFields] = useState(initialFields);
+  const [yorpStatus, setYorpStatus] = useState<keyof typeof YORP_STATUS_LABELS | "">("");
+  const [otherRegistrations, setOtherRegistrations] = useState<(keyof typeof ORGANIZATION_REGISTRATION_LABELS)[]>([]);
+  const [certificate, setCertificate] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   const [authorized, setAuthorized] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
@@ -71,6 +80,8 @@ export default function CoalitionSignup() {
     setFieldErrors({});
     const parsed = coalitionSignupSchema.safeParse({
       ...fields,
+      yorpStatus: yorpStatus || undefined,
+      otherRegistrations,
       requestId,
       registrationType: type,
       privacyConsent: consent,
@@ -101,11 +112,10 @@ export default function CoalitionSignup() {
         window.location.hostname === "youthserviceph.org"
           ? "https://www.youthserviceph.org"
           : "";
-      const response = await fetch(`${apiOrigin}/api/coalition/registrations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed.data),
-      });
+      const body = new FormData();
+      body.append("data", JSON.stringify(parsed.data));
+      if (type === "organization" && yorpStatus === "registered" && certificate) body.append("yorpCertificate", certificate);
+      const response = await fetch(`${apiOrigin}/api/coalition/registrations`, { method: "POST", body });
       const responseText = await response.text();
       let result: {
         reference?: string;
@@ -171,6 +181,8 @@ export default function CoalitionSignup() {
           maxLength={
             key === "organizationLink"
               ? 2048
+              : key === "otherRegistrationDetails"
+                ? 250
               : key === "email"
                 ? 254
                 : key === "contactNumber"
@@ -182,8 +194,10 @@ export default function CoalitionSignup() {
             setFields((previous) => ({ ...previous, [key]: e.target.value }))
           }
           aria-invalid={!!fieldErrors[key]}
+          aria-describedby={fieldErrors[key] ? `coalition-${key}-error` : undefined}
           data-testid={`input-coalition-${key}`}
         />
+        {fieldErrors[key] && <p id={`coalition-${key}-error`} className="text-sm text-destructive">{fieldErrors[key]}</p>}
       </div>
     );
   }
@@ -278,7 +292,7 @@ export default function CoalitionSignup() {
             Together in service
           </p>
           <h1 className="text-3xl md:text-4xl font-bold mb-4">
-            Youth Service Coalition
+            Coalition Membership Form
           </h1>
           <p className="text-muted-foreground text-lg">
             Start with your basic details. Let's build stronger communities
@@ -296,6 +310,7 @@ export default function CoalitionSignup() {
                 aria-pressed={type === value}
                 data-testid={`select-coalition-${value}`}
                 onClick={() => {
+                  if (type !== value) setCertificate(null);
                   setType(value);
                   setConsent(false);
                   setAuthorized(false);
@@ -307,19 +322,15 @@ export default function CoalitionSignup() {
                 <Icon className="h-6 w-6 text-primary" />
                 <span className="font-semibold">
                   Register as{" "}
-                  {value === "individual" ? "Individual" : "Organization"}
+                  {value === "individual" ? "Individual" : "Group / Organization"}
                 </span>
               </button>
             );
           })}
         </fieldset>
-        <Card>
+        {type === "individual" ? <Membership formOnly /> : <Card>
           <CardHeader>
-            <CardTitle>
-              {type === "individual"
-                ? "Individual details"
-                : "Organization details"}
-            </CardTitle>
+            <CardTitle>Organization details</CardTitle>
             <CardDescription>
               Fields marked optional may be left blank.
             </CardDescription>
@@ -348,37 +359,31 @@ export default function CoalitionSignup() {
             <form onSubmit={submit} noValidate className="space-y-6">
               <fieldset disabled={pending} className="space-y-6">
                 <legend className="sr-only">Registration details</legend>
-                {type === "individual" ? (
-                  field("fullName", "Full name", true, "text", "name")
-                ) : (
-                  <div className="grid sm:grid-cols-2 gap-5">
-                    {field(
-                      "organizationName",
-                      "Organization name",
-                      true,
-                      "text",
-                      "organization",
-                    )}
-                    {field("organizationType", "Organization type")}
-                    {field(
-                      "representativeName",
-                      "Representative's full name",
-                      true,
-                      "text",
-                      "name",
-                    )}
-                    {field(
-                      "representativePosition",
-                      "Position in organization",
-                    )}
-                  </div>
-                )}
+                <div className="grid sm:grid-cols-2 gap-5">
+                  {field(
+                    "organizationName",
+                    "Organization name",
+                    true,
+                    "text",
+                    "organization",
+                  )}
+                  {field("organizationType", "Organization type")}
+                  {field(
+                    "representativeName",
+                    "Representative's full name",
+                    true,
+                    "text",
+                    "name",
+                  )}
+                  {field(
+                    "representativePosition",
+                    "Position in organization",
+                  )}
+                </div>
                 <div className="grid sm:grid-cols-2 gap-5">
                   {field(
                     "email",
-                    type === "individual"
-                      ? "Email address"
-                      : "Representative's email address",
+                    "Representative's email address",
                     true,
                     "email",
                     "email",
@@ -412,6 +417,62 @@ export default function CoalitionSignup() {
                     false,
                     "url",
                   )}
+                {type === "organization" && (
+                  <fieldset className="space-y-5 rounded-lg border p-4">
+                    <legend className="px-1 font-semibold">Organization registration and recognition</legend>
+                    <p className="text-sm text-muted-foreground">These details are optional. Informal groups and organizations with pending registrations are welcome to apply.</p>
+                    <div className="space-y-2">
+                      <Label htmlFor="coalition-yorpStatus">NYC YORP registration status (optional)</Label>
+                      <select id="coalition-yorpStatus" className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={yorpStatus} onChange={(e) => {
+                        const status = e.target.value as typeof yorpStatus;
+                        setYorpStatus(status);
+                        if (status !== "registered") {
+                          setFields((previous) => ({ ...previous, yorpRegistrationNumber: "" }));
+                          setCertificate(null);
+                        }
+                      }}>
+                        <option value="">Select a status</option>
+                        {Object.entries(YORP_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </div>
+                    {yorpStatus === "registered" && (
+                      <div className="space-y-5">
+                        {field("yorpRegistrationNumber", "YORP Unique Registration Number (URN)", false)}
+                        <div className="space-y-2">
+                          <Label htmlFor="coalition-yorpCertificate">YORP Certificate of Registration (optional)</Label>
+                          <Input id="coalition-yorpCertificate" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" aria-describedby="coalition-certificate-help coalition-certificate-error" aria-invalid={!!fieldErrors.yorpCertificate} onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            setFieldErrors((previous) => ({ ...previous, yorpCertificate: "" }));
+                            if (file && (file.size > COALITION_CERTIFICATE_MAX_BYTES || !["application/pdf", "image/jpeg", "image/png"].includes(file.type))) {
+                              setFieldErrors((previous) => ({ ...previous, yorpCertificate: "Choose a PDF, JPG, or PNG up to 3 MB." }));
+                              e.target.value = "";
+                              setCertificate(null);
+                              return;
+                            }
+                            setCertificate(file);
+                          }} />
+                          <p id="coalition-certificate-help" className="text-xs text-muted-foreground">PDF, JPG, or PNG, up to 3 MB. Upload the certificate only. Authorized administrators can access it for review.</p>
+                          <p id="coalition-certificate-error" role="status" className="text-sm text-destructive">{fieldErrors.yorpCertificate}</p>
+                        </div>
+                      </div>
+                    )}
+                    <fieldset className="space-y-3">
+                      <legend className="mb-3 text-sm font-medium">Other registration or recognition (optional; select all that apply)</legend>
+                      {Object.entries(ORGANIZATION_REGISTRATION_LABELS).map(([value, label]) => {
+                        const registration = value as keyof typeof ORGANIZATION_REGISTRATION_LABELS;
+                        return <div key={value} className="flex items-start gap-3">
+                          <Checkbox id={`coalition-registration-${value}`} checked={otherRegistrations.includes(registration)} onCheckedChange={(checked) => {
+                            const next = checked ? registration === "none" ? [registration] : [...otherRegistrations.filter((item) => item !== "none"), registration] : otherRegistrations.filter((item) => item !== registration);
+                            setOtherRegistrations(next);
+                            if (!next.includes("other")) setFields((previous) => ({ ...previous, otherRegistrationDetails: "" }));
+                          }} />
+                          <Label htmlFor={`coalition-registration-${value}`} className="leading-relaxed">{label}</Label>
+                        </div>;
+                      })}
+                    </fieldset>
+                    {otherRegistrations.includes("other") && field("otherRegistrationDetails", "Other registration or recognition details", false)}
+                  </fieldset>
+                )}
                 <div className="hidden" aria-hidden="true">
                   <label htmlFor="coalition-website">Leave this blank</label>
                   <input
@@ -481,7 +542,7 @@ export default function CoalitionSignup() {
               </Button>
             </form>
           </CardContent>
-        </Card>
+        </Card>}
         <Dialog open={privacyOpen} onOpenChange={setPrivacyOpen}>
           <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
@@ -508,7 +569,12 @@ export default function CoalitionSignup() {
                 We collect your name or your organization's name and type,
                 representative's name and position where applicable, email
                 address, city/municipality and province, and any optional phone
-                number or organization link you provide. We also record your
+                number or organization link you provide. For organizations, we
+                also collect any optional YORP status, registration number,
+                certificate, and other registration or recognition details you
+                provide to support application review. Certificates are private
+                and follow the same access and retention rules as registrations.
+                We also record your
                 registration reference, consent date, notice version, and
                 registration status, review messages, and any replies you send
                 through tracking.

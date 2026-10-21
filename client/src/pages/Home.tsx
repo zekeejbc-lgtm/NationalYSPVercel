@@ -14,6 +14,7 @@ import { createClient } from "@/lib/client";
 import { queryClient } from "@/lib/queryClient";
 import { getDisplayImageUrl } from "@/lib/driveUtils";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Eye, Facebook, Globe, Instagram, Mail, MapPin, Megaphone, Phone, Target, User, X } from "lucide-react";
 
 const WEBSITE_LOGO_SRC = "/images/ysp-logo.png";
@@ -206,6 +207,8 @@ export default function Home() {
     data: chapterShowcase = [],
     isLoading: chapterShowcaseLoading,
     isFetched: chapterShowcaseFetched,
+    isError: chapterShowcaseError,
+    refetch: refetchChapterShowcase,
   } = useQuery<RankedShowcaseChapter[]>({
     queryKey: ["/api/chapters/showcase-ranking"],
     refetchInterval: usePollingFallback ? 15000 : false,
@@ -432,7 +435,7 @@ export default function Home() {
             </p>
           </div>
           
-          {isHomeDataLoading ? (
+          {chapterShowcaseLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6" role="status" aria-label="Loading chapters section">
               {Array.from({ length: 4 }).map((_, index) => (
                 <div key={`home-chapter-skeleton-${index}`} className="rounded-xl border bg-card p-4 space-y-3" aria-hidden="true">
@@ -458,7 +461,14 @@ export default function Home() {
                 ))}
               </div>
 
-              {chapterShowcase.length === 0 && (
+              {chapterShowcaseError && (
+                <div className="text-center mt-6 space-y-3" role="alert" data-testid="text-error-home-showcase-chapters">
+                  <p className="text-muted-foreground">Unable to load chapters. Please try again.</p>
+                  <Button variant="outline" onClick={() => void refetchChapterShowcase()}>Try again</Button>
+                </div>
+              )}
+
+              {!chapterShowcaseError && chapterShowcase.length === 0 && (
                 <p className="text-center text-muted-foreground mt-6" data-testid="text-no-home-showcase-chapters">
                   No chapter showcase data is available yet.
                 </p>

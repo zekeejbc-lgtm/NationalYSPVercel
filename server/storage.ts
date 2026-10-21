@@ -75,6 +75,14 @@ type DateScopedListOptions = {
   startDate?: Date | null;
 };
 
+type ChapterShowcaseMetrics = {
+  chapterId: string;
+  completedKpis: number;
+  activeMembersCount: number;
+  publicationsCount: number;
+  projectReportsCount: number;
+};
+
 const DEFAULT_CONTACT_EMAIL = "national.hq@youthserviceph.org";
 const DEFAULT_CONTACT_PHONE = "09177798413";
 const DEFAULT_CONTACT_FACEBOOK = "https://www.facebook.com/YOUTHSERVICEPHILIPPINES";
@@ -366,6 +374,7 @@ export interface IStorage {
   updateChapterKpi(id: string, kpi: Partial<InsertChapterKpi>): Promise<ChapterKpi | undefined>;
   deleteChapterKpi(id: string): Promise<boolean>;
 
+  getChapterShowcaseMetrics(): Promise<ChapterShowcaseMetrics[]>;
   getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]>;
   getBarangayLeaderboard(chapterId: string): Promise<{ barangayId: string; barangayName: string; memberCount: number; rank: number }[]>;
 
@@ -921,6 +930,43 @@ export class DbStorage implements IStorage {
   async deleteChapterKpi(id: string): Promise<boolean> {
     const result = await db.delete(chapterKpis).where(eq(chapterKpis.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getChapterShowcaseMetrics(): Promise<ChapterShowcaseMetrics[]> {
+    // Aggregate each source separately so joins cannot multiply counts. This
+    // keeps the public showcase at two queries regardless of chapter count.
+    const result = await db.execute(sql`
+      WITH completed_kpis AS (
+        SELECT kc.chapter_id, COUNT(*)::int AS count
+        FROM kpi_completions kc
+        INNER JOIN kpi_templates kt ON kt.id = kc.kpi_template_id
+        WHERE kc.is_completed = true
+        GROUP BY kc.chapter_id
+      ), active_members AS (
+        SELECT chapter_id, COUNT(*)::int AS count
+        FROM members WHERE is_active = true GROUP BY chapter_id
+      ), approved_publications AS (
+        SELECT chapter_id, COUNT(*)::int AS count
+        FROM publications
+        WHERE is_approved = true AND is_hidden = false
+        GROUP BY chapter_id
+      ), reports AS (
+        SELECT chapter_id, COUNT(*)::int AS count
+        FROM project_reports GROUP BY chapter_id
+      )
+      SELECT c.id AS "chapterId",
+        COALESCE(k.count, 0) AS "completedKpis",
+        COALESCE(m.count, 0) AS "activeMembersCount",
+        COALESCE(p.count, 0) AS "publicationsCount",
+        COALESCE(r.count, 0) AS "projectReportsCount"
+      FROM chapters c
+      LEFT JOIN completed_kpis k ON k.chapter_id = c.id
+      LEFT JOIN active_members m ON m.chapter_id = c.id
+      LEFT JOIN approved_publications p ON p.chapter_id = c.id
+      LEFT JOIN reports r ON r.chapter_id = c.id
+    `);
+
+    return result.rows as ChapterShowcaseMetrics[];
   }
 
   async getLeaderboard(timeframe?: string, year?: number, quarter?: number): Promise<{ chapterId: string; chapterName: string; score: number; completedKpis: number }[]> {

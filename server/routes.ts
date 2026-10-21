@@ -3780,44 +3780,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/chapters/showcase-ranking", async (req, res) => {
-    const [chapters, leaderboard] = await Promise.all([
+    const [chapters, chapterMetrics] = await Promise.all([
       storage.getChapters(),
-      storage.getLeaderboard(),
+      storage.getChapterShowcaseMetrics(),
     ]);
 
-    const completedKpisByChapterId = new Map(
-      leaderboard.map((entry) => [entry.chapterId, entry.completedKpis || 0]),
+    const metricsByChapterId = new Map(
+      chapterMetrics.map((entry) => [entry.chapterId, entry]),
     );
 
-    const rankedChapters = await Promise.all(
-      chapters.map(async (chapter) => {
-        const [chapterMembers, approvedPublications, projectReports] = await Promise.all([
-          storage.getMembersByChapter(chapter.id),
-          storage.getApprovedPublicationsByChapter(chapter.id),
-          storage.getProjectReportsByChapter(chapter.id),
-        ]);
+    const rankedChapters = chapters.map((chapter) => {
+      const metrics = metricsByChapterId.get(chapter.id);
+      const activeMembersCount = metrics?.activeMembersCount || 0;
+      const completedKpis = metrics?.completedKpis || 0;
+      const publicationsCount = metrics?.publicationsCount || 0;
+      const projectReportsCount = metrics?.projectReportsCount || 0;
+      const submissionCount = publicationsCount + projectReportsCount;
+      const rankingScore = completedKpis + activeMembersCount + submissionCount;
 
-        const activeMembersCount = chapterMembers.filter((member) => member.isActive).length;
-        const completedKpis = completedKpisByChapterId.get(chapter.id) || 0;
-        const publicationsCount = approvedPublications.length;
-        const projectReportsCount = projectReports.length;
-        const submissionCount = publicationsCount + projectReportsCount;
-        const rankingScore = completedKpis + activeMembersCount + submissionCount;
-
-        return {
-          ...chapter,
-          rank: 0,
-          rankingScore,
-          metrics: {
-            completedKpis,
-            activeMembersCount,
-            publicationsCount,
-            projectReportsCount,
-            submissionCount,
-          },
-        };
-      }),
-    );
+      return {
+        ...chapter,
+        rank: 0,
+        rankingScore,
+        metrics: {
+          completedKpis,
+          activeMembersCount,
+          publicationsCount,
+          projectReportsCount,
+          submissionCount,
+        },
+      };
+    });
 
     rankedChapters.sort((left, right) => {
       if (right.rankingScore !== left.rankingScore) {

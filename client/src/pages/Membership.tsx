@@ -193,7 +193,7 @@ function DirectoryLoadingSkeleton({
   );
 }
 
-export default function Membership() {
+export default function Membership({ formOnly = false }: { formOnly?: boolean }) {
   const { toast } = useToast();
   const [showSuccess, setShowSuccess] = useState(false);
   const [submittedReferenceId, setSubmittedReferenceId] = useState<string | null>(null);
@@ -213,7 +213,7 @@ export default function Membership() {
     isLoading: chaptersLoading,
     isFetched: chaptersFetched,
   } = useQuery<Chapter[]>({
-    queryKey: ["/api/chapters"] 
+    queryKey: ["/api/chapters"]
   });
 
   const { data: selectedChapterDirectory = [], isLoading: isDirectoryLoading } = useQuery<PublicChapterDirectoryEntry[]>({
@@ -434,7 +434,7 @@ export default function Membership() {
         uploadedPhotoUrl = uploadPayload.url.trim();
       }
 
-      return await apiRequest("POST", "/api/members", {
+      const membership = {
         ...memberData,
         birthdate: memberData.birthdate || null,
         barangayId:
@@ -445,7 +445,8 @@ export default function Membership() {
         sectorOther: memberData.sector === "Others" ? memberData.sectorOther : null,
         photoUrl: uploadedPhotoUrl,
         isActive: false,
-      });
+      };
+      return await apiRequest("POST", "/api/members", membership);
     },
     onSuccess: (member: { applicationReferenceId?: string | null }) => {
       setShowSuccess(true);
@@ -455,10 +456,10 @@ export default function Membership() {
       clearSelectedMemberPhoto();
     },
     onError: (error: any) => {
-      toast({ 
-        title: "Registration Failed", 
-        description: error.message || "There was a problem submitting your membership form. Please try again.", 
-        variant: "destructive" 
+      toast({
+        title: "Registration Failed",
+        description: error.message || "There was a problem submitting your membership form. Please try again.",
+        variant: "destructive"
       });
     }
   });
@@ -512,7 +513,476 @@ export default function Membership() {
     lookupMutation.mutate(normalizedReferenceId);
   };
 
+  const membershipCard = (
+    <Card className="hover-elevate transition-all">
+      <CardHeader>
+        <CardTitle className="text-2xl">Individual membership</CardTitle>
+        <CardDescription>
+          Join the Youth Service Coalition through one YSP membership application. Your selected chapter will review your application.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {showSuccess ? (
+          <div className="text-center py-8 space-y-4">
+            <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto" />
+            <h3 className="text-xl font-semibold">Registration Successful!</h3>
+            <p className="text-muted-foreground">
+              Thank you for joining Youth Service Philippines! Your membership application has been submitted.
+              Your chapter will contact you soon about upcoming activities.
+            </p>
+            {submittedReferenceId && (
+              <div className="rounded-lg border bg-muted/30 p-4 text-left" data-testid="card-membership-reference-id">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Application Reference ID</p>
+                <p className="font-mono text-lg font-semibold">{submittedReferenceId}</p>
+                <p className="text-xs text-muted-foreground">
+                  Save this ID. Check your application status on the Membership & Chapters page.
+                </p>
+              </div>
+            )}
+            <a href="/membership#application-status" className="inline-flex min-h-11 items-center text-primary underline">Track membership application</a>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowSuccess(false);
+                setSubmittedReferenceId(null);
+              }}
+              data-testid="button-register-another"
+            >
+              Register Another Member
+            </Button>
+          </div>
+        ) : (
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="fullName"
+                rules={{ required: "Name is required" }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Full Name *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter your full name" data-testid="input-public-name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="age"
+                rules={{
+                  required: "Age is required",
+                  min: { value: 1, message: "Please enter a valid age" }
+                }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Age *</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        {...field}
+                        onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                        placeholder="Enter your age"
+                        data-testid="input-public-age"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="birthdate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Birthdate</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="date"
+                        {...field}
+                        data-testid="input-public-birthdate"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="chapterId"
+                rules={{ required: "Please select a chapter" }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Chapter *</FormLabel>
+                    <Select
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        setSelectedChapterId(value);
+                        form.setValue("barangayId", "");
+                      }}
+                      value={field.value}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-public-chapter">
+                          <SelectValue placeholder="Select your chapter" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {chapters.filter(chapter => chapter.id).map((chapter) => (
+                          <SelectItem key={chapter.id} value={chapter.id}>
+                            {chapter.name} - {chapter.location}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {selectedChapterId && (
+                <FormField
+                  control={form.control}
+                  name="barangayId"
+                  rules={{ required: "Please select Chapter Direct or a barangay" }}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Barangay Assignment *</FormLabel>
+                      <Select
+                        onValueChange={(value) => field.onChange(value)}
+                        value={field.value || undefined}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-public-barangay">
+                            <SelectValue placeholder="Select Chapter Direct or barangay" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="chapter-direct">Chapter Direct</SelectItem>
+                          {isBarangaysLoading && (
+                            <SelectItem value="loading" disabled>
+                              Loading barangays...
+                            </SelectItem>
+                          )}
+                          {!isBarangaysLoading && barangays.length === 0 && (
+                            <SelectItem value="no-barangays" disabled>
+                              No barangay chapters yet
+                            </SelectItem>
+                          )}
+                          {barangays.filter(barangay => barangay.id).map((barangay) => (
+                            <SelectItem key={barangay.id} value={barangay.id}>
+                              {barangay.barangayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Choose <span className="font-medium">Chapter Direct</span> if you are not applying under a barangay chapter.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <FormField
+                control={form.control}
+                name="contactNumber"
+                rules={{ required: "Contact number is required" }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contact Number *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter your phone number" data-testid="input-public-contact" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="email"
+                rules={{
+                  required: "Email is required",
+                  pattern: {
+                    value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                    message: "Please enter a valid email address",
+                  },
+                }}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email Address *</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="email"
+                        {...field}
+                        placeholder="name@example.com"
+                        data-testid="input-public-email"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="photoUrl"
+                render={() => (
+                  <FormItem>
+                    <FormLabel>1x1 Photo Upload (Optional)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={handleMemberPhotoChange}
+                        data-testid="input-public-photo-upload"
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Upload a square 1:1 image (JPG, PNG, GIF, or WEBP). Max size: 5MB.
+                    </p>
+                    {memberPhotoPreviewUrl && (
+                      <div className="flex items-center justify-between rounded-md border p-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={memberPhotoPreviewUrl}
+                            alt="1x1 membership preview"
+                            className="h-14 w-14 rounded-md border object-cover"
+                          />
+                          <p className="text-sm text-muted-foreground">Photo ready for upload</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={clearSelectedMemberPhoto}
+                          data-testid="button-clear-public-photo"
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="facebookLink"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Facebook Link (optional)</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="https://facebook.com/yourprofile" data-testid="input-public-facebook" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="registeredVoter"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-3 py-2">
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        data-testid="switch-public-voter"
+                      />
+                    </FormControl>
+                    <FormLabel className="!mt-0">Are you a registered voter?</FormLabel>
+                  </FormItem>
+                )}
+              />
+
+              <div className="border-t pt-4 mt-4">
+                <p className="text-sm text-muted-foreground mb-4 italic">
+                  Comprehensive details are collected for our Annual Voter's Education.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
+                    name="householdSize"
+                    rules={{
+                      required: "Household size is required",
+                      min: { value: 1, message: "Must be at least 1" }
+                    }}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>How many are in your household? *</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            {...field}
+                            onChange={(e) => field.onChange(parseInt(e.target.value) || 1)}
+                            data-testid="input-household-size"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="householdVoters"
+                    rules={{ min: { value: 0, message: "Cannot be negative" } }}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>How many registered voters are in your household? (Optional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={0}
+                            {...field}
+                            value={field.value ?? ""}
+                            onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
+                            data-testid="input-household-voters"
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="sector"
+                  rules={{ required: "Please select a sector" }}
+                  render={({ field }) => (
+                    <FormItem className="mt-4">
+                      <FormLabel>Sector *</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger data-testid="select-sector">
+                            <SelectValue placeholder="Select your sector" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {SECTOR_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {watchSector === "Others" && (
+                  <FormField
+                    control={form.control}
+                    name="sectorOther"
+                    render={({ field }) => (
+                      <FormItem className="mt-4">
+                        <FormLabel>Please specify</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Enter your sector" data-testid="input-sector-other" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                <FormField
+                  control={form.control}
+                  name="newsletterOptIn"
+                  render={({ field }) => (
+                    <FormItem className="flex items-start gap-3 mt-4 py-2">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-newsletter"
+                        />
+                      </FormControl>
+                      <FormLabel className="!mt-0 font-normal">
+                        Subscribe to our monthly newsletter for volunteer & organization opportunities.
+                      </FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
+                <FormField
+                  control={form.control}
+                  name="privacyConsent"
+                  rules={{ required: "You must agree to the Privacy Advisory and Data Consent" }}
+                  render={({ field }) => (
+                    <FormItem className="flex items-start gap-3">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          data-testid="checkbox-privacy-consent"
+                        />
+                      </FormControl>
+                      <div className="space-y-1">
+                        <FormLabel className="!mt-0 font-normal">
+                          I agree to the{" "}
+                          <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
+                            <DialogTrigger asChild>
+                              <button
+                                type="button"
+                                className="text-primary hover:underline font-medium"
+                                data-testid="button-view-privacy"
+                              >
+                                Privacy Advisory and Data Consent
+                              </button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                              <DialogHeader>
+                                <DialogTitle>Privacy Advisory and Data Consent</DialogTitle>
+                              </DialogHeader>
+                              <div className="prose prose-sm dark:prose-invert">
+                                <p className="whitespace-pre-line text-sm text-muted-foreground">
+                                  {PRIVACY_TEXT}
+                                </p>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        </FormLabel>
+                        <FormMessage />
+                      </div>
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={submitMutation.isPending}
+                data-testid="button-submit-membership"
+              >
+                {submitMutation.isPending ? "Submitting..." : "Submit Membership Application"}
+              </Button>
+            </form>
+          </Form>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   const isMembershipPageLoading = chaptersLoading || !chaptersFetched;
+
+  if (formOnly) return isMembershipPageLoading ? <Skeleton className="h-96 w-full" aria-label="Loading membership form" /> : membershipCard;
 
   if (isMembershipPageLoading) {
     return (
@@ -553,475 +1023,20 @@ export default function Membership() {
           <div className="text-center mb-12">
             <h1 className="text-4xl md:text-5xl font-bold mb-4">Join Youth Service Philippines</h1>
             <p className="text-lg text-muted-foreground max-w-3xl mx-auto">
-              Be part of a movement that empowers Filipino youth to create positive change 
-              in their communities. Whether you want to become a member or start your own chapter, 
+              Be part of a movement that empowers Filipino youth to create positive change
+              in their communities. Whether you want to become a member or start your own chapter,
               we welcome you!
             </p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-16">
-            <Card className="hover-elevate transition-all">
+            <Card>
               <CardHeader>
-                <CardTitle className="text-2xl">Become a Member</CardTitle>
-                <CardDescription>
-                  Join thousands of young Filipinos making a difference. Fill out the form below 
-                  to start your journey with YSP.
-                </CardDescription>
+                <CardTitle>Coalition Membership Form</CardTitle>
+                <CardDescription>Apply as an individual member or a group / organization through one form.</CardDescription>
               </CardHeader>
               <CardContent>
-                {showSuccess ? (
-                  <div className="text-center py-8 space-y-4">
-                    <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto" />
-                    <h3 className="text-xl font-semibold">Registration Successful!</h3>
-                    <p className="text-muted-foreground">
-                      Thank you for joining Youth Service Philippines! Your membership application has been submitted.
-                      Your chapter will contact you soon about upcoming activities.
-                    </p>
-                    {submittedReferenceId && (
-                      <div className="rounded-lg border bg-muted/30 p-4 text-left" data-testid="card-membership-reference-id">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Application Reference ID</p>
-                        <p className="font-mono text-lg font-semibold">{submittedReferenceId}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Save this ID. You can use it below to check your application status.
-                        </p>
-                      </div>
-                    )}
-                    <Button 
-                      variant="outline" 
-                      onClick={() => {
-                        setShowSuccess(false);
-                        setSubmittedReferenceId(null);
-                      }}
-                      data-testid="button-register-another"
-                    >
-                      Register Another Member
-                    </Button>
-                  </div>
-                ) : (
-                  <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                      <FormField
-                        control={form.control}
-                        name="fullName"
-                        rules={{ required: "Name is required" }}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Full Name *</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter your full name" data-testid="input-public-name" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="age"
-                        rules={{ 
-                          required: "Age is required",
-                          min: { value: 1, message: "Please enter a valid age" }
-                        }}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Age *</FormLabel>
-                            <FormControl>
-                              <Input 
-                                type="number" 
-                                {...field} 
-                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
-                                placeholder="Enter your age"
-                                data-testid="input-public-age" 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="birthdate"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Birthdate</FormLabel>
-                            <FormControl>
-                              <Input 
-                                type="date" 
-                                {...field} 
-                                data-testid="input-public-birthdate" 
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="chapterId"
-                        rules={{ required: "Please select a chapter" }}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Chapter *</FormLabel>
-                            <Select 
-                              onValueChange={(value) => {
-                                field.onChange(value);
-                                setSelectedChapterId(value);
-                                form.setValue("barangayId", "");
-                              }} 
-                              value={field.value}
-                            >
-                              <FormControl>
-                                <SelectTrigger data-testid="select-public-chapter">
-                                  <SelectValue placeholder="Select your chapter" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {chapters.filter(chapter => chapter.id).map((chapter) => (
-                                  <SelectItem key={chapter.id} value={chapter.id}>
-                                    {chapter.name} - {chapter.location}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      {selectedChapterId && (
-                        <FormField
-                          control={form.control}
-                          name="barangayId"
-                          rules={{ required: "Please select Chapter Direct or a barangay" }}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Barangay Assignment *</FormLabel>
-                              <Select 
-                                onValueChange={(value) => field.onChange(value)} 
-                                value={field.value || undefined}
-                              >
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-public-barangay">
-                                    <SelectValue placeholder="Select Chapter Direct or barangay" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="chapter-direct">Chapter Direct</SelectItem>
-                                  {isBarangaysLoading && (
-                                    <SelectItem value="loading" disabled>
-                                      Loading barangays...
-                                    </SelectItem>
-                                  )}
-                                  {!isBarangaysLoading && barangays.length === 0 && (
-                                    <SelectItem value="no-barangays" disabled>
-                                      No barangay chapters yet
-                                    </SelectItem>
-                                  )}
-                                  {barangays.filter(barangay => barangay.id).map((barangay) => (
-                                    <SelectItem key={barangay.id} value={barangay.id}>
-                                      {barangay.barangayName}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <p className="text-xs text-muted-foreground">
-                                Choose <span className="font-medium">Chapter Direct</span> if you are not applying under a barangay chapter.
-                              </p>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      )}
-
-                      <FormField
-                        control={form.control}
-                        name="contactNumber"
-                        rules={{ required: "Contact number is required" }}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Contact Number *</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="Enter your phone number" data-testid="input-public-contact" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="email"
-                        rules={{
-                          required: "Email is required",
-                          pattern: {
-                            value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                            message: "Please enter a valid email address",
-                          },
-                        }}
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Email Address *</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="email"
-                                {...field}
-                                placeholder="name@example.com"
-                                data-testid="input-public-email"
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="photoUrl"
-                        render={() => (
-                          <FormItem>
-                            <FormLabel>1x1 Photo Upload (Optional)</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="file"
-                                accept="image/jpeg,image/png,image/webp,image/gif"
-                                onChange={handleMemberPhotoChange}
-                                data-testid="input-public-photo-upload"
-                              />
-                            </FormControl>
-                            <p className="text-xs text-muted-foreground">
-                              Upload a square 1:1 image (JPG, PNG, GIF, or WEBP). Max size: 5MB.
-                            </p>
-                            {memberPhotoPreviewUrl && (
-                              <div className="flex items-center justify-between rounded-md border p-3">
-                                <div className="flex items-center gap-3">
-                                  <img
-                                    src={memberPhotoPreviewUrl}
-                                    alt="1x1 membership preview"
-                                    className="h-14 w-14 rounded-md border object-cover"
-                                  />
-                                  <p className="text-sm text-muted-foreground">Photo ready for upload</p>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={clearSelectedMemberPhoto}
-                                  data-testid="button-clear-public-photo"
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                            )}
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="facebookLink"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Facebook Link (optional)</FormLabel>
-                            <FormControl>
-                              <Input {...field} placeholder="https://facebook.com/yourprofile" data-testid="input-public-facebook" />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
-                        name="registeredVoter"
-                        render={({ field }) => (
-                          <FormItem className="flex items-center gap-3 py-2">
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                                data-testid="switch-public-voter"
-                              />
-                            </FormControl>
-                            <FormLabel className="!mt-0">Are you a registered voter?</FormLabel>
-                          </FormItem>
-                        )}
-                      />
-
-                      <div className="border-t pt-4 mt-4">
-                        <p className="text-sm text-muted-foreground mb-4 italic">
-                          Comprehensive details are collected for our Annual Voter's Education.
-                        </p>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <FormField
-                            control={form.control}
-                            name="householdSize"
-                            rules={{ 
-                              required: "Household size is required",
-                              min: { value: 1, message: "Must be at least 1" }
-                            }}
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>How many are in your household? *</FormLabel>
-                                <FormControl>
-                                  <Input 
-                                    type="number" 
-                                    min={1}
-                                    {...field} 
-                                    onChange={(e) => field.onChange(parseInt(e.target.value) || 1)}
-                                    data-testid="input-household-size" 
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-
-                          <FormField
-                            control={form.control}
-                            name="householdVoters"
-                            rules={{ min: { value: 0, message: "Cannot be negative" } }}
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>How many registered voters are in your household? (Optional)</FormLabel>
-                                <FormControl>
-                                  <Input 
-                                    type="number" 
-                                    min={0}
-                                    {...field} 
-                                    value={field.value ?? ""}
-                                    onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
-                                    data-testid="input-household-voters" 
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-
-                        <FormField
-                          control={form.control}
-                          name="sector"
-                          rules={{ required: "Please select a sector" }}
-                          render={({ field }) => (
-                            <FormItem className="mt-4">
-                              <FormLabel>Sector *</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-sector">
-                                    <SelectValue placeholder="Select your sector" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {SECTOR_OPTIONS.map((option) => (
-                                    <SelectItem key={option} value={option}>
-                                      {option}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        {watchSector === "Others" && (
-                          <FormField
-                            control={form.control}
-                            name="sectorOther"
-                            render={({ field }) => (
-                              <FormItem className="mt-4">
-                                <FormLabel>Please specify</FormLabel>
-                                <FormControl>
-                                  <Input {...field} placeholder="Enter your sector" data-testid="input-sector-other" />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        )}
-
-                        <FormField
-                          control={form.control}
-                          name="newsletterOptIn"
-                          render={({ field }) => (
-                            <FormItem className="flex items-start gap-3 mt-4 py-2">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="checkbox-newsletter"
-                                />
-                              </FormControl>
-                              <FormLabel className="!mt-0 font-normal">
-                                Subscribe to our monthly newsletter for volunteer & organization opportunities.
-                              </FormLabel>
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <div className="border rounded-lg p-4 bg-muted/30 space-y-3">
-                        <FormField
-                          control={form.control}
-                          name="privacyConsent"
-                          rules={{ required: "You must agree to the Privacy Advisory and Data Consent" }}
-                          render={({ field }) => (
-                            <FormItem className="flex items-start gap-3">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                  data-testid="checkbox-privacy-consent"
-                                />
-                              </FormControl>
-                              <div className="space-y-1">
-                                <FormLabel className="!mt-0 font-normal">
-                                  I agree to the{" "}
-                                  <Dialog open={showPrivacy} onOpenChange={setShowPrivacy}>
-                                    <DialogTrigger asChild>
-                                      <button 
-                                        type="button" 
-                                        className="text-primary hover:underline font-medium"
-                                        data-testid="button-view-privacy"
-                                      >
-                                        Privacy Advisory and Data Consent
-                                      </button>
-                                    </DialogTrigger>
-                                    <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                                      <DialogHeader>
-                                        <DialogTitle>Privacy Advisory and Data Consent</DialogTitle>
-                                      </DialogHeader>
-                                      <div className="prose prose-sm dark:prose-invert">
-                                        <p className="whitespace-pre-line text-sm text-muted-foreground">
-                                          {PRIVACY_TEXT}
-                                        </p>
-                                      </div>
-                                    </DialogContent>
-                                  </Dialog>
-                                </FormLabel>
-                                <FormMessage />
-                              </div>
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-
-                      <Button 
-                        type="submit" 
-                        className="w-full" 
-                        disabled={submitMutation.isPending}
-                        data-testid="button-submit-membership"
-                      >
-                        {submitMutation.isPending ? "Submitting..." : "Submit Membership Application"}
-                      </Button>
-                    </form>
-                  </Form>
-                )}
+                <Button asChild><a href="/coalition-signup">Open membership form</a></Button>
               </CardContent>
             </Card>
 
@@ -1029,7 +1044,7 @@ export default function Membership() {
               <CardHeader>
                 <CardTitle className="text-2xl">Create a Chapter</CardTitle>
                 <CardDescription>
-                  Want to bring YSP to your community? Start your own chapter and lead youth 
+                  Want to bring YSP to your community? Start your own chapter and lead youth
                   service initiatives in your area.
                 </CardDescription>
               </CardHeader>
@@ -1037,7 +1052,7 @@ export default function Membership() {
                 <div className="bg-primary/10 border border-primary/20 rounded-lg p-6">
                   <h3 className="font-semibold text-lg mb-3">Ready to Start a Chapter?</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Fill out our chapter application form. Our team will review your application 
+                    Fill out our chapter application form. Our team will review your application
                     and contact you within 5-7 business days.
                   </p>
                   <a
@@ -1051,10 +1066,10 @@ export default function Membership() {
                     <ExternalLink className="h-4 w-4" />
                   </a>
                 </div>
-                
+
                 <div className="bg-muted rounded-lg p-4">
                   <p className="text-sm text-muted-foreground italic">
-                    <strong>Note:</strong> You will be contacted if your chapter is approved. 
+                    <strong>Note:</strong> You will be contacted if your chapter is approved.
                     We look for passionate leaders committed to making a difference in their communities.
                   </p>
                 </div>
@@ -1084,7 +1099,7 @@ export default function Membership() {
             </Card>
           </div>
 
-          <Card className="mb-16 hover-elevate transition-all" data-testid="card-application-lookup">
+          <Card id="application-status" className="mb-16 hover-elevate transition-all" data-testid="card-application-lookup">
             <CardHeader>
               <CardTitle className="text-2xl">Membership Application Lookup</CardTitle>
               <CardDescription>
@@ -1163,11 +1178,11 @@ export default function Membership() {
                 Connect with a YSP chapter near you. Click on map markers to learn more about each chapter.
               </p>
             </div>
-            
+
             <div className="mb-10">
               <ChaptersMap chapters={chapters} />
             </div>
-            
+
             <h3 className="text-xl font-semibold mb-6 text-center">All Chapters</h3>
             <div className="max-w-xl mx-auto mb-4">
               <div className="relative">

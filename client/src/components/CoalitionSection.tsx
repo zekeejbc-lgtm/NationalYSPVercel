@@ -20,12 +20,13 @@ export default function CoalitionSection() {
               Join the Youth Service Coalition
             </h2>
             <p className="text-lg text-muted-foreground">
-              Connect with individuals and organizations who share a commitment
-              to youth leadership, volunteerism, and community service.
+              Apply through our Coalition Membership Form as an individual
+              member or a group / organization. Individual registration and YSP
+              membership are now one application.
             </p>
             <p className="text-sm text-muted-foreground flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
-              Just your basic details. Your information stays private.
+              Your application details and uploaded certificates stay private.
             </p>
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
@@ -33,14 +34,14 @@ export default function CoalitionSection() {
               [
                 {
                   type: "individual",
-                  title: "As an Individual",
-                  text: "Bring your passion for service and connect with fellow changemakers.",
+                  title: "Individual Membership",
+                  text: "Join YSP and the Coalition through one membership application.",
                   Icon: UserRound,
                 },
                 {
                   type: "organization",
-                  title: "As an Organization",
-                  text: "Connect your group with a wider community of service partners.",
+                  title: "Group / Organization",
+                  text: "Register your group, with optional YORP status, registration number, certificate, and other registration details.",
                   Icon: Building2,
                 },
               ] as const
@@ -61,8 +62,7 @@ export default function CoalitionSection() {
                       href={`/coalition-signup?type=${type}`}
                       data-testid={`button-coalition-${type}`}
                     >
-                      Register as{" "}
-                      {type === "individual" ? "Individual" : "Organization"}
+                      {type === "individual" ? "Apply for membership" : "Register your group"}
                       <ArrowRight className="h-4 w-4 ml-2" />
                     </Link>
                   </Button>
@@ -70,12 +70,10 @@ export default function CoalitionSection() {
               </Card>
             ))}
           </div>
-          <Link
-            href="/coalition-track"
-            className="inline-flex text-sm font-medium text-primary hover:underline min-h-11 items-center"
-          >
-            Already applied? Track your application →
-          </Link>
+          <div className="flex flex-wrap gap-x-6">
+            <Link href="/membership#application-status" className="inline-flex text-sm font-medium text-primary hover:underline min-h-11 items-center">Track individual membership</Link>
+            <Link href="/coalition-track" className="inline-flex text-sm font-medium text-primary hover:underline min-h-11 items-center">Track organization application</Link>
+          </div>
         </div>
       </div>
     </section>

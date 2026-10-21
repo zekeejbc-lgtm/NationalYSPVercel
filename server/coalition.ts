@@ -1,6 +1,7 @@
 import type { Express, Request, Response, RequestHandler } from "express";
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
+import multer from "multer";
 import { z } from "zod";
 import { pool } from "./db";
 import {
@@ -9,6 +10,7 @@ import {
   COALITION_RETENTION_MONTHS,
   COALITION_TRANSITIONS,
   COALITION_STATUS_LABELS,
+  COALITION_CERTIFICATE_MAX_BYTES,
 } from "@shared/coalition";
 import { ensureCoalitionInfrastructure } from "./coalition-infrastructure";
 import { coalitionMailConfigured, flushCoalitionMail } from "./coalition-mail";
@@ -18,8 +20,33 @@ const retained = `created_at > now() - interval '${COALITION_RETENTION_MONTHS} m
 const projection = `id, reference_code AS "referenceCode", registration_type AS "registrationType", full_name AS "fullName", organization_name AS "organizationName",
   organization_type AS "organizationType", representative_name AS "representativeName", representative_position AS "representativePosition",
   organization_link AS "organizationLink", email, contact_number AS "contactNumber", city, province,
+  yorp_status AS "yorpStatus", yorp_registration_number AS "yorpRegistrationNumber",
+  other_registrations AS "otherRegistrations", other_registration_details AS "otherRegistrationDetails",
+  EXISTS (SELECT 1 FROM coalition_documents d WHERE d.registration_id=coalition_registrations.id) AS "hasYorpCertificate",
   notice_version AS "noticeVersion", consented_at AS "consentedAt", status, created_at AS "createdAt", updated_at AS "updatedAt"`;
 const uuid = z.string().uuid();
+const certificateUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: COALITION_CERTIFICATE_MAX_BYTES, files: 1, fields: 1, fieldSize: 32768, parts: 3 },
+}).single("yorpCertificate");
+const parseSignup: RequestHandler = (req, res, next) => {
+  if (!req.is("multipart/form-data")) return next();
+  certificateUpload(req, res, (error) => {
+    if (error) return res.status(400).json({ error: "Upload one PDF, JPG, or PNG certificate up to 3 MB." });
+    try {
+      req.body = JSON.parse(req.body.data);
+      next();
+    } catch {
+      res.status(400).json({ error: "Invalid registration details." });
+    }
+  });
+};
+export function certificateMimeType(buffer: Buffer): string | null {
+  if (buffer.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf";
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
+  if (buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  return null;
+}
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const hash = (value: string) =>
   crypto.createHash("sha256").update(value).digest("hex");
@@ -203,10 +230,13 @@ export function registerCoalitionRoutes(
     res.set("Cache-Control", "no-store");
     next();
   });
-  app.post("/api/coalition/registrations", async (req, res) => {
+  app.post("/api/coalition/registrations", parseSignup, async (req, res) => {
     const parsed = coalitionSignupSchema.safeParse(req.body);
     if (!parsed.success)
       return res.status(400).json({ error: parsed.error.issues[0].message });
+    const certificateMime = req.file ? certificateMimeType(req.file.buffer) : null;
+    if (req.file && (parsed.data.registrationType !== "organization" || parsed.data.yorpStatus !== "registered" || !certificateMime || req.file.mimetype !== certificateMime))
+      return res.status(400).json({ error: "Only YORP-registered organizations may upload a PDF, JPG, or PNG certificate." });
     let client: PoolClient | undefined;
     try {
       await ready();
@@ -220,7 +250,7 @@ export function registerCoalitionRoutes(
         org = d.registrationType === "organization" ? d : null;
       const referenceCode = newReferenceCode();
       const result = await client.query(
-        `INSERT INTO coalition_registrations (id,reference_code,registration_type,full_name,organization_name,organization_type,representative_name,representative_position,organization_link,email,contact_number,city,province,privacy_consent,authorized_representative,notice_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14,$15) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        `INSERT INTO coalition_registrations (id,reference_code,registration_type,full_name,organization_name,organization_type,representative_name,representative_position,organization_link,email,contact_number,city,province,privacy_consent,authorized_representative,notice_version,yorp_status,yorp_registration_number,other_registrations,other_registration_details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14,$15,$16,$17,$18,$19) ON CONFLICT (id) DO NOTHING RETURNING id`,
         [
           d.requestId,
           referenceCode,
@@ -237,6 +267,10 @@ export function registerCoalitionRoutes(
           d.province,
           !!org,
           d.noticeVersion,
+          org?.yorpStatus || null,
+          org?.yorpRegistrationNumber || null,
+          org?.otherRegistrations || [],
+          org?.otherRegistrationDetails || null,
         ],
       );
       if (!result.rowCount) {
@@ -249,6 +283,12 @@ export function registerCoalitionRoutes(
           reference: existing.rows[0]?.reference_code || d.requestId,
           alreadyReceived: true,
         });
+      }
+      if (req.file) {
+        await client.query(
+          "INSERT INTO coalition_documents (registration_id,mime_type,contents) VALUES ($1,$2,$3)",
+          [d.requestId, certificateMime, req.file.buffer],
+        );
       }
       const token = await accessToken(client, d.requestId);
       await event(
@@ -284,6 +324,25 @@ export function registerCoalitionRoutes(
       return failure(res, "save your application", error);
     } finally {
       client?.release();
+    }
+  });
+  app.get("/api/coalition/registrations/:id/certificate", adminAuth, async (req, res) => {
+    if (!uuid.safeParse(req.params.id).success) return res.status(400).json({ error: "Invalid reference." });
+    try {
+      await ready();
+      const result = await pool!.query(
+        `SELECT d.mime_type,d.contents FROM coalition_documents d JOIN coalition_registrations r ON r.id=d.registration_id WHERE r.id=$1 AND r.${retained}`,
+        [req.params.id],
+      );
+      const document = result.rows[0];
+      if (!document) return res.status(404).json({ error: "Certificate not found." });
+      const extension = document.mime_type === "application/pdf" ? "pdf" : document.mime_type === "image/png" ? "png" : "jpg";
+      res.set("Content-Type", document.mime_type);
+      res.set("X-Content-Type-Options", "nosniff");
+      res.set("Content-Disposition", `attachment; filename="yorp-certificate.${extension}"`);
+      res.send(document.contents);
+    } catch (error) {
+      return failure(res, "load the certificate", error);
     }
   });
   app.get("/api/coalition/registrations", adminAuth, async (req, res) => {

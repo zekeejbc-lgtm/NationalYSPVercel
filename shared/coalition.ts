@@ -1,7 +1,22 @@
 import { z } from "zod";
 
-export const COALITION_NOTICE_VERSION = "2026-10-15-v2";
+export const COALITION_NOTICE_VERSION = "2026-10-21-v3";
 export const COALITION_RETENTION_MONTHS = 12;
+export const COALITION_CERTIFICATE_MAX_BYTES = 3 * 1024 * 1024;
+export const YORP_STATUS_LABELS = {
+  registered: "Registered",
+  pending: "Application pending",
+  not_registered: "Not registered",
+} as const;
+export const ORGANIZATION_REGISTRATION_LABELS = {
+  sec: "SEC",
+  bir: "BIR",
+  lgu_lydo: "LGU / LYDO registration or recognition",
+  school: "School recognition",
+  other: "Other",
+  none: "None",
+} as const;
+const organizationRegistrationSchema = z.enum(["sec", "bir", "lgu_lydo", "school", "other", "none"]);
 const requiredText = z
   .string()
   .trim()
@@ -45,6 +60,11 @@ export const coalitionSignupSchema = z.discriminatedUnion("registrationType", [
     registrationType: z.literal("organization"),
     organizationName: requiredText,
     organizationType: requiredText,
+    yorpStatus: z.enum(["registered", "pending", "not_registered"]).optional(),
+    yorpRegistrationNumber: z.string().trim().max(120).default(""),
+    otherRegistrations: z.array(organizationRegistrationSchema).max(6).default([])
+      .refine((values) => new Set(values).size === values.length && (!values.includes("none") || values.length === 1), "Select None on its own, or select the registrations that apply."),
+    otherRegistrationDetails: z.string().trim().max(250).default(""),
     representativeName: requiredText,
     representativePosition: requiredText,
     organizationLink: z
@@ -65,7 +85,15 @@ export const coalitionSignupSchema = z.discriminatedUnion("registrationType", [
       }),
     }),
   }),
-]);
+]).superRefine((data, context) => {
+  if (data.registrationType !== "organization") return;
+  if (data.yorpStatus !== "registered" && data.yorpRegistrationNumber) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["yorpRegistrationNumber"], message: "A YORP number can only be supplied for a registered organization." });
+  }
+  if (!data.otherRegistrations.includes("other") && data.otherRegistrationDetails) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["otherRegistrationDetails"], message: "Select Other to provide additional registration details." });
+  }
+});
 export type CoalitionSignup = z.infer<typeof coalitionSignupSchema>;
 export const coalitionStatusSchema = z.enum([
   "submitted",
@@ -115,6 +143,11 @@ export interface CoalitionRegistration {
   fullName: string | null;
   organizationName: string | null;
   organizationType: string | null;
+  yorpStatus: keyof typeof YORP_STATUS_LABELS | null;
+  yorpRegistrationNumber: string | null;
+  otherRegistrations: (keyof typeof ORGANIZATION_REGISTRATION_LABELS)[];
+  otherRegistrationDetails: string | null;
+  hasYorpCertificate: boolean;
   representativeName: string | null;
   representativePosition: string | null;
   organizationLink: string | null;

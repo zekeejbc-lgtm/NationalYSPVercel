@@ -50,6 +50,8 @@ import type { CoalitionRegistration, CoalitionStatus } from "@shared/coalition";
 import {
   COALITION_STATUS_LABELS,
   COALITION_TRANSITIONS,
+  YORP_STATUS_LABELS,
+  ORGANIZATION_REGISTRATION_LABELS,
   type CoalitionEvent,
 } from "@shared/coalition";
 
@@ -168,6 +170,11 @@ export default function CoalitionManager() {
         "city",
         "province",
         "organizationLink",
+        "yorpStatus",
+        "yorpRegistrationNumber",
+        "otherRegistrations",
+        "otherRegistrationDetails",
+        "hasYorpCertificate",
         "status",
         "noticeVersion",
         "consentedAt",
@@ -453,6 +460,17 @@ export default function CoalitionManager() {
             </DialogHeader>
             {reviewing && (
               <>
+                {reviewing.registrationType === "organization" && (
+                  <div className="rounded-lg border p-4 space-y-2 text-sm">
+                    <h3 className="font-semibold">Organization registration and recognition</h3>
+                    <p>NYC YORP: {reviewing.yorpStatus ? YORP_STATUS_LABELS[reviewing.yorpStatus] : "Not provided"}</p>
+                    <p>YORP URN: {reviewing.yorpRegistrationNumber || "Not provided"}</p>
+                    <p>Other registrations: {reviewing.otherRegistrations?.map((value) => ORGANIZATION_REGISTRATION_LABELS[value]).join(", ") || "Not provided"}</p>
+                    {reviewing.otherRegistrationDetails && <p className="break-words">{reviewing.otherRegistrationDetails}</p>}
+                    {reviewing.hasYorpCertificate && <a className="inline-flex min-h-11 items-center text-primary underline" href={`/api/coalition/registrations/${reviewing.id}/certificate`}>Download YORP certificate</a>}
+                    <p className="text-xs text-muted-foreground">Registration details are supplied by the applicant and require review.</p>
+                  </div>
+                )}
                 <div className="space-y-3">
                   <Label htmlFor="coalition-review-status">
                     Application status
