@@ -40,6 +40,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Server-rendered API pages (including unsubscribe confirmation) must
+        // reach the server instead of being replaced with the app shell.
+        navigateFallbackDenylist: [/^\/api(?:\/|$)/],
         globPatterns: ["**/*.{js,css,html,ico,png,svg,webp,woff2}"],
         globIgnores: ["**/uploads/**"],
         runtimeCaching: [
