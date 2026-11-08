@@ -3,8 +3,8 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Facebook, Mail, Phone } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Check, Facebook, Mail, Phone } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ContactInfo } from "@shared/schema";
 import { resolveMainFacebookUrl, sanitizeContactSocials } from "@/lib/contactSocials";
@@ -29,16 +29,36 @@ export default function Footer() {
 
   const subscribeMutation = useMutation({
     mutationFn: async (email: string) => {
-      return apiRequest("POST", "/api/newsletter/subscribe", { email, consent: true });
+      const result = await apiRequest("POST", "/api/newsletter/subscribe", { email, consent: true });
+      if (result?.status !== "subscribed") throw new Error("Subscription was not confirmed. Please refresh the page and try again.");
+      return result;
     },
     onSuccess: (result: { status?: string; message?: string }) => {
       toast({
-        title: "Subscription request received",
+        duration: 7000,
+        className:
+          "rounded-2xl border-primary/20 bg-background p-5 pr-10 shadow-xl before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-primary [&>div]:min-w-0 [&>div]:w-full [&>div]:gap-3 [&>button]:right-2 [&>button]:top-2 [&>button]:opacity-100",
+        title: (
+          <span className="flex items-center gap-3">
+            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary" aria-hidden="true">
+              <Mail className="h-5 w-5" />
+              <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-background bg-emerald-600 text-white">
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+            </span>
+            <span className="min-w-0">
+              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">YSP Newsletter</span>
+              <span className="block text-base font-semibold leading-snug text-foreground">Thanks for staying connected!</span>
+            </span>
+          </span>
+        ),
         description:
-          result?.message ||
-          "Thank you. Your subscription preferences have been preserved.",
+          <span className="block text-sm leading-relaxed text-muted-foreground">
+            {result?.message || "Your email is subscribed to newsletter updates."}
+          </span>,
       });
       setNewsletterEmail("");
+      void queryClient.invalidateQueries({ queryKey: ["/api/newsletter/subscribers"] });
     },
     onError: (error: any) => {
       toast({

@@ -197,16 +197,42 @@ export function registerNewsletterRoutes(
       await pool!.query(
         "DELETE FROM newsletter_subscription_limits WHERE window_start < now()-interval '1 day'",
       );
-      await pool!.query(
-        `INSERT INTO newsletter_subscribers(email,normalized_email,source) VALUES($1,$1,'footer')
-        ON CONFLICT(email) DO UPDATE SET last_subscribed_at=now(),updated_at=now()
-        WHERE newsletter_subscribers.status='subscribed'`,
-        [email],
-      );
-      // Do not disclose whether an address is already subscribed or opted out.
+      // Explicit consent restores the same identity and its delivery history.
+      const client = await pool!.connect();
+      try {
+        await client.query("BEGIN");
+        const {
+          rows: [existing],
+        } = await client.query(
+          "SELECT id,status,deleted_at FROM newsletter_subscribers WHERE email=$1 FOR UPDATE",
+          [email],
+        );
+        if (
+          existing &&
+          (existing.status !== "subscribed" || existing.deleted_at)
+        ) {
+          await client.query(
+            `UPDATE newsletter_deliveries SET status='skipped',held_at=NULL,last_error='Earlier queued delivery cancelled when subscription was renewed.' WHERE recipient=$1 AND status='queued'`,
+            [email],
+          );
+        }
+        await client.query(
+          `INSERT INTO newsletter_subscribers(email,normalized_email,source) VALUES($1,$1,'footer')
+        ON CONFLICT(email) DO UPDATE SET status='subscribed',deleted_at=NULL,unsubscribed_at=NULL,
+        source='footer',consent_version='newsletter-v1',last_subscribed_at=now(),updated_at=now()`,
+          [email],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
       res.json({
+        status: "subscribed",
         message:
-          "Thank you. New addresses are subscribed; existing subscription preferences are preserved.",
+          "Your email is subscribed to Youth Service Philippines newsletter updates.",
       });
     }),
   );
@@ -263,20 +289,36 @@ export function registerNewsletterRoutes(
     ready,
     route(async (req, res) => {
       const id = uuid.parse(req.params.id);
-      const page = z.coerce.number().int().min(0).max(100000).parse(req.query.page || 0);
-      const { rows: [subscriber] } = await pool!.query(
+      const page = z.coerce
+        .number()
+        .int()
+        .min(0)
+        .max(100000)
+        .parse(req.query.page || 0);
+      const {
+        rows: [subscriber],
+      } = await pool!.query(
         `SELECT id,email,status,source,last_subscribed_at AS "lastSubscribedAt"
-        FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL`, [id],
+        FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL`,
+        [id],
       );
-      if (!subscriber) { res.status(404).json({ error: "Subscriber not found." }); return; }
+      if (!subscriber) {
+        res.status(404).json({ error: "Subscriber not found." });
+        return;
+      }
       const result = await pool!.query(
         `SELECT id,subject,preview_text AS "previewText",content,status,is_test AS "isTest",
         attempts,last_error AS "lastError",created_at AS "createdAt",sent_at AS "sentAt",
         next_attempt_at AS "nextAttemptAt",held_at AS "heldAt",resend_of AS "resendOf"
         FROM newsletter_deliveries WHERE recipient=$1
-        ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $2`, [subscriber.email, page * 50],
+        ORDER BY created_at DESC,id DESC LIMIT 51 OFFSET $2`,
+        [subscriber.email, page * 50],
       );
-      res.json({ subscriber, deliveries: result.rows.slice(0, 50), hasMore: result.rows.length > 50 });
+      res.json({
+        subscriber,
+        deliveries: result.rows.slice(0, 50),
+        hasMore: result.rows.length > 50,
+      });
     }),
   );
   app.delete(
@@ -289,28 +331,43 @@ export function registerNewsletterRoutes(
       const client = await pool!.connect();
       try {
         await client.query("BEGIN");
-        const { rows: [subscriber] } = await client.query(
-          "SELECT email FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", [id],
+        const {
+          rows: [subscriber],
+        } = await client.query(
+          "SELECT email FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+          [id],
         );
         if (!subscriber) {
           await client.query("ROLLBACK");
-          res.status(404).json({ error: "Subscriber not found." }); return;
+          res.status(404).json({ error: "Subscriber not found." });
+          return;
         }
         if (email !== subscriber.email) {
           await client.query("ROLLBACK");
-          res.status(400).json({ error: "Type the subscriber's email exactly to delete them." }); return;
+          res
+            .status(400)
+            .json({
+              error: "Type the subscriber's email exactly to delete them.",
+            });
+          return;
         }
         await client.query(
-          `UPDATE newsletter_subscribers SET deleted_at=now(),status='unsubscribed',unsubscribed_at=now(),updated_at=now() WHERE id=$1`, [id],
+          `UPDATE newsletter_subscribers SET deleted_at=now(),status='unsubscribed',unsubscribed_at=now(),updated_at=now() WHERE id=$1`,
+          [id],
         );
         await client.query(
           `UPDATE newsletter_deliveries SET status='skipped',held_at=NULL,last_error='Subscriber deleted by an administrator.'
-          WHERE recipient=$1 AND status='queued'`, [subscriber.email],
+          WHERE recipient=$1 AND status='queued'`,
+          [subscriber.email],
         );
         await client.query("COMMIT");
         res.json({ success: true });
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }),
   );
   app.post(
@@ -318,75 +375,125 @@ export function registerNewsletterRoutes(
     adminAuth,
     ready,
     route(async (req, res) => {
-      const id = uuid.parse(req.params.id), deliveryId = uuid.parse(req.params.deliveryId);
-      const { action, requestId } = z.object({
-        action: z.enum(["hold", "resume", "retry", "resend"]), requestId: uuid,
-      }).parse(req.body);
+      const id = uuid.parse(req.params.id),
+        deliveryId = uuid.parse(req.params.deliveryId);
+      const { action, requestId } = z
+        .object({
+          action: z.enum(["hold", "resume", "retry", "resend"]),
+          requestId: uuid,
+        })
+        .parse(req.body);
       const client = await pool!.connect();
       try {
         await client.query("BEGIN");
-        const { rows: [subscriber] } = await client.query(
-          "SELECT * FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", [id],
+        const {
+          rows: [subscriber],
+        } = await client.query(
+          "SELECT * FROM newsletter_subscribers WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+          [id],
         );
         if (!subscriber || subscriber.status !== "subscribed") {
           await client.query("ROLLBACK");
-          res.status(409).json({ error: "Delivery controls require an active subscriber." }); return;
+          res
+            .status(409)
+            .json({ error: "Delivery controls require an active subscriber." });
+          return;
         }
-        const { rows: [delivery] } = await client.query(
-          "SELECT * FROM newsletter_deliveries WHERE id=$1 AND recipient=$2 FOR UPDATE", [deliveryId, subscriber.email],
+        const {
+          rows: [delivery],
+        } = await client.query(
+          "SELECT * FROM newsletter_deliveries WHERE id=$1 AND recipient=$2 FOR UPDATE",
+          [deliveryId, subscriber.email],
         );
         if (!delivery) {
           await client.query("ROLLBACK");
-          res.status(404).json({ error: "Delivery not found." }); return;
+          res.status(404).json({ error: "Delivery not found." });
+          return;
         }
         const repeated = await client.query(
-          "SELECT id FROM newsletter_deliveries WHERE id=$1 AND resend_of=$2 AND recipient=$3", [requestId, deliveryId, subscriber.email],
+          "SELECT id FROM newsletter_deliveries WHERE id=$1 AND resend_of=$2 AND recipient=$3",
+          [requestId, deliveryId, subscriber.email],
         );
         if (repeated.rowCount) {
           await client.query("COMMIT");
-          res.status(202).json({ success: true }); return;
+          res.status(202).json({ success: true });
+          return;
         }
         if (action === "hold" || action === "resume") {
           if (delivery.status !== "queued") {
             await client.query("ROLLBACK");
-            res.status(409).json({ error: "Only queued deliveries can be held or resumed." }); return;
+            res
+              .status(409)
+              .json({
+                error: "Only queued deliveries can be held or resumed.",
+              });
+            return;
           }
           await client.query(
             `UPDATE newsletter_deliveries SET held_at=CASE WHEN $2 THEN coalesce(held_at,now()) ELSE NULL END,
-            next_attempt_at=CASE WHEN $2 THEN next_attempt_at ELSE now() END WHERE id=$1`, [deliveryId, action === "hold"],
+            next_attempt_at=CASE WHEN $2 THEN next_attempt_at ELSE now() END WHERE id=$1`,
+            [deliveryId, action === "hold"],
           );
         } else {
-          if ((action === "retry" && delivery.status !== "failed" && delivery.status !== "queued") ||
-              (action === "resend" && delivery.status !== "sent")) {
+          if (
+            (action === "retry" &&
+              delivery.status !== "failed" &&
+              delivery.status !== "queued") ||
+            (action === "resend" && delivery.status !== "sent")
+          ) {
             await client.query("ROLLBACK");
-            res.status(409).json({ error: "This delivery has changed. Refresh and try again." }); return;
+            res
+              .status(409)
+              .json({
+                error: "This delivery has changed. Refresh and try again.",
+              });
+            return;
           }
           // Keep the bridge message ID for retries inside its safe deduplication
           // window. An explicit resend or expired retry gets a new history entry.
-          const expired = Date.now() - new Date(delivery.created_at).getTime() >= 86400000;
+          const expired =
+            Date.now() - new Date(delivery.created_at).getTime() >= 86400000;
           if (action === "resend" || expired) {
             await client.query(
               `INSERT INTO newsletter_deliveries(id,draft_id,subscriber_id,recipient,is_test,subject,preview_text,content,resend_of)
               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO NOTHING`,
-              [requestId, delivery.draft_id, subscriber.id, subscriber.email, delivery.is_test,
-                delivery.subject, delivery.preview_text, delivery.content, delivery.id],
+              [
+                requestId,
+                delivery.draft_id,
+                subscriber.id,
+                subscriber.email,
+                delivery.is_test,
+                delivery.subject,
+                delivery.preview_text,
+                delivery.content,
+                delivery.id,
+              ],
             );
-            if (delivery.status === "queued") await client.query(
-              "UPDATE newsletter_deliveries SET status='skipped',held_at=NULL,last_error='Replaced by an administrator retry.' WHERE id=$1", [deliveryId],
-            );
+            if (delivery.status === "queued")
+              await client.query(
+                "UPDATE newsletter_deliveries SET status='skipped',held_at=NULL,last_error='Replaced by an administrator retry.' WHERE id=$1",
+                [deliveryId],
+              );
           } else {
             await client.query(
-              "UPDATE newsletter_deliveries SET status='queued',held_at=NULL,next_attempt_at=now() WHERE id=$1", [deliveryId],
+              "UPDATE newsletter_deliveries SET status='queued',held_at=NULL,next_attempt_at=now() WHERE id=$1",
+              [deliveryId],
             );
           }
-          if (!delivery.is_test) await client.query(
-            "UPDATE newsletter_drafts SET status='queued',updated_at=now() WHERE id=$1", [delivery.draft_id],
-          );
+          if (!delivery.is_test)
+            await client.query(
+              "UPDATE newsletter_drafts SET status='queued',updated_at=now() WHERE id=$1",
+              [delivery.draft_id],
+            );
         }
         await client.query("COMMIT");
         res.status(202).json({ success: true });
-      } catch (error) { await client.query("ROLLBACK"); throw error; }
-      finally { client.release(); }
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }),
   );
   app.get(
@@ -573,12 +680,10 @@ export function registerNewsletterRoutes(
         );
         if (recipientEmails && queued.rowCount !== recipientEmails.length) {
           await client.query("ROLLBACK");
-          res
-            .status(400)
-            .json({
-              error:
-                "One or more selected emails are unavailable or unsubscribed. Refresh your subscriber list and try again.",
-            });
+          res.status(400).json({
+            error:
+              "One or more selected emails are unavailable or unsubscribed. Refresh your subscriber list and try again.",
+          });
           return;
         }
         if (!queued.rowCount) {

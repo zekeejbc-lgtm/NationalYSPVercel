@@ -105,6 +105,9 @@ export default function NewsletterManager() {
   const [recipientInput, setRecipientInput] = useState("");
   const subscribers = useQuery<Subscriber[]>({
     queryKey: ["/api/newsletter/subscribers"],
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const drafts = useQuery<Draft[]>({
     queryKey: ["/api/newsletter/drafts"],
