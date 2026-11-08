@@ -9,6 +9,7 @@ import {
   renderNewsletterHtml,
 } from "../shared/newsletter";
 import { coalitionMailConfigured } from "./coalition-mail";
+import { sendNewsletterPreferencesPage } from "./newsletter-preferences-page";
 
 const uuid = z.string().uuid();
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -240,33 +241,28 @@ export function registerNewsletterRoutes(
     "/api/newsletter/unsubscribe",
     ready,
     route(async (req, res) => {
-      const token = tokenSchema.parse(req.query.token);
-      res.setHeader("Referrer-Policy", "no-referrer");
-      res.setHeader(
-        "Content-Security-Policy",
-        "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
-      );
-      res
-        .type("html")
-        .send(
-          `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Newsletter preferences</title><body><main><h1>Unsubscribe from Youth Service Philippines updates</h1><p>Confirm below to stop receiving newsletters.</p><form method="post" action="/api/newsletter/unsubscribe"><input type="hidden" name="token" value="${token}"><button type="submit">Unsubscribe</button></form></main></body></html>`,
-        );
+      const parsed = tokenSchema.safeParse(req.query.token);
+      if (!parsed.success) {
+        sendNewsletterPreferencesPage(res, "invalid");
+        return;
+      }
+      sendNewsletterPreferencesPage(res, "confirm", parsed.data);
     }),
   );
   app.post(
     "/api/newsletter/unsubscribe",
     ready,
     route(async (req, res) => {
-      const token = tokenSchema.parse(req.body.token);
-      await pool!.query(
+      const parsed = tokenSchema.safeParse(req.body?.token);
+      if (!parsed.success) {
+        sendNewsletterPreferencesPage(res, "invalid");
+        return;
+      }
+      const result = await pool!.query(
         `UPDATE newsletter_subscribers SET status='unsubscribed',unsubscribed_at=now(),updated_at=now() WHERE unsubscribe_token=$1`,
-        [token],
+        [parsed.data],
       );
-      res
-        .type("html")
-        .send(
-          '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed</title><body><h1>You are unsubscribed</h1><p>You will no longer receive newsletters from Youth Service Philippines.</p><a href="/">Return to Youth Service Philippines</a></body></html>',
-        );
+      sendNewsletterPreferencesPage(res, result.rowCount ? "success" : "invalid");
     }),
   );
   app.get(
