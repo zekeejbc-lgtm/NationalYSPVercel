@@ -16,6 +16,10 @@ The status card reports server configuration; it cannot verify that the Apps Scr
 
 ## Safeguards and limits
 
+- Press a subscriber row to open their delivery history, paginated in groups of 50. It includes saved content previews, attempts, errors, dates, tests, and requeued copies. Hold pauses a queued message; Resume or Retry now returns it to the worker. Failed messages can be retried and sent messages explicitly resent. These actions queue delivery; use the worker or Process Queue to send.
+- Retry within 24 hours preserves the message ID and attempt history for bridge deduplication. Retrying after the window expires creates a fresh history entry and message ID, as does Resend. An unconfirmed earlier delivery may already have arrived, so the confirmation explains that a duplicate copy is possible. Held messages do not send automatically.
+- Delete subscriber requires typing their exact email, checked on both client and server. Removal hides the subscriber, preserves delivery history, cancels queued/held messages including tests addressed to them, and retains an unsubscribe/removal marker to prevent automatic reimport. A message already in flight may finish before deletion. Public subscription submissions do not restore removed subscribers.
+
 - Only national admins can read subscriber data, manage campaigns, and process delivery. Newsletter API responses are not stored in the browser session cache.
 - Each campaign snapshots its audience and content. Duplicate send requests cannot queue the same campaign twice. Draft creation and test requests use request IDs to tolerate client network retries.
 - Saved drafts offer **Specific recipients** (the default) or **All subscribers**. Search subscribed emails with autosuggestions, select with Enter/click, or paste comma-separated addresses. Duplicates count once. Recipient choices are used when queuing; they are not stored with an unsent draft. Selected audiences are limited to 1,000 addresses. Unknown or unsubscribed addresses reject the entire send request rather than broadening or partially queuing the audience.

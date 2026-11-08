@@ -37,6 +37,7 @@ import {
 import { Mail, Plus } from "lucide-react";
 import { NEWSLETTER_TEMPLATES } from "@shared/newsletter-templates";
 import NewsletterEmailPreview from "./NewsletterEmailPreview";
+import NewsletterSubscriberDetails from "./NewsletterSubscriberDetails";
 import NewsletterRecipientPicker, {
   parseRecipientEmails,
 } from "./NewsletterRecipientPicker";
@@ -63,6 +64,7 @@ type DeliveryStatus = {
   configured: boolean;
   automaticProcessing: boolean;
   pending: number;
+  held: number;
   failed: number;
 };
 type Delivery = {
@@ -89,6 +91,7 @@ export default function NewsletterManager() {
   const { toast } = useToast();
   const { confirm } = useConfirmDialog();
   const [panel, setPanel] = useState(false);
+  const [subscriberId, setSubscriberId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Draft | null>(null);
   const [form, setForm] = useState<NewsletterDraftInput>(empty);
   const [templateId, setTemplateId] = useState(NEWSLETTER_TEMPLATES[0].id);
@@ -213,6 +216,8 @@ export default function NewsletterManager() {
   const busy = action.isPending;
   const error = subscribers.error || drafts.error || status.error;
 
+  if (subscriberId) return <NewsletterSubscriberDetails key={subscriberId} id={subscriberId} onBack={() => setSubscriberId(null)} />;
+
   if (subscribers.isPending || drafts.isPending || status.isPending)
     return <LoadingState label="Loading newsletter data..." rows={2} compact />;
   if (error)
@@ -282,7 +287,7 @@ export default function NewsletterManager() {
             )}
             <p className="text-sm text-muted-foreground">
               {status.data?.pending || 0} queued · {status.data?.failed || 0}{" "}
-              failed deliveries. Processing sends up to two emails at a time.
+              failed · {status.data?.held || 0} held deliveries. Processing sends up to two emails at a time.
               Failed attempts retry after five minutes, for up to 24 hours.
             </p>
             {!status.data?.automaticProcessing && (
@@ -345,9 +350,11 @@ export default function NewsletterManager() {
             ) : (
               <div className="max-h-96 divide-y overflow-auto">
                 {visible.map((sub) => (
-                  <div
+                  <button
+                    type="button"
                     key={sub.id}
-                    className="flex flex-wrap items-center justify-between gap-2 p-4"
+                    onClick={() => setSubscriberId(sub.id)}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 p-4 text-left hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
                   >
                     <div className="min-w-0">
                       <p className="break-all font-medium">{sub.email}</p>
@@ -367,7 +374,7 @@ export default function NewsletterManager() {
                         <Badge variant="secondary">Directory match</Badge>
                       )}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

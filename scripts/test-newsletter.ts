@@ -105,6 +105,9 @@ try {
     ).status,
     200,
   );
+  const originalSubscription = (await pool.query(
+    "UPDATE newsletter_subscribers SET last_subscribed_at='2026-04-03T06:40:00Z' WHERE email='footer@example.invalid' RETURNING id,created_at,unsubscribe_token",
+  )).rows[0];
   await req(
     "POST",
     "subscribe",
@@ -124,8 +127,13 @@ try {
   const {
     rows: [footer],
   } = await pool.query(
-    "SELECT * FROM newsletter_subscribers WHERE email='footer@example.invalid'",
+    `SELECT *, last_subscribed_at BETWEEN now()-interval '1 minute' AND now()+interval '1 minute' AS recently_subscribed
+    FROM newsletter_subscribers WHERE email='footer@example.invalid'`,
   );
+  assert.equal(footer.id, originalSubscription.id);
+  assert.equal(footer.created_at.getTime(), originalSubscription.created_at.getTime());
+  assert.equal(footer.unsubscribe_token, originalSubscription.unsubscribe_token);
+  assert.equal(footer.recently_subscribed, true);
   assert.equal(
     (
       await req(
@@ -415,8 +423,71 @@ try {
     ).rows[0].recipient_scope,
     "selected_subscribers",
   );
+  // Subscriber details and delivery controls use isolated records and mock mail.
+  const managedId = crypto.randomUUID();
+  const managedEmail = "managed@example.invalid";
+  await pool.query("INSERT INTO newsletter_subscribers(id,email,normalized_email,source) VALUES($1,$2,$2,'membership')", [managedId, managedEmail]);
+  await pool.query("INSERT INTO members(email,newsletter_opt_in) VALUES($1,true)", [managedEmail]);
+  const managedDraft = crypto.randomUUID();
+  await pool.query("INSERT INTO newsletter_drafts(id,subject,content,status) VALUES($1,'History subject','Saved body','sent')", [managedDraft]);
+  const heldId = crypto.randomUUID(), failedId = crypto.randomUUID(), sentId = crypto.randomUUID();
+  await pool.query(`INSERT INTO newsletter_deliveries(id,draft_id,subscriber_id,recipient,subject,content,status,is_test)
+    VALUES($1,$4,$5,$6,'Queued snapshot','Saved queued body','queued',false),
+    ($2,$4,$5,$6,'Failed snapshot','Saved failed body','failed',true),
+    ($3,$4,$5,$6,'Sent snapshot','Saved sent body','sent',true)`, [heldId,failedId,sentId,managedDraft,managedId,managedEmail]);
+  const deliveryAction = (deliveryId: string, action: string, requestId = crypto.randomUUID(), subscriberId = managedId) =>
+    req("POST", `subscribers/${subscriberId}/deliveries/${deliveryId}/action`, { action, requestId });
+  assert.equal((await req("GET", `subscribers/${managedId}`, undefined, false)).status, 401);
+  assert.equal((await req("DELETE", `subscribers/${managedId}`, { email: managedEmail }, false)).status, 401);
+  assert.equal((await req("POST", `subscribers/${managedId}/deliveries/${heldId}/action`, { action: "hold", requestId: crypto.randomUUID() }, false)).status, 401);
+  assert.equal((await req("DELETE", `subscribers/${managedId}`, { email: "wrong@example.invalid" })).status, 400);
+  const history = await (await req("GET", `subscribers/${managedId}`)).json();
+  assert.equal(history.subscriber.email, managedEmail);
+  assert.equal(history.deliveries.length, 3);
+  assert.equal(history.deliveries.find((item: { id: string }) => item.id === heldId).content, "Saved queued body");
+  assert(!JSON.stringify(history).includes("unsubscribe_token"));
+  assert.equal((await deliveryAction(heldId, "hold")).status, 202);
+  await flushNewsletterMail(50);
+  assert((await pool.query("SELECT held_at FROM newsletter_deliveries WHERE id=$1", [heldId])).rows[0].held_at);
+  assert(!sent.some((item) => item.messageId === heldId));
+  assert.equal((await deliveryAction(sentId, "hold")).status, 409);
+  assert.equal((await deliveryAction(heldId, "retry")).status, 202);
+  await flushNewsletterMail(50);
+  assert.equal(sent.filter((item) => item.messageId === heldId).length, 1);
+  assert.equal((await deliveryAction(failedId, "retry")).status, 202);
+  await flushNewsletterMail(50);
+  assert.equal(sent.filter((item) => item.messageId === failedId).length, 1);
+  const resendId = crypto.randomUUID();
+  assert.equal((await deliveryAction(heldId, "resend", resendId)).status, 202);
+  assert.equal((await deliveryAction(heldId, "resend", resendId)).status, 202);
+  assert.equal((await pool.query("SELECT count(*)::int AS total FROM newsletter_deliveries WHERE resend_of=$1", [heldId])).rows[0].total, 1);
+  await pool.query("UPDATE newsletter_deliveries SET status='queued',created_at=now()-interval '3 days' WHERE id=$1", [failedId]);
+  const expiredRetryId = crypto.randomUUID();
+  assert.equal((await deliveryAction(failedId, "retry", expiredRetryId)).status, 202);
+  assert.equal((await deliveryAction(failedId, "retry", expiredRetryId)).status, 202);
+  assert.equal((await deliveryAction(expiredRetryId, "hold")).status, 202);
+  assert.equal((await pool.query("SELECT status FROM newsletter_deliveries WHERE id=$1", [failedId])).rows[0].status, "skipped");
+  // Another subscriber cannot control this subscriber's message.
+  const otherSubscriber = (await pool.query("SELECT id FROM newsletter_subscribers WHERE email='chosen@example.invalid'")).rows[0];
+  assert.equal((await deliveryAction(sentId, "resend", crypto.randomUUID(), otherSubscriber.id)).status, 404);
+  await pool.query(`INSERT INTO newsletter_deliveries(draft_id,recipient,subject,content,status,is_test)
+    SELECT $1,$2,'Older history','Saved history','skipped',true FROM generate_series(1,52)`, [managedDraft,managedEmail]);
+  const firstPage = await (await req("GET", `subscribers/${managedId}`)).json();
+  const secondPage = await (await req("GET", `subscribers/${managedId}?page=1`)).json();
+  assert.equal(firstPage.deliveries.length, 50);
+  assert.equal(firstPage.hasMore, true);
+  assert(secondPage.deliveries.length > 0);
+  assert(!firstPage.deliveries.some((item: { id: string }) => secondPage.deliveries.some((other: { id: string }) => other.id === item.id)));
+  assert.equal((await req("DELETE", `subscribers/${managedId}`, { email: managedEmail })).status, 200);
+  assert.equal((await req("POST", "subscribe", { email: managedEmail, consent: true }, false)).status, 200);
+  await syncNewsletterMembers();
+  assert(!(await (await req("GET", "subscribers")).json()).some((item: { id: string }) => item.id === managedId));
+  assert.equal((await req("GET", `subscribers/${managedId}`)).status, 404);
+  assert.equal((await deliveryAction(sentId, "resend")).status, 409);
+  assert.equal((await pool.query("SELECT count(*)::int AS total FROM newsletter_deliveries WHERE recipient=$1 AND status='queued'", [managedEmail])).rows[0].total, 0);
+  assert((await pool.query("SELECT count(*)::int AS total FROM newsletter_deliveries WHERE recipient=$1", [managedEmail])).rows[0].total > 0);
   console.log(
-    "Newsletter integration tests passed: consent, opt-outs, auth, drafts, idempotency, concurrency, delivery, retries, HTML safety and RLS. No real mail sent.",
+    "Newsletter integration tests passed: consent, opt-outs, auth, drafts, idempotency, concurrency, delivery, retries, subscriber history, holds, resends, verified deletion, pagination, HTML safety and RLS. No real mail sent.",
   );
 } finally {
   process.env.GOOGLE_APPS_SCRIPT_URL = env.GOOGLE_APPS_SCRIPT_URL;

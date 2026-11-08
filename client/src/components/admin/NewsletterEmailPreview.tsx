@@ -7,8 +7,10 @@ import {
 
 export default function NewsletterEmailPreview({
   draft,
+  isTest = false,
 }: {
   draft: NewsletterDraftInput;
+  isTest?: boolean;
 }) {
   const [mobile, setMobile] = useState(false);
   const [height, setHeight] = useState(320);
@@ -24,6 +26,7 @@ export default function NewsletterEmailPreview({
         "Your newsletter message will appear here as you type.",
     },
     "#unsubscribe-preview",
+    isTest,
   );
 
   return (

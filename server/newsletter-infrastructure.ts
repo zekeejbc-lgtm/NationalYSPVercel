@@ -29,7 +29,8 @@ async function initialize() {
       ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'footer',
       ADD COLUMN IF NOT EXISTS consent_version text NOT NULL DEFAULT 'newsletter-v1',
       ADD COLUMN IF NOT EXISTS unsubscribe_token text NOT NULL DEFAULT replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''),
-      ADD COLUMN IF NOT EXISTS unsubscribed_at timestamptz`);
+      ADD COLUMN IF NOT EXISTS unsubscribed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS deleted_at timestamptz`);
     await client.query(`UPDATE newsletter_subscribers SET email=lower(trim(email)), normalized_email=lower(trim(email))
       WHERE email IS DISTINCT FROM lower(trim(email)) OR normalized_email IS DISTINCT FROM lower(trim(email))`);
     await client.query(
@@ -75,9 +76,20 @@ async function initialize() {
       attempts integer NOT NULL DEFAULT 0, last_error text, next_attempt_at timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL DEFAULT now(), sent_at timestamptz
     )`);
+    await client.query(`ALTER TABLE newsletter_deliveries
+      ADD COLUMN IF NOT EXISTS held_at timestamptz,
+      ADD COLUMN IF NOT EXISTS resend_of uuid`);
+    // Keep one original campaign delivery per subscriber; explicit resends have
+    // separate message IDs so the email bridge does not deduplicate them.
+    const deliveryMigration = await client.query("SELECT version FROM newsletter_migrations WHERE version=2");
+    if (!deliveryMigration.rowCount) {
+      await client.query("DROP INDEX IF EXISTS newsletter_delivery_unique_idx");
+      await client.query("INSERT INTO newsletter_migrations(version) VALUES(2)");
+    }
     await client.query(
-      "CREATE UNIQUE INDEX IF NOT EXISTS newsletter_delivery_unique_idx ON newsletter_deliveries(draft_id, subscriber_id) WHERE NOT is_test",
+      "CREATE UNIQUE INDEX IF NOT EXISTS newsletter_delivery_unique_idx ON newsletter_deliveries(draft_id, subscriber_id) WHERE NOT is_test AND resend_of IS NULL",
     );
+    await client.query("CREATE INDEX IF NOT EXISTS newsletter_delivery_recipient_idx ON newsletter_deliveries(recipient,created_at DESC,id DESC)");
     await client.query(
       "CREATE INDEX IF NOT EXISTS newsletter_delivery_pending_idx ON newsletter_deliveries(next_attempt_at) WHERE status = 'queued'",
     );

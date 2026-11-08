@@ -13,6 +13,7 @@ export const newsletterSubscribers = pgTable("newsletter_subscribers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   lastSubscribedAt: timestamp("last_subscribed_at", { withTimezone: true }).notNull().defaultNow(),
   unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, table => [check("newsletter_subscribers_email_check", sql`${table.email} = lower(trim(${table.email}))`),
   check("newsletter_subscribers_status_check", sql`${table.status} IN ('subscribed','unsubscribed')`),
   check("newsletter_subscribers_source_check", sql`${table.source} IN ('footer','membership')`)]).enableRLS();
@@ -31,10 +32,13 @@ export const newsletterDeliveries = pgTable("newsletter_deliveries", {
   isTest: boolean("is_test").notNull().default(false), status: text("status").notNull().default("queued"),
   attempts: integer("attempts").notNull().default(0), lastError: text("last_error"),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  heldAt: timestamp("held_at", { withTimezone: true }),
+  resendOf: uuid("resend_of"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), sentAt: timestamp("sent_at", { withTimezone: true }),
 }, table => [index("newsletter_delivery_pending_idx").on(table.nextAttemptAt).where(sql`${table.status} = 'queued'`),
   index("newsletter_delivery_draft_idx").on(table.draftId),
-  uniqueIndex("newsletter_delivery_unique_idx").on(table.draftId, table.subscriberId).where(sql`NOT ${table.isTest}`),
+  index("newsletter_delivery_recipient_idx").on(table.recipient, table.createdAt.desc(), table.id.desc()),
+  uniqueIndex("newsletter_delivery_unique_idx").on(table.draftId, table.subscriberId).where(sql`NOT ${table.isTest} AND ${table.resendOf} IS NULL`),
   check("newsletter_deliveries_status_check", sql`${table.status} IN ('queued','sent','failed','skipped')`)]).enableRLS();
 export const newsletterSubscriptionLimits = pgTable("newsletter_subscription_limits", {
   key: text("key").primaryKey(), attempts: integer("attempts").notNull(),
