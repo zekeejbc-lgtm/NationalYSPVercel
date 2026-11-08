@@ -1,3 +1,4 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useQuery } from "@tanstack/react-query";
@@ -28,17 +29,14 @@ export default function Footer() {
 
   const subscribeMutation = useMutation({
     mutationFn: async (email: string) => {
-      return apiRequest("POST", "/api/newsletter/subscribe", { email });
+      return apiRequest("POST", "/api/newsletter/subscribe", { email, consent: true });
     },
     onSuccess: (result: { status?: string; message?: string }) => {
-      const alreadySubscribed = result?.status === "already_subscribed";
       toast({
-        title: alreadySubscribed ? "Already subscribed" : "Subscribed",
+        title: "Subscription request received",
         description:
           result?.message ||
-          (alreadySubscribed
-            ? "This email is already subscribed to newsletter updates."
-            : "You have been subscribed to newsletter updates."),
+          "Thank you. Your subscription preferences have been preserved.",
       });
       setNewsletterEmail("");
     },
@@ -85,7 +83,7 @@ export default function Footer() {
               </h3>
             </div>
             <p className="text-sm text-muted-foreground">
-              Empowering Filipino youth through community service and leadership development.
+              {ORGANIZATION_MOTTO}
             </p>
           </div>
 
@@ -191,6 +189,8 @@ export default function Footer() {
                 <input
                   id="footer-newsletter"
                   type="email"
+                  required
+                  maxLength={254}
                   placeholder="Enter your email"
                   value={newsletterEmail}
                   onChange={(e) => setNewsletterEmail(e.target.value)}
@@ -207,6 +207,9 @@ export default function Footer() {
                   {subscribeMutation.isPending ? "Subscribing..." : "Subscribe"}
                 </button>
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                By subscribing, you agree to receive monthly volunteer opportunities and organization updates. You can unsubscribe from any newsletter.
+              </p>
             </form>
           </div>
         </div>

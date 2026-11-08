@@ -93,7 +93,14 @@ async function initialize() {
     await client.query(
       `CREATE INDEX IF NOT EXISTS coalition_outbox_pending_idx ON coalition_email_outbox (next_attempt_at) WHERE sent_at IS NULL`,
     );
+    await client.query(`CREATE TABLE IF NOT EXISTS coalition_settings (
+      id integer PRIMARY KEY CHECK (id = 1), group_chat_url text NOT NULL DEFAULT ''
+    )`);
+    await client.query(`ALTER TABLE coalition_email_outbox ALTER COLUMN registration_id DROP NOT NULL`);
+    await client.query(`ALTER TABLE coalition_email_outbox ADD COLUMN IF NOT EXISTS member_id text`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS coalition_outbox_member_invite_idx ON coalition_email_outbox (member_id) WHERE member_id IS NOT NULL`);
     for (const table of [
+      "coalition_settings",
       "coalition_registrations",
       "coalition_documents",
       "coalition_submission_limits",

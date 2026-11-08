@@ -14,6 +14,7 @@ try {
   END $$`);
   // Only tables in this disposable schema are visible to the test pool.
   pool.options.options = `-c search_path=${schema}`;
+  await import("./test-coalition-member-invites");
   await import("./test-coalition");
 } finally {
   await pool.end().catch(() => {});

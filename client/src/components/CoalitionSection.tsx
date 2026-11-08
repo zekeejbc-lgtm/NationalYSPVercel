@@ -1,3 +1,4 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
 import { Link } from "wouter";
 import { Building2, UserRound, ArrowRight, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ export default function CoalitionSection() {
         <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
           <div className="space-y-4">
             <span className="text-sm font-semibold text-primary uppercase tracking-wider">
-              Together in service
+              {ORGANIZATION_MOTTO}
             </span>
             <h2 id="coalition-title" className="text-3xl md:text-4xl font-bold">
               Join the Youth Service Coalition

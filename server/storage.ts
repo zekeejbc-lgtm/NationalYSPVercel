@@ -68,6 +68,9 @@ import {
   nationalRequests
 } from "@shared/schema";
 import { db } from "./db";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { ensureCoalitionInfrastructure } from "./coalition-infrastructure";
+import { groupChatInvitation } from "@shared/coalition-settings";
 import { eq, desc, and, sql, asc, isNull, gte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
@@ -383,7 +386,7 @@ export interface IStorage {
   getMember(id: string): Promise<Member | undefined>;
   getMemberByApplicationReferenceId(referenceId: string): Promise<Member | undefined>;
   createMember(member: InsertMember): Promise<Member>;
-  updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined>;
+  updateMember(id: string, member: Partial<InsertMember>, groupChatUrl?: string): Promise<Member | undefined>;
   deleteMember(id: string): Promise<boolean>;
   getHouseholdSummary(): Promise<{ totalSubmissions: number; totalHouseholdSize: number; averageHouseholdSize: number }>;
 
@@ -1063,9 +1066,31 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  async updateMember(id: string, member: Partial<InsertMember>): Promise<Member | undefined> {
-    const result = await db.update(members).set(member).where(eq(members.id, id)).returning();
-    return result[0];
+  async updateMember(id: string, member: Partial<InsertMember>, groupChatUrl?: string): Promise<Member | undefined> {
+    const approving = member.applicationStatus === "approved" || (member.applicationStatus === undefined && member.isActive === true);
+    if (!approving) {
+      const result = await db.update(members).set(member).where(eq(members.id, id)).returning();
+      return result[0];
+    }
+    if (process.env.VERCEL !== "1" || process.env.RUN_STARTUP_SCHEMA_SETUP === "true") {
+      await ensureCoalitionInfrastructure();
+    }
+    return (db as NodePgDatabase<typeof import("@shared/schema")>).transaction(async tx => {
+      const [previous] = await tx.select().from(members).where(eq(members.id, id)).for("update");
+      if (!previous) return undefined;
+      const [updated] = await tx.update(members).set(member).where(eq(members.id, id)).returning();
+      const wasApproved = previous.applicationStatus === "approved" || (!previous.applicationStatus && previous.isActive);
+      if (!wasApproved && updated.email) {
+        const url = groupChatUrl || "";
+        if (url) {
+          const body = `Your YSP and Coalition membership application has been approved.\n\nReference: ${updated.applicationReferenceId || updated.id}${groupChatInvitation(url)}\n\nYouth Service Philippines`;
+          await tx.execute(sql`INSERT INTO coalition_email_outbox (member_id,recipient,subject,body)
+            VALUES (${updated.id},${updated.email},'Youth Service Coalition — Membership approved',${body})
+            ON CONFLICT (member_id) WHERE member_id IS NOT NULL DO NOTHING`);
+        }
+      }
+      return updated;
+    });
   }
 
   async deleteMember(id: string): Promise<boolean> {

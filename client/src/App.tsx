@@ -1,3 +1,4 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
 import { useEffect } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { clearSessionQueryPersistence, queryClient } from "./lib/queryClient";
@@ -68,7 +69,7 @@ const ROUTE_SEO: Record<string, RouteSeo> = {
     keywords: ["youth service coalition", "coalition registration", "youth service philippines"],
   },
   "/": {
-    title: "Youth Service Philippines National | Empowering Filipino Youth Through Service",
+    title: `Youth Service Philippines National | ${ORGANIZATION_MOTTO}`,
     description:
       "Join Youth Service Philippines in programs and initiatives that create meaningful impact through youth leadership and volunteerism.",
     path: "/",

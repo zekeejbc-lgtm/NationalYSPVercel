@@ -14,6 +14,7 @@ import {
 } from "@shared/coalition";
 import { ensureCoalitionInfrastructure } from "./coalition-infrastructure";
 import { coalitionMailConfigured, flushCoalitionMail } from "./coalition-mail";
+import { coalitionSettingsSchema, groupChatInvitation } from "@shared/coalition-settings";
 export { ensureCoalitionInfrastructure } from "./coalition-infrastructure";
 
 const retained = `created_at > now() - interval '${COALITION_RETENTION_MONTHS} months'`;
@@ -111,6 +112,7 @@ async function ready() {
   await pool!.query(
     `DELETE FROM coalition_submission_limits WHERE window_start < now() - interval '1 hour'`,
   );
+  await pool!.query(`DELETE FROM coalition_email_outbox WHERE member_id IS NOT NULL AND created_at <= now() - interval '${COALITION_RETENTION_MONTHS} months'`);
   lastCleanup = Date.now();
 }
 async function limited(req: Request, category: string, maximum: number) {
@@ -167,8 +169,10 @@ async function queueMail(
   },
   message: string,
   token?: string,
+  groupChatUrl = "",
 ) {
   const secret = token || (await accessToken(client, record.id));
+  if (record.status === "approved") message += groupChatInvitation(groupChatUrl);
   await client.query(
     `INSERT INTO coalition_email_outbox (registration_id,recipient,subject,body) VALUES ($1,$2,$3,$4)`,
     [
@@ -404,6 +408,8 @@ export function registerCoalitionRoutes(
   );
   app.patch("/api/coalition/registrations/:id", adminAuth, async (req, res) => {
     const status = coalitionStatusSchema.safeParse(req.body.status);
+    const invitation = coalitionSettingsSchema.safeParse({ groupChatUrl: req.body.groupChatUrl ?? "" });
+    if (!invitation.success) return res.status(400).json({ error: invitation.error.issues[0].message });
     const message = z
       .string()
       .trim()
@@ -463,7 +469,7 @@ export function registerCoalitionRoutes(
         "admin",
         req.session?.userId,
       );
-      await queueMail(client, { ...row, status: status.data }, text);
+      await queueMail(client, { ...row, status: status.data }, text, undefined, invitation.data.groupChatUrl);
       await client.query("COMMIT");
       client.release();
       client = undefined;

@@ -1,3 +1,4 @@
+import { coalitionSettingsSchema } from "@shared/coalition-settings";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -190,6 +191,7 @@ export default function MemberListManager() {
   const [applicationBarangayFilter, setApplicationBarangayFilter] = useState<string>("all");
   const [applicantDetailsOpen, setApplicantDetailsOpen] = useState(false);
   const [selectedApplicant, setSelectedApplicant] = useState<Member | null>(null);
+  const [applicantGroupChatUrl, setApplicantGroupChatUrl] = useState("");
   const [directoryDetailsOpen, setDirectoryDetailsOpen] = useState(false);
   const [selectedDirectoryMemberId, setSelectedDirectoryMemberId] = useState<string | null>(null);
   const [isEditingDirectoryInfo, setIsEditingDirectoryInfo] = useState(false);
@@ -312,7 +314,7 @@ export default function MemberListManager() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: Partial<Member> }) => {
+    mutationFn: async ({ id, data }: { id: string; data: Partial<Member> & { groupChatUrl?: string } }) => {
       setUpdatingMemberId(id);
       return await apiRequest("PATCH", `/api/members/${id}`, data);
     },
@@ -1160,6 +1162,7 @@ export default function MemberListManager() {
 
   const openApplicantDetailsDialog = (member: Member) => {
     setSelectedApplicant(member);
+    setApplicantGroupChatUrl("");
     setApplicantDetailsOpen(true);
   };
 
@@ -1913,7 +1916,7 @@ export default function MemberListManager() {
                                           </Button>
                                           <Button
                                             size="sm"
-                                            onClick={() => updateMutation.mutate({ id: member.id, data: { applicationStatus: "approved" } })}
+                                            onClick={() => openApplicantDetailsDialog(member)}
                                             disabled={updatingMemberId === member.id}
                                             data-testid={`button-approve-member-application-${member.id}`}
                                           >
@@ -2093,6 +2096,11 @@ export default function MemberListManager() {
                       </div>
                     </div>
 
+                    <div className="space-y-2">
+                      <Label htmlFor="member-application-group-link">Group invitation link for this applicant (optional)</Label>
+                      <Input id="member-application-group-link" type="url" maxLength={2048} value={applicantGroupChatUrl} onChange={event => setApplicantGroupChatUrl(event.target.value)} disabled={updatingMemberId === selectedApplicant.id} placeholder="https://m.me/j/your-invite" />
+                      <p className="text-sm text-muted-foreground">Only this applicant receives this link after approval. Leave blank to approve without an invitation.</p>
+                    </div>
                     <DialogFooter className="gap-2">
                       {selectedApplicantInsights && selectedApplicantInsights.duplicateCount > 0 && (
                         <Button
@@ -2124,9 +2132,14 @@ export default function MemberListManager() {
                       <Button
                         type="button"
                         onClick={() => {
-                          updateMutation.mutate({ id: selectedApplicant.id, data: { applicationStatus: "approved" } });
-                          setApplicantDetailsOpen(false);
-                          setSelectedApplicant(null);
+                          const parsed = coalitionSettingsSchema.safeParse({ groupChatUrl: applicantGroupChatUrl });
+                          if (!parsed.success) {
+                            toast({ title: "Check the invitation link", description: parsed.error.issues[0].message, variant: "destructive" });
+                            return;
+                          }
+                          updateMutation.mutate({ id: selectedApplicant.id, data: { applicationStatus: "approved", groupChatUrl: parsed.data.groupChatUrl } }, {
+                            onSuccess: () => { setApplicantDetailsOpen(false); setSelectedApplicant(null); }
+                          });
                         }}
                         disabled={updatingMemberId === selectedApplicant.id}
                         data-testid="button-approve-from-member-application-details"

@@ -1,7 +1,49 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, boolean, jsonb, uuid, index, check } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, boolean, jsonb, uuid, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export const newsletterSubscribers = pgTable("newsletter_subscribers", {
+  normalizedEmail: text("normalized_email").notNull().unique(),
+  id: uuid("id").primaryKey().defaultRandom(), email: text("email").notNull().unique(),
+  status: text("status").notNull().default("subscribed"), source: text("source").notNull(),
+  consentVersion: text("consent_version").notNull().default("newsletter-v1"),
+  unsubscribeToken: text("unsubscribe_token").notNull().unique().default(sql`replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '')`),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSubscribedAt: timestamp("last_subscribed_at", { withTimezone: true }).notNull().defaultNow(),
+  unsubscribedAt: timestamp("unsubscribed_at", { withTimezone: true }),
+}, table => [check("newsletter_subscribers_email_check", sql`${table.email} = lower(trim(${table.email}))`),
+  check("newsletter_subscribers_status_check", sql`${table.status} IN ('subscribed','unsubscribed')`),
+  check("newsletter_subscribers_source_check", sql`${table.source} IN ('footer','membership')`)]).enableRLS();
+export const newsletterDrafts = pgTable("newsletter_drafts", {
+  recipientScope: text("recipient_scope").notNull().default("all_subscribers"),
+  id: uuid("id").primaryKey().defaultRandom(), subject: text("subject").notNull(),
+  previewText: text("preview_text").notNull().default(""), content: text("content").notNull(),
+  status: text("status").notNull().default("draft"), recipientCount: integer("recipient_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, table => [check("newsletter_drafts_status_check", sql`${table.status} IN ('draft','queued','sent','failed')`)]).enableRLS();
+export const newsletterDeliveries = pgTable("newsletter_deliveries", {
+  id: uuid("id").primaryKey().defaultRandom(), draftId: uuid("draft_id").notNull().references(() => newsletterDrafts.id, { onDelete: "cascade" }),
+  subscriberId: uuid("subscriber_id").references(() => newsletterSubscribers.id), recipient: text("recipient").notNull(),
+  subject: text("subject").notNull(), previewText: text("preview_text").notNull().default(""), content: text("content").notNull(),
+  isTest: boolean("is_test").notNull().default(false), status: text("status").notNull().default("queued"),
+  attempts: integer("attempts").notNull().default(0), lastError: text("last_error"),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), sentAt: timestamp("sent_at", { withTimezone: true }),
+}, table => [index("newsletter_delivery_pending_idx").on(table.nextAttemptAt).where(sql`${table.status} = 'queued'`),
+  index("newsletter_delivery_draft_idx").on(table.draftId),
+  uniqueIndex("newsletter_delivery_unique_idx").on(table.draftId, table.subscriberId).where(sql`NOT ${table.isTest}`),
+  check("newsletter_deliveries_status_check", sql`${table.status} IN ('queued','sent','failed','skipped')`)]).enableRLS();
+export const newsletterSubscriptionLimits = pgTable("newsletter_subscription_limits", {
+  key: text("key").primaryKey(), attempts: integer("attempts").notNull(),
+  windowStart: timestamp("window_start", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
+export const newsletterMigrations = pgTable("newsletter_migrations", {
+  version: integer("version").primaryKey(),
+  appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
 
 export const coalitionRegistrations = pgTable("coalition_registrations", {
   id: uuid("id").primaryKey(),
@@ -51,12 +93,18 @@ export const coalitionTrackingTokens = pgTable("coalition_tracking_tokens", {
 }, table => [index("coalition_tokens_registration_idx").on(table.registrationId), index("coalition_tokens_expiry_idx").on(table.expiresAt), check("coalition_tracking_tokens_kind_check", sql`${table.kind} IN ('access','session')`)]).enableRLS();
 export const coalitionEmailOutbox = pgTable("coalition_email_outbox", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  registrationId: uuid("registration_id").notNull().references(() => coalitionRegistrations.id, { onDelete: "cascade" }),
+  registrationId: uuid("registration_id").references(() => coalitionRegistrations.id, { onDelete: "cascade" }),
+  memberId: text("member_id"),
   recipient: text("recipient").notNull(), subject: text("subject").notNull(), body: text("body").notNull(),
   attempts: integer("attempts").notNull().default(0), sentAt: timestamp("sent_at", { withTimezone: true }),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(), lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, table => [index("coalition_outbox_pending_idx").on(table.nextAttemptAt).where(sql`${table.sentAt} IS NULL`)]).enableRLS();
+}, table => [index("coalition_outbox_pending_idx").on(table.nextAttemptAt).where(sql`${table.sentAt} IS NULL`), uniqueIndex("coalition_outbox_member_invite_idx").on(table.memberId).where(sql`${table.memberId} IS NOT NULL`)]).enableRLS();
+
+export const coalitionSettings = pgTable("coalition_settings", {
+  id: integer("id").primaryKey(),
+  groupChatUrl: text("group_chat_url").notNull().default(""),
+}, table => [check("coalition_settings_id_check", sql`${table.id} = 1`)]).enableRLS();
 
 export const contactSocialLinkSchema = z.object({
   url: z.string().trim().min(1).max(2048),

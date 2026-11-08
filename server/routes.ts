@@ -3,6 +3,9 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { hasDatabaseUrl, pool } from "./db";
 import { ensureCoalitionInfrastructure, registerCoalitionRoutes } from "./coalition";
+import { flushCoalitionMail } from "./coalition-mail";
+import { registerNewsletterRoutes } from "./newsletter";
+import { coalitionSettingsSchema } from "@shared/coalition-settings";
 import multer from "multer";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -2684,6 +2687,7 @@ function isPdfFallbackScopeAllowed(req: Request, contract: PdfExportContract) {
 export async function registerRoutes(app: Express): Promise<Server> {
   await ensureExternalAuthInfrastructure();
   registerCoalitionRoutes(app, requireAdminAuth);
+  registerNewsletterRoutes(app, requireAdminAuth);
   registerExternalAuthRoutes(app, requireAuth);
   if (hasDatabaseUrl && !(process.env.VERCEL === "1" && process.env.RUN_STARTUP_SCHEMA_SETUP !== "true")) {
     try {
@@ -6792,7 +6796,13 @@ app.post("/api/upload/member-photo", upload.single("image"), async (req, res) =>
         }
       }
 
-      const updated = await storage.updateMember(req.params.id, updateData);
+      const invitation = coalitionSettingsSchema.safeParse({ groupChatUrl: req.body.groupChatUrl ?? "" });
+      if (!invitation.success) return res.status(400).json({ error: invitation.error.issues[0].message });
+      const updated = await storage.updateMember(req.params.id, updateData, invitation.data.groupChatUrl);
+      if (updated?.applicationStatus === "approved") {
+        // Approval and its invitation are already saved; provider outages leave mail queued.
+        await flushCoalitionMail(undefined, updated.id).catch(error => console.error("[coalition-mail] member invitation delivery failed", { memberId: updated.id, message: error instanceof Error ? error.message : String(error) }));
+      }
       res.json(updated);
     } catch (error: any) {
       const validationError = fromError(error);

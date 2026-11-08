@@ -44,6 +44,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { coalitionSettingsSchema } from "@shared/coalition-settings";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { CoalitionRegistration, CoalitionStatus } from "@shared/coalition";
@@ -72,6 +74,7 @@ export default function CoalitionManager() {
   const [type, setType] = useState("all");
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [groupChatUrl, setGroupChatUrl] = useState("");
   const [deleting, setDeleting] = useState<CoalitionRegistration | null>(null);
   const [reviewing, setReviewing] = useState<CoalitionRegistration | null>(
     null,
@@ -93,12 +96,19 @@ export default function CoalitionManager() {
     staleTime: 0,
   });
   async function change(id: string, status?: CoalitionStatus) {
+    if (status === "approved") {
+      const parsed = coalitionSettingsSchema.safeParse({ groupChatUrl });
+      if (!parsed.success) {
+        toast({ title: "Check the invitation link", description: parsed.error.issues[0].message, variant: "destructive" });
+        return;
+      }
+    }
     setBusy(true);
     try {
       await apiRequest(
         status ? "PATCH" : "DELETE",
         `/api/coalition/registrations/${id}`,
-        status ? { status, message: publicMessage } : undefined,
+        status ? { status, message: publicMessage, groupChatUrl: status === "approved" ? groupChatUrl : "" } : undefined,
       );
       await queryClient.invalidateQueries({
         predicate: (query) =>
@@ -126,6 +136,7 @@ export default function CoalitionManager() {
     setReviewing(row);
     setNextStatus(status || COALITION_TRANSITIONS[row.status][0] || row.status);
     setPublicMessage("");
+    setGroupChatUrl("");
   }
   async function retryMail() {
     setBusy(true);
@@ -228,6 +239,7 @@ export default function CoalitionManager() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+
         <div className="flex flex-wrap justify-between items-end gap-4">
           <div className="space-y-2 w-full sm:w-60">
             <Label htmlFor="coalition-filter">Registration type</Label>
@@ -498,6 +510,13 @@ export default function CoalitionManager() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {nextStatus === "approved" && (
+                    <div className="space-y-2">
+                      <Label htmlFor="coalition-application-group-link">Group invitation link for this applicant (optional)</Label>
+                      <Input id="coalition-application-group-link" type="url" maxLength={2048} value={groupChatUrl} onChange={event => setGroupChatUrl(event.target.value)} disabled={busy} placeholder="https://m.me/j/your-invite" />
+                      <p className="text-sm text-muted-foreground">Sent only to this applicant in their approval email. Leave blank to approve without an invitation.</p>
+                    </div>
+                  )}
                   <Label htmlFor="coalition-review-message">
                     Message to applicant{" "}
                     {nextStatus === "declined" ||

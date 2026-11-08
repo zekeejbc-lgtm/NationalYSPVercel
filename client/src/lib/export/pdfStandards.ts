@@ -1,7 +1,9 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
+
 export const ORGANIZATION_REPORT_INFO = {
   name: "Youth Service PH",
   fullGovernmentName: "Youth Service to the Filipino Youth, Inc.",
-  motto: "Empowering Filipino Youth Through Community Service",
+  motto: ORGANIZATION_MOTTO,
   secRegistryNumber: "2023010080782-00",
   facebook: "/YOUTHSERVICEPHILIPPINES",
   website: "youthserviceph.org",

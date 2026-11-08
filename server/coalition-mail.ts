@@ -7,7 +7,7 @@ export function coalitionMailConfigured() {
 }
 // Called synchronously by submissions, decisions, recovery and the admin retry
 // action. Failed messages remain in the private outbox for later delivery.
-export async function flushCoalitionMail(registrationId?: string) {
+export async function flushCoalitionMail(registrationId?: string, memberId?: string) {
   if (!coalitionMailConfigured()) return;
   const client = await pool!.connect();
   try {
@@ -15,8 +15,9 @@ export async function flushCoalitionMail(registrationId?: string) {
     const messages = await client.query(
       `SELECT * FROM coalition_email_outbox WHERE sent_at IS NULL
       AND next_attempt_at <= now() AND attempts < 12 AND created_at > now() - interval '7 days'
-      AND ($1::uuid IS NULL OR registration_id = $1) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
-      [registrationId || null],
+      AND ($1::uuid IS NULL OR registration_id = $1)
+      AND ($2::text IS NULL OR member_id = $2) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1`,
+      [registrationId || null, memberId || null],
     );
     for (const message of messages.rows) {
       try {

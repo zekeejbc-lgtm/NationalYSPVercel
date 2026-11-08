@@ -1,3 +1,4 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -415,7 +416,7 @@ export default function HeroSection() {
       <div className="relative h-full max-w-7xl mx-auto px-4 md:px-8 flex items-center">
         <div className="max-w-3xl text-white">
           <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight">
-            Empowering Filipino Youth Through Community Service
+            {ORGANIZATION_MOTTO}
           </h1>
           <p className="text-lg md:text-xl mb-8 text-white/90">
             Join us in creating lasting change in communities across the Philippines.

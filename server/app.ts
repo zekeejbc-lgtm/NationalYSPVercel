@@ -158,7 +158,7 @@ app.use((req, res, next) => {
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = path.startsWith("/api/coalition") ? undefined : bodyJson;
+    capturedJsonResponse = path.startsWith("/api/coalition") || path.startsWith("/api/newsletter") ? undefined : bodyJson;
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
@@ -184,7 +184,13 @@ app.use((req, res, next) => {
 export async function initializeRoutes() {
   if (!routeRegistrationPromise) {
     ensureUploadsDir();
-    routeRegistrationPromise = registerRoutes(app);
+    routeRegistrationPromise = registerRoutes(app).then((server) => {
+      // API requests must never reach the frontend HTML fallback.
+      app.use("/api", (_req, res) => {
+        res.status(404).json({ error: "API endpoint not found" });
+      });
+      return server;
+    });
   }
 
   return routeRegistrationPromise;

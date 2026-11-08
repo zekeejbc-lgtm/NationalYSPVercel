@@ -1,3 +1,5 @@
+var YSP_MOTTO = "Shaping the Future to a Greater Society";
+
 var UPLOAD_FOLDER_ID = "1H3y_VOXOc0G1E19B0CqbLiu8d8Nxtryu";
 var ALLOWED_IMAGE_MIME_TYPES = {
   "image/jpeg": true,
@@ -23,9 +25,9 @@ function doPost(e) {
       return createJsonResponse(uploadImage(data));
     }
 
-    if (action === "coalition_mail" || action === "coalition_mail_check") {
+    if (action === "coalition_mail" || action === "newsletter_mail" || action === "coalition_mail_check") {
       requireCoalitionMailSecret(data.secret);
-      return createJsonResponse(action === "coalition_mail" ? sendCoalitionMail(data) : setupCoalitionMailPermissions());
+      return createJsonResponse(action === "coalition_mail_check" ? setupCoalitionMailPermissions() : sendCoalitionMail(data));
     }
 
     requireCrudSecret(data.secret);
@@ -143,6 +145,10 @@ function requireCoalitionMailSecret(providedSecret) {
 }
 
 function sendCoalitionMail(data) {
+  var newsletter = data.action === "newsletter_mail";
+  if (newsletter && (typeof data.htmlBody !== "string" || data.htmlBody.length > 100000)) {
+    throw new Error("Invalid newsletter HTML payload.");
+  }
   var to = String(data.to || "").trim();
   var subject = String(data.subject || "").trim();
   var body = String(data.body || "");
@@ -163,7 +169,7 @@ function sendCoalitionMail(data) {
       to: to,
       subject: subject,
       body: body,
-      htmlBody: buildCoalitionEmailHtml_(subject, body),
+      htmlBody: newsletter ? data.htmlBody : buildCoalitionEmailHtml_(subject, body),
       name: "Youth Service Philippines"
     });
     properties.setProperty(key, String(Date.now()));
@@ -211,10 +217,10 @@ function buildCoalitionEmailHtml_(subject, body) {
     '<tr><td class="email-pad" style="padding:32px;font-size:16px;line-height:1.75;word-break:break-word">' +
     '<h1 class="email-title" style="margin:0 0 24px;color:#12334a;font-size:28px;line-height:1.3;overflow-wrap:anywhere">' + escape(subject) + '</h1>' + content + fallback + '</td></tr>' +
     '<tr><td class="email-pad" style="padding:22px 32px;background:#fff6ee;border-top:1px solid #f7dfcc">' +
-    '<p style="margin:0 0 6px;color:#12334a;font-size:14px;font-weight:bold">Together in service. Connected by purpose.</p>' +
+    '<p style="margin:0 0 6px;color:#12334a;font-size:14px;font-weight:bold">' + escape(YSP_MOTTO) + '</p>' +
     '<p style="margin:0;color:#596675;font-size:12px;line-height:1.7">Keep your application link private. It provides access to your coalition application.</p>' +
     '<p style="margin:18px 0"><a href="https://www.youthserviceph.org" style="display:inline-block;background:#12334a;color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;padding:12px 20px;border-radius:8px">Open YSP portal &rarr;</a></p>' +
-    '<p style="margin:0 0 14px;color:#596675;font-size:12px;line-height:1.75">Empowering Filipino youth through community service and leadership development.<br>' +
+    '<p style="margin:0 0 14px;color:#596675;font-size:12px;line-height:1.75">' +
     '<a href="mailto:national.hq@youthserviceph.org" style="color:#596675">national.hq@youthserviceph.org</a><br>' +
     '<a href="tel:+639177798413" style="color:#596675">+63 917 779 8413</a></p>' +
     '<p style="margin:0 0 8px;color:#596675;font-size:12px">Connect with YSP</p>' +

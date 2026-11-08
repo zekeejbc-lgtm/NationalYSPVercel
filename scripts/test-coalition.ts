@@ -71,11 +71,12 @@ async function req(
 async function signup(body: unknown) {
   return req("POST", "registrations", body);
 }
-async function decide(id: string, status: string, message = "") {
-  return req("PATCH", `registrations/${id}`, { status, message }, true);
+async function decide(id: string, status: string, message = "", groupChatUrl = "") {
+  return req("PATCH", `registrations/${id}`, { status, message, groupChatUrl }, true);
 }
 try {
   await ensureCoalitionInfrastructure();
+  const groupChatUrl = "https://m.me/j/coalition-test-invite";
   for (const method of ["GET", "PATCH", "DELETE"])
     assert.equal(
       (
@@ -202,6 +203,10 @@ try {
     "Approval requires an initial review.",
   );
   assert.equal((await decide(ids[0], "under_review")).status, 200);
+  for (const invalid of ["javascript:alert(1)", "http://example.com/group", "https://user:password@example.com"]) {
+    assert.equal((await decide(ids[0], "approved", "", invalid)).status, 400);
+  }
+  assert(!sent.some(mail => mail.body.includes(groupChatUrl)), "Invitations must not be sent before approval.");
   assert.equal(
     (await decide(ids[0], "needs_information")).status,
     400,
@@ -240,9 +245,13 @@ try {
     ),
   );
   assert.equal(
-    (await decide(ids[0], "approved", "Welcome to the coalition.")).status,
+    (await decide(ids[0], "approved", "Welcome to the coalition.", groupChatUrl)).status,
     200,
   );
+  assert(sent.some(mail => mail.body.includes(groupChatUrl) && mail.body.includes("Welcome to the coalition.")), "Approval email includes the configured invitation.");
+  const approvalMailCount = sent.filter(mail => mail.body.includes(groupChatUrl)).length;
+  assert.equal((await decide(ids[0], "approved")).status, 409);
+  assert.equal(sent.filter(mail => mail.body.includes(groupChatUrl)).length, approvalMailCount);
   assert.equal(
     (await decide(ids[0], "declined", "Invalid reversal.")).status,
     409,
@@ -284,6 +293,7 @@ try {
     (await decide(ids[1], "under_review", "Reconsideration requested.")).status,
     200,
   );
+
   const noMatch = await req("POST", "tracking/recover", {
     reference: ids[1],
     email: "different@example.invalid",
@@ -338,7 +348,7 @@ try {
   );
   mailFailure = true;
   assert.equal(
-    (await decide(ids[1], "approved", "Approved after review.")).status,
+    (await decide(ids[1], "approved", "Approved after review.", "https://m.me/j/other-applicant")).status,
     200,
   );
   assert.equal(
@@ -357,6 +367,10 @@ try {
   );
   const { flushCoalitionMail } = await import("../server/coalition-mail");
   await flushCoalitionMail(ids[1]);
+  const secondApproval = sent.find(mail => mail.body.includes("Approved after review."));
+  assert(secondApproval?.body.includes("https://m.me/j/other-applicant"));
+  assert(!secondApproval?.body.includes(groupChatUrl), "Each application receives only its own invitation.");
+  assert.equal(sent.filter(mail => mail.body.includes(groupChatUrl)).length, approvalMailCount, "Other approvals must not reuse the first applicant's invitation.");
   assert.equal(
     (
       await pool!.query(

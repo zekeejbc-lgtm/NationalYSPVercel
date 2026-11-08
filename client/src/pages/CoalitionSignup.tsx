@@ -1,3 +1,4 @@
+import { ORGANIZATION_MOTTO } from "@shared/branding";
 import { useState, type FormEvent } from "react";
 import { Link } from "wouter";
 import Membership from "./Membership";
@@ -18,6 +19,7 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -289,7 +291,7 @@ export default function CoalitionSignup() {
         </Link>
         <div className="text-center mb-8">
           <p className="text-primary text-sm uppercase tracking-wider font-semibold mb-3">
-            Together in service
+            {ORGANIZATION_MOTTO}
           </p>
           <h1 className="text-3xl md:text-4xl font-bold mb-4">
             Coalition Membership Form
@@ -423,17 +425,20 @@ export default function CoalitionSignup() {
                     <p className="text-sm text-muted-foreground">These details are optional. Informal groups and organizations with pending registrations are welcome to apply.</p>
                     <div className="space-y-2">
                       <Label htmlFor="coalition-yorpStatus">NYC YORP registration status (optional)</Label>
-                      <select id="coalition-yorpStatus" className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={yorpStatus} onChange={(e) => {
-                        const status = e.target.value as typeof yorpStatus;
+                      <Select value={yorpStatus} onValueChange={(value) => {
+                        const status = (value === "not_specified" ? "" : value) as typeof yorpStatus;
                         setYorpStatus(status);
                         if (status !== "registered") {
                           setFields((previous) => ({ ...previous, yorpRegistrationNumber: "" }));
                           setCertificate(null);
                         }
                       }}>
-                        <option value="">Select a status</option>
-                        {Object.entries(YORP_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
+                        <SelectTrigger id="coalition-yorpStatus"><SelectValue placeholder="Select a status" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="not_specified">Not specified</SelectItem>
+                          {Object.entries(YORP_STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
                     </div>
                     {yorpStatus === "registered" && (
                       <div className="space-y-5">
